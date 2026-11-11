@@ -40,7 +40,7 @@ ADE's GitLab driver is built from the official docs, not from a paid test instan
 | Assign iteration | n/a | GraphQL only (`createIssue.iterationId`, `issueSetIteration`) |
 | Cadence (length, start) | n/a | GraphQL only (`Group.iterationCadences`) |
 | Milestones as sprints | REST/GraphQL; ADE computes "current" from `start_date`/`due_date` itself, because REST and GraphQL `Started` semantics differ | same |
-| Label sprints (`Sprint::42`) | plain labels, not exclusive [INFERENCE], so ADE resolves multiple sprint labels on one issue to the newest | scoped (exclusive) |
+| Label sprints (`Sprint::42`) | plain labels, not exclusive (verified: adding `workflow::in progress` to an issue already carrying `workflow::ready` keeps both), so ADE resolves multiple sprint labels on one issue to the newest | scoped (exclusive) |
 
 - The REST iteration `state` field is an undocumented integer. ADE never decodes it; it queries by the `state` filter instead.
 - `iterations.source = "auto"` probes in this order: GitLab iterations → milestones with dates → labels + configured cadence.
@@ -82,14 +82,25 @@ ADE's GitLab driver is built from the official docs, not from a paid test instan
 4. **Free sandbox (optional).** A GitLab.com Free group with synthetic data. `go test -tags live` runs against it when `ADE_LIVE_GITLAB_*` env vars are set; this is never wired to CI secrets.
 5. **Read-only shape probe on real instances.** `ade doctor --probe` calls the read-only endpoints ADE depends on, including Premium ones, and reports only *shape* results: missing or renamed fields, unexpected types, status codes. It never reports values or writes anything. This is how paid-tier paths get confirmed against a real instance without a paid test instance and without moving data off the machine.
 
-## Open questions (need a real instance)
+## Verified on a Free gitlab.com group (2026-11-11)
 
-From the reference files:
+The sandbox, seeded by `scripts/sandbox/gitlab-seed.sh`, answered these questions directly:
+
+| Question | Result |
+|---|---|
+| `GET /groups/:id/iterations` on Free | `403` |
+| `POST …/issues/:iid/links` with `link_type=blocks` on Free | `403`; nothing is created |
+| `::` labels on Free | non-exclusive; both `workflow::*` labels stay on the issue |
+| Cross-project `relates_to` link on Free | works; the list shows `references.full` = `group/api#1`, `link_type` = `relates_to` |
+| MR discussions on Free | resolvable (`notes[0].resolved` true/false) |
+| `task_completion_status` | populated from Markdown checklists (`1/4`) |
+
+So on GitLab, a 403 means "gated feature unavailable" for capability probing.
+
+## Open questions (need a paid instance)
 
 - the integer meaning of iteration `state`
-- what Free returns for `blocks` links
-- the direction of the link in issue-links list responses
-- status codes for some gated endpoints
-- whether `::` labels behave as plain labels on Free
+- status codes and shapes of other Premium endpoints when they *are* licensed
+- the direction of the link in issue-links list responses when the caller is on the target side
 
-`ade doctor --probe` reports each of these.
+`ade doctor --probe` reports each of these when it is run against a licensed instance.

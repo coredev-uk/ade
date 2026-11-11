@@ -189,6 +189,8 @@ link "$T_DEPS" "$API_P" "$C_DEPS"
 slug() { tr '[:upper:]' '[:lower:]' <<<"$1" | sed -E 's/[^a-z0-9]+/-/g; s/^-|-$//g'; }
 
 branch_with_commit() { # pid branch file content message
+  # A merged MR deletes its source branch; its MR is the proof the work exists.
+  [[ -n $(gl GET "/projects/$1/merge_requests?state=all&source_branch=$(enc "$2")" | jq -r '.[0].iid // empty') ]] && return 0
   if ! ALLOW_404=1 gl GET "/projects/$1/repository/branches/$(enc "$2")" >/dev/null; then
     gl POST "/projects/$1/repository/branches" "$(jq -n --arg b "$2" '{branch:$b, ref:"main"}')" >/dev/null
     gl POST "/projects/$1/repository/commits" "$(jq -n --arg b "$2" --arg f "$3" --arg c "$4" --arg m "$5" \
