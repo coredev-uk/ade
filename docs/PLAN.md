@@ -24,7 +24,8 @@ flowchart LR
   subgraph Core["Core (internal/)"]
     Cfg["config + manifests"]
     Sync["sync engine"]
-    Store[("SQLite cache (WAL)")]
+    Store[("cache.db: SQLite (rebuildable)")]
+    Rec[("records: audit JSONL + item markdown")]
     Forge["forge: gitlab | github"]
     AI["ai: drivers + prompt cache"]
     Budget["budget ledger + caps"]
@@ -32,12 +33,16 @@ flowchart LR
   end
   Sync --> Forge --> API[(GitLab / GitHub API)]
   Sync --> Store
-  AI --> Budget --> Store
+  AI --> Budget
+  AI --> Rec
+  Forge -. every write .-> Rec
+  Budget --> Rec
+  Rec -. indexed by .-> Store
   AI --> Providers[(omp / Anthropic / OpenAI-compat / LiteLLM)]
   WS --> Tabs
 ```
 
-**Process model.** The dashboard process owns the sync loop. Other `ade` invocations (CLI calls, agent hooks inside panes) read and write the same SQLite file (WAL mode, `modernc.org/sqlite`, no CGO). Agent panes report status by writing run rows. The dashboard watches the run directory with fsnotify, so no daemon or socket is needed. Remote CDEs that auto‑stop lose nothing except the zellij session, and zellij session resurrection covers that.
+**Process model.** The dashboard process owns the sync loop. Other `ade` invocations (CLI calls, agent hooks inside panes) read and write the same SQLite cache (WAL mode, `modernc.org/sqlite`, no CGO). They append to the audit log under an exclusive file lock. Agent panes report status by writing run records. The dashboard watches the records directory with fsnotify, so no daemon or socket is needed. Remote CDEs that auto‑stop lose nothing except the zellij session, and zellij session resurrection covers that.
 
 ---
 
@@ -86,6 +91,11 @@ agent_run_usd    = 1.50    # passed as --max-cost to omp runs
 mode   = "auto"            # auto | zellij | vscode | plain
 editor = "auto"            # auto: `code` inside VS Code terminal, else ade-nvim
 glyphs = "unicode"         # unicode | nerd | ascii
+
+[records]
+dir               = "~/.local/share/ade"   # default: $XDG_DATA_HOME/ade
+audit_retain      = "forever"              # or e.g. "365d"
+snapshot_comments = 20                     # latest comments copied into item.md
 ```
 
 ```toml
@@ -156,7 +166,89 @@ stateDiagram-v2
 
 ---
 
-## 4. Forge layer
+## 4. Local records and audit
+
+ADE keeps three stores. They are split by what losing each one costs.
+
+| Store | Default path | Source of truth? | Losing it means |
+|---|---|---|---|
+| Audit log | `$XDG_DATA_HOME/ade/audit/YYYY-MM.jsonl` | yes, append-only | action history is gone; ADE never deletes it automatically |
+| Item records | `$XDG_DATA_HOME/ade/items/<forge>/<project>/<iid>/` | yes for AI output, plans, runs, and notes; the snapshot part is regenerable | paid AI work has to be bought again |
+| Cache | `$XDG_CACHE_HOME/ade/cache.db` | no | one full re-sync; `ade reindex` rebuilds indexes from the two stores above |
+
+Why not SQLite alone: the DB is a cache that migrations and `ade cache reset` are allowed to drop. Anything that cost money or human time lives in plain files that survive schema changes. Those files can be grepped, opened in nvim or VS Code, and handed to an agent as `@path`.
+
+Why not Markdown alone: dashboard queries (by stage, court, iteration, or spend per day) need indexes. SQLite indexes the files; it does not own them.
+
+### 4.1 Audit log
+
+One JSON line per action. The line is appended (under `flock`, then fsync) before the result is shown, and failures and cancellations are recorded too.
+
+```json
+{"id":"01JCQ8…","ts":"2026-11-11T09:15:02Z","actor":"user","action":"forge.issue.create",
+ "target":"work:acme/api#412","item":"work:acme/tracker#128","params":{"title":"Rate-limit the export endpoint","labels":["svc::api"]},
+ "dry_run":false,"outcome":"ok","url":"https://gitlab.example.com/acme/api/-/issues/412"}
+{"id":"01JCQ9…","ts":"2026-11-11T09:16:40Z","actor":"user","action":"ai.summarize",
+ "target":"work:acme/api!233","item":"work:acme/tracker#128","outcome":"ok",
+ "ai":{"profile":"claude-sub","model":"<haiku-class id>","tokens":{"in":1840,"out":160},"cost_usd":0.0026,
+       "cost_source":"reported","cache_hit":false,"artifact":"items/work/acme/tracker/128/ai/20261111T091640-summary-mr233.md"}}
+```
+
+- **Actors:** `user`, `ade:sync`, `agent:<run-id>`.
+- **Actions:**
+  - forge writes: `forge.*`, e.g. `issue.create`, `issue.link`, `mr.create`, `mr.merge`, `thread.reply`, `thread.resolve`, `approve`, `pipeline.retry`
+  - AI calls: `ai.*`, cache hits included at $0
+  - agent runs: `agent.run.start` / `agent.run.end`
+  - `workspace.open`, `task.run`, `config.change`, `budget.override`
+  - sync: one summary line per sync run (counts, errors). Individual reads are not logged.
+- **Redaction:** tokens and auth headers are never written. Prompt bodies are never written to the audit log; they live in the AI artifact. `params` pass through a redactor that knows the configured credential values and common secret patterns.
+- **One spend source:** the budget ledger is a query over the `ai` fields of audit events, indexed in `cache.db`. There is no second ledger to drift.
+- **Retention:** kept forever by default (`records.audit_retain`). Monthly files are easy to archive.
+- **Surfaces:**
+  - `ade audit [--since 1d] [--item tracker#128] [--action 'forge.*'] [--json]` and `ade audit tail`
+  - TUI **Log** page: filterable; `enter` jumps to the target
+  - **History** tab on the work item page
+
+### 4.2 Item records
+
+There is one directory per work item, keyed by the tracker issue. Child issues, MRs, plans, and runs nest under it because the work item is the unit. Items without a tracker parent (for example, a review requested on someone else's MR) get their own directory keyed by their own ref.
+
+```
+items/work/acme/tracker/128/
+  item.md                                   snapshot + your notes
+  ai/20261111T091640-summary-mr233.md       one file per AI output
+  ai/20261111T091902-classify.md
+  plans/20261111T100215-plan.md             agent plans (reviewed/approved state in frontmatter)
+  runs/01JCQB…/run.md                       agent run: model, cost cap, spend, exit, commits, transcript path
+```
+
+```markdown
+---
+ref: work:acme/tracker#128
+children: [work:acme/api#412]
+mrs: [work:acme/api!233]
+stage: review
+iteration: Sprint 42
+synced: 2026-11-11T09:12:03Z
+---
+<!-- ade:snapshot:begin (regenerated on sync; edits inside are overwritten) -->
+# Rate-limit the export endpoint
+…description, labels, assignees, latest comments…
+<!-- ade:snapshot:end -->
+
+## Notes
+Free-form. ADE never edits outside the snapshot block.
+```
+
+- **AI artifacts** carry frontmatter: `feature`, `profile`, `model`, `prompt_version`, `input_hash`, `tokens`, `cost_usd`, `created`, `audit_id`. The body is the output.
+  - The AI result cache resolves `input_hash` → artifact through `cache.db`.
+  - If `cache.db` is lost, `ade reindex` rebuilds the mapping from frontmatter, so nothing is paid for twice.
+- **Notes feed context.** Plan and draft actions can include the item's `## Notes` (shown in the pre-flight prompt preview, toggle per call).
+- **Offline:** the work item page renders from `item.md` and its artifacts when the forge is unreachable or the cache is empty.
+- **`ade item <ref>`** prints the record path, and `ade item <ref> --edit` opens `item.md` in the configured editor. In the TUI, `n` opens notes.
+- **Privacy:** these directories hold real work data, and they live outside every repository. `ade doctor` warns if `records.dir` resolves inside a git work tree. On remote CDEs, point `records.dir` at the persistent home volume.
+
+## 5. Forge layer
 
 ```go
 type Forge interface {
@@ -182,13 +274,13 @@ type Forge interface {
 
 ---
 
-## 5. Surfaces (TUI) — mode: Operate
+## 6. Surfaces (TUI) — mode: Operate
 
 Design is settled per the impeccable flow. Before any screen is built, Phase 0 runs the visual‑world round (new‑work, Operate mode) and writes `DESIGN.md`: ANSI colour roles, glyph set and fallbacks, density, focus treatment, light/dark behaviour. The wireframes below fix **structure and behaviour only**.
 
 Global conventions: `j/k` move, `enter` open, `esc` back, `tab` switch pane, `/` filter, `:` command palette, `?` keymap overlay, `r` refresh, `o` open in browser, `y` copy (OSC 52, so it works in VS Code and browser terminals). Breakpoints: ≥140 cols three regions, 100–139 two, <100 one with a toggled preview. Never colour‑only state.
 
-### 5.1 Home (core functions 1, 6)
+### 6.1 Home (core functions 1, 6)
 
 ```
  acme · Sprint 42 · 2 workdays left · next: Sprint 43        synced 40s   AI $0.38 / $2.00 today
@@ -209,12 +301,12 @@ Global conventions: `j/k` move, `enter` open, `esc` back, `tab` switch pane, `/`
 - Sections: **My work** (assigned, sorted by court then stage), **Reviews requested**, **Iteration** (current plus adjacent per the window rule), **Activity** (collapsed).
 - Each row shows a progress track (stage glyph sequence) with the court, open thread count, and pipeline state. Progress also folds in task‑list completion from the issue body.
 - The preview region shows the selected item. `enter` opens the full Work Item / MR page. Both modes exist, as requested.
-- Actions: `s` start work (5.3), `w` open workspace, `a` agent menu, `c` classify, `S` standup.
+- Actions: `s` start work (6.3), `w` open workspace, `a` agent menu, `c` classify, `n` notes, `S` standup, `L` log.
 
-### 5.2 Work item / MR page (core function 2)
+### 6.2 Work item / MR page (core function 2)
 
 ```
- ← Home  tracker#128 › api#412 › !233  Rate-limit export endpoint            [Overview] Threads  Diff  CI
+ ← Home  tracker#128 › api#412 › !233  Rate-limit export endpoint    [Overview] Threads  Diff  CI  History
  ─────────────────────────────────────────────────────────────────────────────────────────────────────
   Draft → Ready · CI ✓ 6m · Approvals 1/2 (needs: backend-owners) · mergeable after threads resolved
   Summary  (AI · haiku · $0.002 · cached until description changes)            [d] raw description
@@ -223,11 +315,16 @@ Global conventions: `j/k` move, `enter` open, `esc` back, `tab` switch pane, `/`
    ▸ src/limit.go:42   "burst=50 too high?"  jkim · 2h    [R]eply  [x] resolve  [A] AI draft reply
 ```
 
-- Tabs: **Overview** (status strip, AI summary ⇄ raw description, linked parent/child), **Threads** (unresolved first, grouped by file, with diff context), **Diff** (file tree + chroma‑highlighted hunks; `D` opens `delta` in a pane), **CI** (jobs, failing job log tail, retry).
-- Actions: reply, resolve, approve, mark ready, merge (with an explicit confirm), retry pipeline. AI actions: summarise MR, summarise thread, draft reply, "address comments" (hands off to agent, 5.6).
+- Tabs:
+  - **Overview:** status strip, AI summary ⇄ raw description, linked parent/child
+  - **Threads:** unresolved first, grouped by file, with diff context
+  - **Diff:** file tree + chroma‑highlighted hunks; `D` opens `delta` in a pane
+  - **CI:** jobs, failing job log tail, retry
+  - **History:** this item's audit events interleaved with its AI artifacts, plans, and runs (4.1, 4.2)
+- Actions: reply, resolve, approve, mark ready, merge (with an explicit confirm), retry pipeline. AI actions: summarise MR, summarise thread, draft reply, "address comments" (hands off to agent, 6.6).
 - The body editor is `$EDITOR` in a zellij floating pane (or a VS Code tab), so long replies never get typed into a cramped text field.
 
-### 5.3 Start work (tracker‑project pattern)
+### 6.3 Start work (tracker‑project pattern)
 
 ```mermaid
 sequenceDiagram
@@ -248,20 +345,25 @@ sequenceDiagram
 
 One confirm screen shows every write before it happens. It is idempotent: re‑running detects an existing child, branch, or MR and resumes from the next missing step.
 
-### 5.4 Agile (core function 5)
+### 6.4 Agile (core function 5)
 
-- **Standup:** *Yesterday* is the previous working day (weekend and holiday aware). It is built from forge events: MRs opened, merged, and reviewed, comments, issue transitions, and pushes. *Today* covers in‑progress items ordered by court and stage, then the next items by priority in the current iteration. *Blockers* are red pipelines, threads waiting on others for more than 1 day, and blocked labels. Without AI it is a deterministic bullet list. With AI the same facts become a 4–6 line spoken‑style summary. `y` copies it; `ade standup --json|--md` works too.
+- **Standup:** *Yesterday* is the previous working day (weekend and holiday aware).
+  - Evidence comes from forge events (MRs opened, merged, and reviewed, comments, issue transitions, pushes) plus the local audit log (agent runs, plans, workspaces opened). The audit log catches work that never reached the forge.
+  - *Today* covers in‑progress items ordered by court and stage, then the next items by priority in the current iteration.
+  - *Blockers* are red pipelines, threads waiting on others for more than 1 day, and blocked labels.
+  - Without AI it is a deterministic bullet list. With AI the same facts become a 4–6 line spoken‑style summary, saved as an artifact under `items/_standup/`.
+  - `y` copies it; `ade standup --json|--md` works too.
 - **Sprint review:** for the iteration window it shows done vs carried over, scope added mid‑sprint, merged MRs grouped by parent, cycle time per item (assigned → merged), and a burn‑down sparkline from close events. The optional AI narrative per parent goes into a markdown export.
 
-### 5.5 Budget (core function 3)
+### 6.5 Budget (core function 3)
 
-- **Ledger** (SQLite): timestamp, feature, profile, driver, model, tokens (in/out/cache), cost, cost source (`reported` | `computed` | `gateway`), cache hit, item ref.
+- **Ledger:** derived from `ai` audit events (4.1). Each entry holds the timestamp, feature, profile, driver, model, tokens (in/out/cache), cost, cost source (`reported` | `computed` | `gateway`), cache hit, and item ref.
 - **Cost sources:**
   - omp print mode (`--mode json`) reports `usage.cost.total` per turn. This was verified locally; it is list‑price equivalent even on a subscription.
   - Direct APIs: tokens × configured price table.
   - LiteLLM: response‑cost header plus `/key/info` spend and max budget [to verify in Phase 4].
 - **Controls:** daily, weekly, and per‑sprint caps. Each action gets a pre‑flight estimate, with a confirm above `confirm_over_usd`. Agent runs get a hard cap (`--max-cost`). `ai.mode=off` gives a global kill switch, and a per‑manifest `ai.allow = false` blocks AI for projects whose data must not leave the forge.
-- **Spend avoidance:** results are cached by `hash(prompt version, model, input content)`, so unchanged issues and threads are never re‑summarised. Prompts are trimmed (thread diffs clipped, quoted replies collapsed). Explain calls use a minimal system prompt and no tools: omp's default prompt alone costs ~2.2k input tokens per call (observed), so ADE passes `--system-prompt` and `--no-tools`.
+- **Spend avoidance:** results are cached by `hash(prompt version, model, input content)`, and the cache is backed by durable artifacts (4.2). Unchanged issues and threads are never re‑summarised, even after a cache reset. Prompts are trimmed (thread diffs clipped, quoted replies collapsed). Explain calls use a minimal system prompt and no tools: omp's default prompt alone costs ~2.2k input tokens per call (observed), so ADE passes `--system-prompt` and `--no-tools`.
 - **Page:** spend by day, feature, and model; remaining headroom; top costly items; the active profile with per‑role models.
 
 **Profiles.** Roles map to model *classes*; concrete IDs are resolved at config time (`ade ai models` lists what the driver or gateway exposes).
@@ -274,7 +376,7 @@ One confirm screen shows every write before it happens. It is idempotent: re‑r
 | kimi | openai‑compat (Moonshot) | K2‑class | K2‑class | K2 thinking | K2‑class |
 | gateway‑mix | openai‑compat → LiteLLM | cheapest of mix | Sonnet‑class | best reasoning in mix | per‑team choice |
 
-### 5.6 Agents and workspaces (core function 7)
+### 6.6 Agents and workspaces (core function 7)
 
 - **Layouts** are generated zellij KDL (`--layout-string`), one tab per work item:
   - `code`: editor 60% | lazygit + shell stacked
@@ -282,11 +384,11 @@ One confirm screen shows every write before it happens. It is idempotent: re‑r
   - `review`: diff/threads + delta
   - `manual`: no agent pane
 - **Tasks** run as panes in a stack, or as parallel `zellij run` panes for a parallel group.
-- **Plan:** ADE gathers the parent issue, child issue, comments, and repo `AGENTS.md`, then starts omp in plan mode in the worktree with a seeded prompt file. The plan is saved to `.ade/plans/<iid>.md` (gitignored) and reviewed in the TUI.
-- **Run:** omp executes the approved plan with `--max-cost` and the implement‑role model. The run row tracks state and cost, and lazygit opens beside it for review. "Address comments" uses the same path, seeded with unresolved threads.
+- **Plan:** ADE gathers the parent issue, child issue, comments, notes, and repo `AGENTS.md`, then starts omp in plan mode in the worktree with a seeded prompt file. The plan is saved to the item record (`plans/`, 4.2), never into the worktree, and reviewed in the TUI.
+- **Run:** omp executes the approved plan with `--max-cost` and the implement‑role model. `runs/<id>/run.md` tracks state, spend, exit, and resulting commits, and every run brackets with `agent.run.start/end` audit events. lazygit opens beside the run for review. "Address comments" uses the same path, seeded with unresolved threads.
 - **Agent CLI drivers:** `omp`, `claude`, and `codex` are discovered on PATH and chosen per profile.
 
-### 5.7 Hosts and editors
+### 6.7 Hosts and editors
 
 | Host | Detection | Workspace | Tasks | Editor |
 |---|---|---|---|---|
@@ -305,17 +407,19 @@ VS Code specifics:
 
 ---
 
-## 6. Code layout
+## 7. Code layout
 
 ```
 cmd/ade/                 cobra root; `ade` → host launch, subcommands
 internal/config/         schema, load/merge/override, manifest fetch, JSON Schema gen
-internal/store/          SQLite (modernc), migrations, queries
+internal/store/          cache.db (modernc SQLite), migrations, queries, reindex from records
+internal/audit/          append-only JSONL writer (flock), redactor, query
+internal/records/        item dirs, item.md snapshot/notes merge, AI artifacts, plans, runs
 internal/forge/          interface; gitlab/, github/, fake/ (httptest + synthetic fixtures)
 internal/domain/         WorkItem, stage + court derivation, iteration window
 internal/sync/           scheduler, incremental fetch, repo mirror, manifest refresh
 internal/ai/             drivers (omp, anthropic, openaicompat), prompts/ (versioned), result cache
-internal/budget/         ledger, prices, caps, estimates, gateway spend
+internal/budget/         ledger view over audit, prices, caps, estimates, gateway spend
 internal/agile/          standup, sprint review
 internal/workspace/      worktrees, layouts (KDL), tasks, vscode export
 internal/host/           zellij, vscode, plain
@@ -333,26 +437,27 @@ Verification:
 
 ---
 
-## 7. Phases
+## 8. Phases
 
 | # | Phase | Delivers | Acceptance |
 |---|---|---|---|
-| 0 | Foundations | flake (done), Go module, cobra skeleton, config load + `ade doctor`, zellij launcher (`ade` attaches/creates session `ade`), **visual‑world round → DESIGN.md** | `ade` opens a zellij session with a placeholder dashboard pane; `ade doctor --json` reports tools, config, and token checks |
-| 1 | Read‑only home | GitLab forge (issues, links, MRs, pipelines), sync + cache, iteration sources (milestones, labels, cadence, GitLab iterations), stage/court derivation, Home page + preview | Against a sandbox group: assigned tracker issues show correct child, MR, stage, court, and iteration window; navigation never waits on network |
+| 0 | Foundations | flake (done), Go module, cobra skeleton, config load + `ade doctor`, audit writer + `ade audit`, zellij launcher (`ade` attaches/creates session `ade`), **visual‑world round → DESIGN.md** | `ade` opens a zellij session with a placeholder dashboard pane; `ade doctor --json` reports tools, config, and token checks; every command leaves an audit line |
+| 1 | Read‑only home | GitLab forge (issues, links, MRs, pipelines), sync + cache, item records (`item.md` snapshots), iteration sources (milestones, labels, cadence, GitLab iterations), stage/court derivation, Home page + preview | Against a sandbox group: assigned tracker issues show correct child, MR, stage, court, and iteration window; navigation never waits on network; notes written below the snapshot survive re‑sync |
 | 2 | MR page | threads, diff, CI tabs; reply, resolve, approve, ready, merge, retry | Full review round‑trip on a sandbox MR without the web UI |
 | 3 | Start work + workspaces | child issue/link/branch/MR/worktree flow, layouts, tasks, VS Code host + tasks.json export, ade-nvim | `s` on a tracker issue yields linked child + draft MR + worktree + tab; re‑run is idempotent; same flow works in VS Code terminal without zellij |
-| 4 | AI explain + budget | drivers (omp, anthropic, openai‑compat), result cache, ledger, caps, pre‑flight, budget page, profiles, summaries/classify/draft reply | Second summary of an unchanged MR costs $0 (cache hit); cap breach blocks with a clear message; `ai.mode=off` hides nothing essential |
+| 4 | AI explain + budget | drivers (omp, anthropic, openai‑compat), AI artifacts + result cache, ledger over audit, caps, pre‑flight, budget page, Log page + History tab, profiles, summaries/classify/draft reply | Second summary of an unchanged MR costs $0 (cache hit), also after deleting `cache.db` and running `ade reindex`; cap breach blocks with a clear message; `ai.mode=off` hides nothing essential |
 | 5 | Agile | standup, sprint review (deterministic + AI narrative), exports, OSC 52 copy | Standup over a Monday correctly uses Friday; review totals match forge data on the sandbox |
 | 6 | Agents | plan/run/address‑comments via omp (claude/codex drivers), run tracking, cost caps, lazygit integration | Plan → approve → run → review → push completes on a sandbox issue within `agent_run_usd` |
 | 7 | GitHub + team | GitHub forge parity, `ade init` onboarding, shared manifest docs, release (goreleaser + flake package) | Same Home/MR/Start flows on a GitHub sandbox repo; a teammate goes from zero to dashboard via `ade init` |
 
 ---
 
-## 8. Risks and open decisions
+## 9. Risks and open decisions
 
 - **GitLab iterations are a paid‑tier feature.** Free/CE sandboxes exercise milestones, labels, and cadence. Iteration‑cadence code needs a paid‑tier instance to validate.
 - **Subscription quota is not observable.** omp reports list‑price usage only, so subscription budgets are soft caps on that figure until a quota endpoint exists.
 - **VS Code key capture.** Some chords never reach the terminal. The keymap avoids Ctrl+Shift chords and documents `commandsToSkipShell`.
 - **Data egress.** AI calls send issue, MR, and code text to the configured provider. The per‑manifest `ai.allow` setting and gateway routing are the controls; the default for a new manifest is `ask`.
+- **Local data sensitivity.** Records and audit hold real work content in plain files. They stay outside repos, are created `0700`, and are excluded from any sync ADE performs. Backups are the user's call.
 - **Writes are irreversible‑ish.** Every forge write goes through a preview/confirm, and `--dry-run` is available on every write command.
 - Open: diff rendering inside the TUI vs always delegating to delta (decide after the Phase 2 spike); whether run tracking needs a socket once agents run in parallel.

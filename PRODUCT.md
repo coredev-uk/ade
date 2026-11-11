@@ -41,6 +41,7 @@ Forge TUIs (`glab`, `gh-dash`, lazygit) each cover one slice. ADE models the *wo
 - Every feature works with AI fully disabled. AI only adds summaries, drafts, and automation; it is never required for core functions.
 - Every terminal action must also work when ADE runs inside VS Code's integrated terminal (key conflicts, `code` CLI as editor) and without zellij (plain host, VS Code tasks).
 - Every non-TUI command offers machine-readable output (`--json`) so scripts and VS Code tasks can drive it.
+- Everything ADE does is recorded locally: an append-only audit log of every forge write, AI call (with model, tokens, and cost), and agent run, plus a per-work-item record (forge snapshot, AI outputs, plans, run records, personal notes) kept as plain Markdown. AI output is durable, so paid work is never lost or bought twice. These records hold real work data and never live inside a repository.
 - Privacy: committed code, fixtures, and docs contain no real organisation, host, project, or person data. Test data is synthetic.
 - Undecided: authoritative remaining-quota reporting for subscription-based AI (only usage is observable today); GitHub parity timing.
 
@@ -53,7 +54,7 @@ None yet: greenfield repository. Do not invent users, teams, adoption numbers, o
 1. **The work item is the unit.** Every screen and action revolves around one tracker issue → child issue → branch → MR chain and who needs to act next.
 2. **Terminal-native, host-agnostic.** Zellij when available. VS Code terminals and plain shells are first-class, not fallbacks that rot.
 3. **AI is metered, cached, and optional.** Show cost before spending it, never spend twice on unchanged input, and degrade cleanly to manual.
-4. **Cache-first and fast.** The UI renders from local state immediately and syncs in the background. The network never blocks navigation.
+4. **Cache-first and fast; records are forever.** The UI renders from local state immediately and syncs in the background, and the network never blocks navigation. The cache is disposable. The audit log and item records are not.
 5. **Conventions as code.** Branch names, child-issue links, MR templates, and workspaces come from shared manifests, so a team behaves consistently.
 
 ## Accessibility & Inclusion
