@@ -121,12 +121,45 @@ board      = "Delivery"
 iterations = { source = "auto" }   # auto | gitlab-iterations | milestones | labels | github-project | cadence
 # labels:  { source = "labels", pattern = "Sprint::{n}", cadence = { start = "2026-01-05", length = "2w" } }
 
-[[repos]]
-path   = "acme/api"
-route  = ["svc::api", "backend"]      # tracker labels that suggest this repo
-[[repos]]
-path        = "acme/web"
-route       = ["svc::web", "frontend"]
+[repos.api]
+path  = "acme/api"
+route = ["svc::api", "backend"]          # tracker labels that suggest this repo
+
+[repos.api.tasks.migrate]
+cmd      = "make migrate"
+kind     = "oneshot"                     # must exit 0 before dependents start
+requires = ["services.db"]
+env      = { DATABASE_URL = "postgres://localhost:{services.db.port}/acme" }
+
+[repos.api.tasks.dev]
+cmd      = "make run"
+port     = "auto"                        # allocated per instance; or a fixed number
+env      = { PORT = "{port}", DATABASE_URL = "postgres://localhost:{services.db.port}/acme" }
+requires = ["api.migrate"]
+ready    = { http = "http://localhost:{port}/healthz", timeout = "60s" }
+
+[repos.api.tasks.test]
+cmd      = "make test"
+kind     = "oneshot"
+requires = ["services.db"]
+
+[repos.web]
+path     = "acme/web"
+route    = ["svc::web", "frontend"]
+requires = ["api"]                       # checkout dependency: web work also gets an api tree
+
+[repos.web.tasks.dev]
+cmd      = "npm run dev -- --port {port}"
+port     = "auto"
+requires = ["api.dev"]                   # runtime dependency: api must be ready first
+env      = { API_URL = "http://localhost:{api.dev.port}" }
+ready    = { log = 'ready in \d+ ms', timeout = "90s" }
+
+[services.db]                             # not a repo: shared infrastructure
+cmd   = "postgres -D {state}/pg -p {port} -k {state}"
+port  = "auto"
+ready = { tcp = "localhost:{port}" }
+keep  = true                             # survives when its last dependent stops
 
 [conventions]
 branch      = "{child_iid}-{slug}"
@@ -135,20 +168,60 @@ child_body  = "templates/child.md"     # relative to manifest
 link        = ["relates_to", "description"]   # always both: fixes today's inconsistency
 mr          = { draft = true, closes = "child", mention = "parent" }
 
-[tasks]
-api  = { cmd = "make run",    cwd = "api" }
-web  = { cmd = "npm run dev", cwd = "web" }
-test = { cmd = "make test",   cwd = "api" }
-
-[task_groups]
-dev = { tasks = ["api", "web"], parallel = true }
+[groups]
+dev = ["web.dev"]                       # pulls in api.dev → api.migrate → services.db
 
 [workspaces]
-default = { layout = "code",  tasks = "dev" }
-agentic = { layout = "agent", tasks = "dev" }
+default = { layout = "code",  run = "dev" }
+agentic = { layout = "agent", run = "dev" }
 ```
 
 **Keeping things up to date.** On every sync tick, `manifests[].source` entries backed by git or a URL are refetched, so team edits propagate. Repos are mirrored to `~/ade/repos/<forge>/<path>` with `git fetch --prune`. Worktrees live at `~/ade/wt/<repo>/<branch>`. `ade doctor` validates config, tokens and scopes, tools on PATH, and host capabilities. A JSON Schema generated from the Go structs gives editor completion (taplo / VS Code Even Better TOML).
+
+### 2.1 Repo and task dependencies
+
+A frontend that needs a running API is the normal case, not an edge case. ADE models it as two separate dependency graphs that it validates together.
+
+**Checkout graph (`repos.<r>.requires`).** Opening a workspace for a repo also prepares a tree for every repo it requires, transitively. Tree resolution, per required repo:
+
+1. **Same work item:** if the work item has its own child and branch in that repo, ADE uses that worktree. This is how a cross‑repo change gets web running against the *feature* API, not `main`.
+2. **Explicit pin:** `ade work web#12 --with api=some-branch` (also selectable in the TUI before opening).
+3. **Baseline:** otherwise a shared, read‑mostly baseline tree at `~/ade/wt/<repo>/_base` on the default branch. Sync fast‑forwards it only when it is clean. If it is dirty, ADE says so and leaves it alone.
+
+**Run graph (`tasks.*.requires`, `services.*`).** Nodes are tasks (`<repo>.<task>`) and services (`services.<name>`). Edges are `requires`. Each node declares:
+
+- **`kind`:** `service` (default; long‑running) or `oneshot` (must exit 0, e.g. migrations or codegen).
+- **`ready`:** one of `http` (2xx), `tcp` (port open), `log` (regex on output), or exit 0 for oneshots, with a `timeout`.
+- **`port`:** `auto` allocates a free port per instance; a fixed number is used as is.
+- **`env`:** values can reference other nodes: `{port}`, `{dir}`, `{state}`, `{<repo>.dir}`, `{<repo>.<task>.port}`, `{services.<name>.port}`. This is how `API_URL` in web always points at the api instance actually serving this workspace.
+
+**Instances and sharing.** A running instance is identified by (node, tree):
+
+- Two workspaces that resolve to the same api tree share one api instance, reference‑counted. A workspace with its own api feature tree gets its own instance on its own port. Nothing collides, and nothing starts twice.
+- When the last dependent stops, the instance stops, unless the node sets `keep = true` (typical for databases).
+- Instances, ports, and PIDs are written to the item's run records (4.2) and shown in a **Services** strip on the workspace and Home preview: `db ● 54012 · api ● 54031 (feature tree) · web ◌ waiting on api`.
+
+**Start order and failure.**
+
+- Start order is a topological sort. Independent nodes start in parallel.
+- A dependent starts only after all of its requirements are ready.
+- If a requirement fails or times out, its dependents are not started. Each one shows `blocked: api.dev not ready (timeout 60s, last log line …)`. `r` restarts that subtree.
+- Stopping a node stops its dependents first, in reverse order.
+
+**Validation (load time and `ade config check`):**
+
+- unknown references
+- cycles, reported with the cycle path
+- `env` templates that reference nodes outside the node's `requires` closure (so ordering can't be violated silently)
+- fixed‑port clashes between nodes
+- a `requires` on a repo in another loaded manifest must be qualified (`shared/auth.dev`); unqualified names resolve within the same manifest only
+
+**Where else dependencies show up:**
+
+- **Start work (6.3):** if the routed repo requires another, the confirm screen offers to also create a child issue there ("web requires api: create api child too?"). It is off by default.
+- **Agents (6.6):** required repos' trees are passed with `--add-dir` (verified omp flag), so plans and runs can read the API contract while they write only the routed repo.
+- **Merge order (3):** when one work item has open MRs in both repos and web requires api, the web MR shows `waits on api!N` until the api MR merges. Its court becomes `api!N` instead of `you`.
+- **Hosts (6.7):** zellij gets one pane per instance, with requirements in a stacked "services" pane. VS Code gets generated `tasks.json` with `dependsOn`, `isBackground`, and a `background.endsPattern` for `log` readiness. For `http`/`tcp` readiness the generated task wraps the command in `ade task run --wait`. On the plain host, ADE supervises the processes itself.
 
 ---
 
@@ -173,6 +246,7 @@ stateDiagram-v2
 
 - **WorkItem** = tracker issue + 0..n child issues + their MRs + pipelines + discussions. The stage is *derived* from forge data. ADE never stores it as truth.
 - **Ball in court** is computed per item: `you` (unresolved threads addressed to you, red pipeline, requested changes), `reviewers`, `ci`, `nobody`. This is the scan column that answers "what do I touch next".
+- **Merge order:** if a work item has open MRs in two repos and one repo `requires` the other (2.1), the dependent MR's court is the upstream MR (`waits on api!N`) until that merges.
 - **Child linking:**
   - **GitLab** cannot make one issue the hierarchy child of another (only issue → task, same project). So ADE writes a cross‑project `relates_to` issue link (Free tier) *and* a description reference (`Parent: acme/tracker#128`).
   - **GitHub** supports real cross‑repo sub‑issues. This was verified on the sandbox, so ADE uses them plus the same description reference.
@@ -425,7 +499,7 @@ One confirm screen shows every write before it happens. It is idempotent: re‑r
   - `agent`: omp 60% | lazygit + tasks
   - `review`: diff/threads + delta
   - `manual`: no agent pane
-- **Tasks** run as panes in a stack, or as parallel `zellij run` panes for a parallel group.
+- **Tasks** come from the run graph (2.1). `w` opens a workspace, and its `run` group starts in dependency order. Requirements land in a stacked services pane, and the workspace's own tasks get regular panes.
 - **Plan:** ADE gathers the parent issue, child issue, comments, notes, and repo `AGENTS.md`, then starts omp in plan mode in the worktree with a seeded prompt file. The plan is saved to the item record (`plans/`, 4.2), never into the worktree, and reviewed in the TUI.
 - **Run:** omp executes the approved plan with `--max-cost` and the implement‑role model. `runs/<id>/run.md` tracks state, spend, exit, and resulting commits, and every run brackets with `agent.run.start/end` audit events. lazygit opens beside the run for review. "Address comments" uses the same path, seeded with unresolved threads.
 - **Agent CLI drivers:** `omp`, `claude`, and `codex` are discovered on PATH and chosen per profile.
@@ -435,8 +509,8 @@ One confirm screen shows every write before it happens. It is idempotent: re‑r
 | Host | Detection | Workspace | Tasks | Editor |
 |---|---|---|---|---|
 | zellij | default; `$ZELLIJ` set or zellij on PATH | tabs/panes via `zellij action` | panes | ade-nvim / `$EDITOR` |
-| vscode | `$TERM_PROGRAM=vscode` and no zellij, or `host.mode=vscode` | `code <worktree>` new window | exported `.vscode/tasks.json` (`dependsOrder: parallel`) | `code -g file:line` |
-| plain | fallback | TUI only, `cd` hints | child processes with log viewer | `$EDITOR` |
+| vscode | `$TERM_PROGRAM=vscode` and no zellij, or `host.mode=vscode` | `code <worktree>` new window | exported `.vscode/tasks.json` (`dependsOn`, background readiness) | `code -g file:line` |
+| plain | fallback | TUI only, `cd` hints | ADE‑supervised processes in dependency order, with a log viewer | `$EDITOR` |
 
 VS Code specifics:
 
@@ -463,7 +537,7 @@ internal/sync/           scheduler, incremental fetch, repo mirror, manifest ref
 internal/ai/             drivers (omp, anthropic, openaicompat), prompts/ (versioned), result cache
 internal/budget/         ledger view over audit, prices, caps, estimates, gateway spend
 internal/agile/          standup, sprint review
-internal/workspace/      worktrees, layouts (KDL), tasks, vscode export
+internal/workspace/      worktrees + tree resolution, run graph (validate, toposort, readiness, instances, ports), layouts (KDL), vscode export
 internal/host/           zellij, vscode, plain
 internal/tui/            app shell, router, keymap, theme (from DESIGN.md); pages/, components/
 nix/                     ade-nvim, zellij config
@@ -486,7 +560,7 @@ Verification:
 | 0 | Foundations | flake (done), Go module, cobra skeleton, config load + `ade doctor`, audit writer + `ade audit`, zellij launcher (`ade` attaches/creates session `ade`), **visual‑world round → DESIGN.md** | `ade` opens a zellij session with a placeholder dashboard pane; `ade doctor --json` reports tools, config, and token checks; every command leaves an audit line |
 | 1 | Read‑only home | GitLab forge (issues, links, MRs, pipelines, milestones, iterations read), capability probe + `ade doctor --probe`, fake GitLab (free/premium), committed GraphQL schema + query validation, sync + cache, item records (`item.md` snapshots), iteration sources (`auto`, milestones, labels, cadence, GitLab iterations), stage/court derivation, Home page + preview | Fake‑server tests pass in both tier modes; every GraphQL document validates against the schema; on the GitLab sandbox (`scripts/sandbox/gitlab-seed.sh`), assigned tracker issues show correct child, MR, stage, court, and milestone‑based iteration window; navigation never waits on network; notes below the snapshot survive re‑sync |
 | 2 | MR page | threads, diff, CI tabs; reply, resolve, approve, ready, merge, retry | Full review round‑trip on a sandbox MR without the web UI |
-| 3 | Start work + workspaces | child issue/link/branch/MR/worktree flow, layouts, tasks, VS Code host + tasks.json export, ade-nvim | `s` on a tracker issue yields linked child + draft MR + worktree + tab; re‑run is idempotent; same flow works in VS Code terminal without zellij |
+| 3 | Start work + workspaces | child issue/link/branch/MR/worktree flow, checkout + run dependency graphs (2.1), baseline trees, port allocation, readiness probes, shared instances, layouts, VS Code host + tasks.json export, ade-nvim; sandbox `api` gains a tiny HTTP server with `/healthz` and `web` a dev server that calls `API_URL` | `s` on a tracker issue yields linked child + draft MR + worktree + tab; re‑run is idempotent. Opening a `web` workspace starts db → api (ready on `/healthz`) → web, with `API_URL` pointing at the right port. A second web workspace reuses the same baseline api instance. A work item with its own api branch gets its own api on a different port. Killing api leaves web marked `blocked`. Cycles are rejected with the path. The same flow works in VS Code via tasks.json without zellij |
 | 4 | AI explain + budget | drivers (omp, anthropic, openai‑compat), billing sources (litellm, omp first; anthropic, openai, moonshot, openrouter), AI artifacts + result cache, ledger over audit, caps, pre‑flight, budget page, Log page + History tab, profiles, summaries/classify/draft reply | Second summary of an unchanged MR costs $0 (cache hit), also after deleting `cache.db` and running `ade reindex`; against a local LiteLLM proxy (`nix develop .#gateway`) with a budgeted virtual key, the budget page matches `/key/info` and an over‑budget call is classified as `budget.stop`; cap breach blocks with a clear message; `ai.mode=off` hides nothing essential |
 | 5 | Agile | standup, sprint review (deterministic + AI narrative), exports, OSC 52 copy | Standup over a Monday correctly uses Friday; review totals match forge data on the sandbox |
 | 6 | Agents | plan/run/address‑comments via omp (claude/codex drivers), session dir in item record, run tracking, cost caps, lazygit integration | Plan → approve → run → review → push completes on a sandbox issue within `agent_run_usd`; the transcript lands only in the item record |
@@ -496,10 +570,10 @@ Verification:
 
 ## 9. Risks and open decisions
 
-- **No paid GitLab instance during development.** Premium paths (iterations, cadences, approval rules, `blocks` links) are built from the docs and the fake server alone, and confirmed later by `ade doctor --probe` (read‑only, shape‑only) on a real instance. Remaining doc gaps are listed in [gitlab-api/README.md](gitlab-api/README.md#open-questions-need-a-real-instance).
+- **No paid GitLab instance during development.** Premium paths (iterations, cadences, approval rules, `blocks` links) are built from the docs and the fake server alone, and confirmed later by `ade doctor --probe` (read‑only, shape‑only) on a real instance. Free‑tier behaviour is verified on the sandbox. Remaining gaps are listed in [gitlab-api/README.md](gitlab-api/README.md#open-questions-need-a-paid-instance).
 - **Subscription quota is not observable.** omp reports list‑price usage only, so subscription budgets are soft caps on that figure until a quota endpoint exists.
 - **VS Code key capture.** Some chords never reach the terminal. The keymap avoids Ctrl+Shift chords and documents `commandsToSkipShell`.
 - **Data egress** is governed only by which AI profiles each machine has configured. There is no per‑project policy, by decision; see 4.3.
 - **Local records** hold real work content in plain files. They stay outside repos, are created `0700`, and are never synced between machines. Backups are the user's call.
 - **Writes are irreversible‑ish.** Every forge write goes through a preview/confirm, and `--dry-run` is available on every write command.
-- Open: diff rendering inside the TUI vs always delegating to delta (decide after the Phase 2 spike); whether run tracking needs a socket once agents run in parallel.
+- Open: diff rendering inside the TUI vs always delegating to delta (decide after the Phase 2 spike); whether run tracking needs a socket once agents run in parallel; whether services should optionally run via `docker compose` / `process-compose` instead of plain commands (the run graph stays the same either way).
