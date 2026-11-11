@@ -1,0 +1,6 @@
+{"type":"thread.started","thread_id":"th-1"}
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"i1","type":"command_execution","command":"ls","status":"in_progress"}}
+{"type":"item.completed","item":{"id":"i1","type":"command_execution","command":"ls","aggregated_output":"a.txt","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"i2","type":"agent_message","text":"Plan: edit a.txt."}}
+{"type":"turn.completed","usage":{"input_tokens":12000,"cached_input_tokens":10000,"output_tokens":300}}

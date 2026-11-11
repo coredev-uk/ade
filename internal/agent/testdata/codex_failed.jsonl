@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"th-2"}
+{"type":"turn.started"}
+{"type":"error","message":"stream disconnected, retrying"}
+{"type":"turn.failed","error":{"message":"usage limit reached"}}
