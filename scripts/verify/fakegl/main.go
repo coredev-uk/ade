@@ -8,8 +8,10 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -25,6 +27,8 @@ func main() {
 	carried := flag.Bool("carried", false, "leave an open issue in Sprint 41 (Home's Previous sprint section; needs tracker.iterations.overlap)")
 	activity := flag.Bool("agile", false, "add the history the standup and sprint-review captures need")
 	review := flag.String("review", "", "MR refs (group/project!N, comma separated) to list under Reviews requested for the signed-in user")
+	gitRoot := flag.String("git-root", "", "directory for real bare remotes (DIR/<project>.git) of tracker, api and web; branches created through the API are created there too")
+	apps := flag.String("git-apps", "scripts/sandbox/apps", "with -git-root: directory whose api/ and web/ folders are committed to those remotes")
 	flag.Parse()
 	t := fake.Free
 	switch *tier {
@@ -39,8 +43,28 @@ func main() {
 	if *latency > 0 {
 		opts = append(opts, fake.WithLatency(*latency))
 	}
+	if *gitRoot != "" {
+		opts = append(opts, fake.WithGitRoot(*gitRoot))
+	}
 	srv := fake.New(t, opts...)
 	defer srv.Close()
+	if *gitRoot != "" {
+		for _, name := range []string{"tracker", "api", "web"} {
+			files := map[string]string{"README.md": name + " service\n"}
+			if name != "tracker" {
+				if err := addTree(files, filepath.Join(*apps, name)); err != nil {
+					srv.Close()
+					fmt.Fprintln(os.Stderr, "fakegl:", err)
+					os.Exit(2) //nolint:gocritic // the server is closed explicitly above
+				}
+			}
+			if err := srv.InitRemote(fake.GroupPath+"/"+name, files); err != nil {
+				srv.Close()
+				fmt.Fprintln(os.Stderr, "fakegl:", err)
+				os.Exit(2)
+			}
+		}
+	}
 	if *activity {
 		seedAgile(srv)
 	}
@@ -128,3 +152,20 @@ func seedAgile(srv *fake.Server) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// addTree reads every file under dir into files, keyed by its slash path
+// relative to dir.
+func addTree(files map[string]string, dir string) error {
+	return filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(dir, p)
+		files[filepath.ToSlash(rel)] = string(b)
+		return err
+	})
+}

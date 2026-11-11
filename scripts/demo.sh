@@ -7,9 +7,9 @@
 #   nix develop -c bash scripts/demo.sh            # drive it yourself
 #   nix develop -c bash scripts/demo.sh --record   # also write demo.gif (VHS tour)
 #
-# Not in the demo: forge clones (the fake has no git remotes), so start work
-# stops at the worktree step and workspaces have nothing to run. The live
-# sandbox flows are covered by scripts/verify/phase*.sh.
+# Start work is real end to end: the fake serves git remotes too (file://
+# bare repos with the sandbox apps), so branches, worktrees and workspaces
+# work. The live sandbox flows are covered by scripts/verify/phase*.sh.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 REPO=$(pwd)
@@ -21,7 +21,9 @@ go build -o "$T/ade" ./cmd/ade
 go build -o "$T/fakegl" ./scripts/verify/fakegl
 cp scripts/verify/fakeomp "$T/fakeomp"
 
-"$T/fakegl" -tier premium -agile -carried -mr-template -review ade-demo-env/api!2 >"$T/gl.url" 2>"$T/gl.err" &
+mkdir -p "$T/remotes"
+"$T/fakegl" -tier premium -agile -carried -mr-template -review ade-demo-env/api!2 \
+  -git-root "$T/remotes" -git-apps "$REPO/scripts/sandbox/apps" >"$T/gl.url" 2>"$T/gl.err" &
 PIDS+=($!)
 for _ in $(seq 50); do [[ -s $T/gl.url ]] && break; sleep 0.1; done
 URL=$(head -1 "$T/gl.url")
@@ -30,7 +32,11 @@ URL=$(head -1 "$T/gl.url")
 mkdir -p "$T/projects"
 sed -e 's/^weight .*/weight     = { source = "gitlab" }/' \
   -e 's/^iterations = .*/iterations = { source = "milestones", overlap = 10 }/' \
-  scripts/sandbox/manifests/gitlab.ade.toml >"$T/manifest.ade.toml"
+  scripts/sandbox/manifests/gitlab.ade.toml |
+  awk -v api="file://$T/remotes/api.git" -v web="file://$T/remotes/web.git" '
+    {print}
+    /^path +=.*\/api"/ {print "url  = \"" api "\""}
+    /^path +=.*\/web"/ {print "url  = \"" web "\""}' >"$T/manifest.ade.toml"
 cat >"$T/config.toml" <<EOF
 [user]
 handle = "sandbox"
@@ -61,6 +67,7 @@ output = 5.0
 daily_usd = 5.0
 EOF
 export ADE_CONFIG="$T/config.toml" XDG_DATA_HOME="$T/data" XDG_CACHE_HOME="$T/cache" FAKE_GITLAB_TOKEN=fake-token
+"$T/ade" project add "$T/manifest.ade.toml" >/dev/null
 "$T/ade" sync >/dev/null
 "$T/ade" notify send --kind ci.failed --severity error --project demo-gl \
   --subject "ade-demo-env/tracker#2" --title "web!1 pipeline failed: lint" >/dev/null

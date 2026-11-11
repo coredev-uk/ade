@@ -72,6 +72,7 @@ type options struct {
 	clock    time.Time
 	pageSize int
 	latency  time.Duration
+	gitRoot  string
 }
 
 // Option customises a Server.

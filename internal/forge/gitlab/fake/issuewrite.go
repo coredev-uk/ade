@@ -349,6 +349,10 @@ func (s *Server) createBranch(w http.ResponseWriter, r *http.Request) {
 	case !slices.Contains(rs.branches[proj.Path], from):
 		writeJSON(w, http.StatusBadRequest, object{"message": "Invalid reference name: " + from})
 	default:
+		if err := s.createRemoteBranch(proj.Path, name, from); err != nil {
+			writeJSON(w, http.StatusInternalServerError, object{"message": err.Error()})
+			return
+		}
 		rs.branches[proj.Path] = append(rs.branches[proj.Path], name)
 		if o := rs.overlay[proj.Path+"@"+from]; o != nil {
 			rs.overlay[proj.Path+"@"+name] = maps.Clone(o)
