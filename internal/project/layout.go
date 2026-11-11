@@ -43,6 +43,16 @@ func readSnapshot(dir string) (*snapshot, error) {
 	return &sn, nil
 }
 
+// LoadManifest reads the last good manifest snapshot of the project cloned
+// into projectDir (<root>/<project>).
+func LoadManifest(projectDir string) (*config.Manifest, error) {
+	sn, err := readSnapshot(projectDir)
+	if err != nil {
+		return nil, err
+	}
+	return sn.parse()
+}
+
 // writeSnapshot replaces the snapshot atomically so readers never see a torn file.
 func writeSnapshot(dir string, sn snapshot) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {

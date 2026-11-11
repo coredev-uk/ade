@@ -6,6 +6,7 @@ forge = "sandbox-gitlab"
 project    = "ade-demo-env/tracker"
 board      = "Delivery"
 iterations = { source = "milestones" }   # the sandbox is Free tier: no iterations
+weight     = { source = "label", pattern = "weight::{value}" }   # Free tier: no weight field
 
 [labels.type]
 pattern = "type::{value}"
@@ -17,6 +18,7 @@ pattern = "app::{value}"
 pattern = "workflow::{value}"
 stage   = { started = "in progress", draft = "in progress", review = "in review", merged = "done" }
 sync    = "auto"
+done    = "done"                       # open tracker labelled done counts as done (closed at sprint end)
 
 [repos.api]
 path = "ade-demo-env/api"
@@ -31,3 +33,37 @@ requires = ["api"]
 branch = "{child_iid}-{slug}"
 link   = ["relates_to", "description"]
 mr     = { draft = true, closes = "child", mention = "parent" }
+
+# Run graph (docs/PLAN.md 2.1): db -> api -> web. api is the tiny Go server in
+# scripts/sandbox/apps/api (pushed by apps-seed.sh); `api db` is its synthetic in-memory
+# database, which /healthz probes at $DB_ADDR; web calls $API_URL/healthz.
+[repos.api.tasks.check]
+cmd  = "go vet ./..."
+kind = "oneshot"                         # must exit 0 before dependents start
+
+[repos.api.tasks.db]
+cmd      = "go run . db"
+port     = "auto"
+requires = ["api.check"]
+env      = { PORT = "{port}" }
+ready    = { tcp = "127.0.0.1:{port}", timeout = "120s" }
+
+[repos.api.tasks.dev]
+cmd      = "go run ."
+port     = "auto"
+requires = ["api.db"]
+env      = { PORT = "{port}", DB_ADDR = "127.0.0.1:{api.db.port}" }
+ready    = { http = "http://127.0.0.1:{port}/healthz", timeout = "120s" }
+
+[repos.web.tasks.dev]
+cmd      = "go run ."
+port     = "auto"
+requires = ["api.dev"]
+env      = { PORT = "{port}", API_URL = "http://127.0.0.1:{api.dev.port}" }
+ready    = { log = 'web ready on :\d+', timeout = "120s" }
+
+[groups]
+dev = ["web.dev"]                        # pulls in api.dev -> api.db -> api.check
+
+[workspaces]
+default = { layout = "code", run = "dev" }
