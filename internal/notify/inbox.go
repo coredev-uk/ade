@@ -14,7 +14,7 @@ import (
 )
 
 func init() {
-	store.Register(`CREATE TABLE inbox (
+	store.Register("notify.inbox", `CREATE TABLE inbox (
 		id       TEXT PRIMARY KEY,
 		time     INTEGER NOT NULL,
 		kind     TEXT NOT NULL,
@@ -26,7 +26,7 @@ func init() {
 		link     TEXT NOT NULL DEFAULT '',
 		read     INTEGER NOT NULL DEFAULT 0
 	)`)
-	store.Register(`CREATE INDEX inbox_unread_time ON inbox (read, time DESC)`)
+	store.Register("notify.inbox_unread_time", `CREATE INDEX inbox_unread_time ON inbox (read, time DESC)`)
 }
 
 // Item is an inbox row.

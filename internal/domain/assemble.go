@@ -1,0 +1,111 @@
+package domain
+
+import (
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/coredev-uk/ade/internal/config"
+	"github.com/coredev-uk/ade/internal/forge"
+)
+
+// AssembleInput is everything needed to derive one WorkItem. The caller does
+// the fetching; Assemble only interprets.
+type AssembleInput struct {
+	Project    string // ADE project (manifest name)
+	Manifest   *config.Manifest
+	Me         string // current forge username
+	Tracker    forge.Issue
+	Links      []forge.Link  // the tracker's links
+	Candidates []forge.Issue // issues that may be children; unrelated ones are ignored
+	MRs        []forge.MR    // MRs of the tracker and its children
+	Branches   []string      // branches known for the item's work (no MR yet)
+	Sprints    []Sprint      // for resolving the item's sprint
+	Now        time.Time     // evaluation time; stage/court do not depend on it today
+}
+
+// Assemble derives a work item from forge facts.
+func Assemble(in AssembleInput) WorkItem {
+	m := in.Manifest
+	if m == nil {
+		m = &config.Manifest{}
+	}
+	f := FacetsOf(in.Tracker.Labels, m.Labels)
+	kids := children(in.Tracker, in.Links, in.Candidates)
+
+	item := WorkItem{
+		Project:  in.Project,
+		Ref:      in.Tracker.Ref,
+		Issue:    in.Tracker,
+		Children: kids,
+		MRs:      in.MRs,
+		Type:     f.Type,
+		Apps:     f.Apps,
+		Repos:    reposFor(m, f.Apps),
+		Workflow: f.Workflow,
+		Weight:   ResolveWeight(in.Tracker, m.Tracker.Weight),
+		Sprint:   SprintOf(in.Tracker, m.Tracker.Iterations, in.Sprints),
+		Assigned: assignedTo(in.Tracker, in.Me),
+	}
+	item.Stage = deriveStage(in.Tracker, kids, in.MRs, in.Branches)
+	// The team's done label finishes an open tracker, unless an MR is still
+	// open: then the label is ahead of the work and shows as drift instead.
+	if d := m.Labels.Workflow.Done; item.Stage != StageDone && d != "" &&
+		strings.EqualFold(item.Workflow, d) && len(openMRs(in.MRs)) == 0 {
+		item.Stage, item.KeptOpen = StageDone, true
+	}
+	blocked := blockedReason(in.Tracker, in.Links, m.Labels)
+	item.Blocked = blocked != "" && item.Stage != StageDone
+	item.Court, item.Reason, item.Upstream = deriveCourt(&item, m, in.Me, blocked)
+
+	item.WantWorkflow = WantWorkflow(item.Stage, m.Labels)
+	if item.KeptOpen {
+		item.WantWorkflow = item.Workflow
+	}
+	// A deliberate "blocked" label is not drift from the derived stage.
+	item.Drift = item.WantWorkflow != "" && item.Workflow != item.WantWorkflow && !strings.EqualFold(item.Workflow, blockedValue)
+	item.Triage = triage(item, m)
+	return item
+}
+
+func assignedTo(issue forge.Issue, me string) bool {
+	if me == "" {
+		return false
+	}
+	return slices.ContainsFunc(issue.Assignees, func(u forge.User) bool {
+		return strings.EqualFold(u.Username, me)
+	})
+}
+
+// reposFor lists the manifest repos any of apps routes to, in manifest order.
+func reposFor(m *config.Manifest, apps []string) []string {
+	var out []string
+	for _, name := range m.RepoNames() {
+		for _, a := range m.Repos[name].App {
+			if slices.ContainsFunc(apps, func(x string) bool { return strings.EqualFold(x, a) }) {
+				out = append(out, name)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// triage lists the facets still missing on an open item, limited to those the
+// manifest configures. Closed items need no triage.
+func triage(item WorkItem, m *config.Manifest) []string {
+	if item.Stage == StageDone {
+		return nil
+	}
+	var out []string
+	if item.Type == "" {
+		out = append(out, "type")
+	}
+	if m.Labels.App.Pattern != "" && len(item.Apps) == 0 {
+		out = append(out, "app")
+	}
+	if m.Tracker.Weight.Source != "none" && item.Weight == nil {
+		out = append(out, "weight")
+	}
+	return out
+}

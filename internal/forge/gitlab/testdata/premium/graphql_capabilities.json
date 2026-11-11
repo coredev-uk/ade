@@ -1,0 +1,8 @@
+{
+  "data": {
+    "group": {
+      "iterationCadences": {"nodes": [{"id": "gid://gitlab/Iterations::Cadence/1"}]},
+      "workItemTypes": {"nodes": [{"name": "Epic"}]}
+    }
+  }
+}

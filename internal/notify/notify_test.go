@@ -1,14 +1,11 @@
 package notify
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -30,46 +27,30 @@ func newApp(t *testing.T, n config.Notify) *app.App {
 	return a
 }
 
-type syncBuf struct {
-	mu sync.Mutex
-	b  bytes.Buffer
-}
-
-func (s *syncBuf) Write(p []byte) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.b.Write(p)
-}
-
-func TestChannelRules(t *testing.T) {
-	a := newApp(t, config.Notify{
-		Toast:    []string{"*"},
-		Terminal: []string{"git.*.failed"},
-	})
+func TestToastRules(t *testing.T) {
+	a := newApp(t, config.Notify{Toast: []string{"git.*.failed", "ci.*"}})
 	var toasts []string
-	term := &syncBuf{}
 	stop, err := Attach(context.Background(), a, Channels{
-		Toast:    func(e events.Event) { toasts = append(toasts, e.Kind) },
-		Terminal: term,
+		Toast: func(e events.Event) { toasts = append(toasts, e.Kind) },
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	a.Bus.Publish(events.New("git.pull.failed", events.Error, "pull failed"))
 	a.Bus.Publish(events.New("task.done", events.Success, "done"))
+	a.Bus.Publish(events.New("ci.failed", events.Error, "pipeline failed"))
 	stop()
-
-	if len(toasts) != 2 {
-		t.Errorf("toasts = %v, want both events", toasts)
+	if strings.Join(toasts, ",") != "git.pull.failed,ci.failed" {
+		t.Errorf("toasts = %v, want only the matching kinds", toasts)
 	}
-	out := term.b.String()
-	if !strings.Contains(out, "pull failed") || strings.Contains(out, "done") {
-		t.Errorf("terminal got %q, want only the git.*.failed event", out)
+	st, _ := a.Cache()
+	if n, _ := NewInbox(st).UnreadCount(); n != 3 {
+		t.Errorf("inbox unread = %d, want all 3 recorded regardless of toast rules", n)
 	}
 }
 
 func TestNilChannelsStillRecord(t *testing.T) {
-	a := newApp(t, config.Notify{Toast: []string{"*"}, Terminal: []string{"*"}, Desktop: []string{"*"}})
+	a := newApp(t, config.Notify{Toast: []string{"*"}})
 	stop, err := Attach(context.Background(), a, Channels{})
 	if err != nil {
 		t.Fatal(err)
@@ -84,10 +65,9 @@ func TestNilChannelsStillRecord(t *testing.T) {
 }
 
 func TestTransientToastsButIsNotRecorded(t *testing.T) {
-	a := newApp(t, config.Notify{Toast: []string{"*"}, Terminal: []string{"*"}})
+	a := newApp(t, config.Notify{Toast: []string{"*"}})
 	var toasts int
-	var term strings.Builder
-	stop, err := Attach(context.Background(), a, Channels{Toast: func(events.Event) { toasts++ }, Terminal: &term})
+	stop, err := Attach(context.Background(), a, Channels{Toast: func(events.Event) { toasts++ }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,59 +77,8 @@ func TestTransientToastsButIsNotRecorded(t *testing.T) {
 	stop()
 	st, _ := a.Cache()
 	n, err := NewInbox(st).UnreadCount()
-	if err != nil || n != 0 || toasts != 1 || term.Len() != 0 {
-		t.Fatalf("unread=%d err=%v toasts=%d terminal=%q; want 0, nil, 1, empty", n, err, toasts, term.String())
-	}
-}
-
-func TestQuietMutesTerminalNotToast(t *testing.T) {
-	n := &notifier{
-		cfg: config.Notify{Toast: []string{"*"}, Terminal: []string{"*"}, Quiet: "22:00-07:00"},
-		now: func() time.Time { return time.Date(2026, 1, 1, 23, 0, 0, 0, time.Local) },
-	}
-	st, err := store.Open(filepath.Join(t.TempDir(), "c.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	n.inbox = NewInbox(st)
-	term := &syncBuf{}
-	toasted := false
-	n.ch = Channels{Toast: func(events.Event) { toasted = true }, Terminal: term}
-	n.handle(context.Background(), events.New("a.b", events.Error, "boom"))
-	if !toasted {
-		t.Error("toast should ignore quiet hours")
-	}
-	if term.b.Len() != 0 {
-		t.Errorf("terminal written during quiet hours: %q", term.b.String())
-	}
-}
-
-func TestInQuiet(t *testing.T) {
-	at := func(h, m int) time.Time { return time.Date(2026, 1, 1, h, m, 0, 0, time.Local) }
-	cases := []struct {
-		window string
-		t      time.Time
-		want   bool
-	}{
-		{"", at(3, 0), false},
-		{"garbage", at(3, 0), false},
-		{"25:00-07:00", at(3, 0), false},
-		{"09:00-17:00", at(9, 0), true},
-		{"09:00-17:00", at(16, 59), true},
-		{"09:00-17:00", at(17, 0), false},
-		{"09:00-17:00", at(8, 59), false},
-		{"22:00-07:00", at(23, 30), true},
-		{"22:00-07:00", at(0, 0), true},
-		{"22:00-07:00", at(6, 59), true},
-		{"22:00-07:00", at(7, 0), false},
-		{"22:00-07:00", at(12, 0), false},
-		{"22:00-22:00", at(22, 0), false},
-	}
-	for _, c := range cases {
-		if got := inQuiet(c.window, c.t); got != c.want {
-			t.Errorf("inQuiet(%q, %s) = %v, want %v", c.window, c.t.Format("15:04"), got, c.want)
-		}
+	if err != nil || n != 0 || toasts != 1 {
+		t.Fatalf("unread=%d err=%v toasts=%d; want 0, nil, 1", n, err, toasts)
 	}
 }
 
@@ -169,23 +98,6 @@ func TestStopDrainsPublishedEvents(t *testing.T) {
 	items, err := NewInbox(st).List(ListOpts{})
 	if err != nil || len(items) != total {
 		t.Fatalf("recorded %d of %d (err %v)", len(items), total, err)
-	}
-}
-
-func TestTerminalSanitised(t *testing.T) {
-	e := events.New("x.y", events.Error, "bad\x1b]0;pwn\x07 ti;tle")
-	e.Detail = "line1\x1b[31m red\nsecond line"
-	seq := terminalSequence(e)
-	// Exactly the sequence's own ESC and BEL bytes may remain.
-	if got := strings.Count(seq, "\x1b"); got != 1 {
-		t.Errorf("ESC count = %d in %q, want 1 (the OSC introducer only)", got, seq)
-	}
-	if got := strings.Count(seq, "\a"); got != 1 {
-		t.Errorf("BEL count = %d in %q, want 1 (the OSC terminator only)", got, seq)
-	}
-	want := "\x1b]9;bad]0,pwn ti,tle: line1[31m red\a"
-	if seq != want {
-		t.Errorf("got %q\nwant %q", seq, want)
 	}
 }
 
@@ -273,34 +185,6 @@ func TestGetByIDAndPrefix(t *testing.T) {
 	}
 	if _, err := in.Get("%"); !errors.Is(err, sql.ErrNoRows) {
 		t.Errorf("LIKE wildcard must be escaped: %v", err)
-	}
-}
-
-func TestDesktopRequiresDisplayAndBinary(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("PATH", dir)
-	t.Setenv("DISPLAY", ":0")
-	t.Setenv("WAYLAND_DISPLAY", "")
-	if desktopBinary() != "" {
-		t.Error("no notify-send on PATH should disable desktop")
-	}
-	out := filepath.Join(dir, "args")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + out + "\n"
-	if err := os.WriteFile(filepath.Join(dir, "notify-send"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	bin := desktopBinary()
-	if bin == "" {
-		t.Fatal("notify-send on PATH with DISPLAY set should enable desktop")
-	}
-	t.Setenv("DISPLAY", "")
-	if desktopBinary() != "" {
-		t.Error("no display should disable desktop")
-	}
-	sendDesktop(context.Background(), bin, events.New("a.b", events.Error, "title"))
-	got, err := os.ReadFile(out)
-	if err != nil || !strings.Contains(string(got), "--urgency=critical") {
-		t.Errorf("args = %q, %v", got, err)
 	}
 }
 

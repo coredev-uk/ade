@@ -1,0 +1,21 @@
+{
+  "id": 7,
+  "iid": 3,
+  "project_id": 1,
+  "title": "Draft: older instances spell draft work_in_progress",
+  "description": null,
+  "state": "opened",
+  "created_at": "2018-01-22T22:00:00.000Z",
+  "updated_at": "2018-01-24T22:00:00.000Z",
+  "merged_at": null,
+  "target_branch": "master",
+  "source_branch": "wip",
+  "author": {"id": 1, "username": "root", "name": "Administrator", "state": "active"},
+  "assignees": [],
+  "work_in_progress": true,
+  "web_url": "https://gitlab.example.com/my-group/my-project/merge_requests/3",
+  "references": {"short": "!3", "relative": "!3", "full": "my-group/my-project!3"},
+  "sha": "5d2c7a1e0b9f4c3d8a6e1f2b7c4d9e0a3b5c6d7e",
+  "merge_status": "can_be_merged",
+  "pipeline": {"id": 8, "status": "running", "web_url": "https://gitlab.example.com/my-group/my-project/pipelines/8", "updated_at": "2018-01-24T22:00:00.000Z"}
+}

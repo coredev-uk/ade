@@ -1,0 +1,14 @@
+query GroupCapabilities($path: ID!) {
+  group(fullPath: $path) {
+    iterationCadences(first: 1) {
+      nodes {
+        id
+      }
+    }
+    workItemTypes(name: EPIC) {
+      nodes {
+        name
+      }
+    }
+  }
+}

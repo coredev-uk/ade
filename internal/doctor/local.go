@@ -56,6 +56,10 @@ type tool struct {
 	why  string
 }
 
+// agentDrivers are the CLIs `ade agent` drives: when one is missing, it is
+// reported unavailable rather than merely not installed.
+var agentDrivers = map[string]bool{"omp": true, "claude": true, "codex": true}
+
 var tools = []tool{
 	{"git", required, [2]int{2, 38}, "bare clones and worktrees"},
 	{"zellij", recommended, [2]int{}, "the work-tab host"},
@@ -96,6 +100,9 @@ func checkTool(ctx context.Context, o Options, t tool) Check {
 			c.Status, c.Detail, c.Fix = Warn, "not found on PATH", "install "+t.bin+": "+t.why
 		default:
 			c.Status, c.Detail = OK, "not installed (optional: "+t.why+")"
+			if agentDrivers[t.bin] {
+				c.Detail = "unavailable: not installed (agent driver: ade agent --driver " + t.bin + " cannot run)"
+			}
 		}
 		return c
 	}

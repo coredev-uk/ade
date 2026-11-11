@@ -1,0 +1,23 @@
+{
+  "id": 5,
+  "iid": 5,
+  "project_id": 1,
+  "title": "Approvals API",
+  "state": "opened",
+  "merge_status": "can_be_merged",
+  "approved": true,
+  "approved_by": [
+    {
+      "user": {
+        "id": 1,
+        "username": "root",
+        "name": "Administrator",
+        "state": "active",
+        "avatar_url": "https://www.gravatar.com/avatar/e64c7d89f26bd1972efa854d13d7dd61?s=80&d=identicon",
+        "web_url": "http://localhost:3000/root"
+      }
+    }
+  ],
+  "user_has_approved": true,
+  "user_can_approve": false
+}

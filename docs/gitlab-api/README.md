@@ -94,8 +94,41 @@ The sandbox, seeded by `scripts/sandbox/gitlab-seed.sh`, answered these question
 | Cross-project `relates_to` link on Free | works; the list shows `references.full` = `group/api#1`, `link_type` = `relates_to` |
 | MR discussions on Free | resolvable (`notes[0].resolved` true/false) |
 | `task_completion_status` | populated from Markdown checklists (`1/4`) |
+| `GET /projects/:id/approval_rules` on Free | `200 []`, so status can't detect the feature; `merge_request_approvers_available: false` on an MR's `/approvals` response does |
+| `approvals_required` on Free | `0`, which would read as "none required"; ADE reports "unknown" (`-1`) when approvers are unavailable |
+| `group.epics` (GraphQL) on Free | deprecated; returns `{nodes: []}`, not null. ADE probes `workItemTypes(name: EPIC)` (empty on Free) plus `iterationCadences` (null on Free) |
+| Issue `weight` / `iteration` on Free | absent from REST responses |
+| Milestone `state` for a past milestone | stays `active` until someone closes it; ADE derives sprints from dates, never from state |
+| Unknown `iteration_id` filter on Free | `[]` |
+| `/api/graphql` auth | accepts the `PRIVATE-TOKEN` header |
 
-So on GitLab, a 403 means "gated feature unavailable" for capability probing.
+So on GitLab, a 403 means "gated feature unavailable" for most capability probes; approval rules and epics need the field-level probes above.
+
+Phase 2 write paths (MR page, review batching), also on the Free sandbox:
+
+| Question | Result |
+|---|---|
+| Nested JSON bodies for writes | accepted: `position` as an object on `POST …/discussions` and `…/draft_notes`, `resolved` on `PUT …/discussions/:id`, `title` on `PUT …/merge_requests/:iid`, `sha` on `…/approve` and `…/merge` |
+| Draft notes and `bulk_publish` on Free | work; after one `POST …/draft_notes/bulk_publish` the draft list is empty and each draft is a discussion, created within ~0.4s of each other (one request, one notification) |
+| Position on a renamed file | `old_path` = old name, `new_path` = new name; an added line anchors with `new_line` alone (`old_line: null`); an unchanged line needs both numbers, which differ after an insertion (old 7 / new 8) |
+| `GET …/diffs` for a rename with edits | `renamed_file: true`, `old_path`/`new_path` differ, `diff` holds the hunks without a `---`/`+++` preamble |
+| Draft toggle | no REST draft parameter: ADE adds or strips the `Draft: ` title prefix with `PUT` (verified both ways) |
+| Merge right after MR creation | `405` until GitLab has computed mergeability; a retry a few seconds later succeeds |
+| Retry | the sandbox has no CI, so MRs have no pipeline: `ade mr retry` reports "no pipeline" and skips (audited as skipped); retry stays covered by the fake |
+
+Phase 3 write paths (Start work), also on the Free sandbox:
+
+| Question | Result |
+|---|---|
+| `POST …/issues` with `assignee_ids`, `milestone_id`, `labels` | accepted; a group milestone id from the tracker works in the child's project |
+| `PUT …/issues/:iid` with `add_labels` + `remove_labels` | one update adds and removes, which is how ADE moves a workflow label (Free keeps every `::` label, so the old one is removed explicitly) |
+| Linking an already linked pair (`POST …/links`) | `409`; ADE treats it as done |
+| `POST …/repository/branches` for an existing name | `400 Branch already exists` (ADE maps it to "exists") |
+| `GET …/repository/branches?search=^412-` | prefix search; ADE also filters client-side |
+| `POST …/merge_requests` | no draft parameter: a `Draft: ` title prefix makes it a draft; a second open MR for the same source branch answers `409` |
+| Quick actions in the MR description (`/label ~"type::story"`) | run on create and are removed from the stored description |
+| `GET …/repository/files/:path/raw?ref=` for a template | works on a private project with the token header; a missing file is `404` |
+| GraphQL `issueSetIteration` on Free | answers `{errors: [], issue: {iid}}` and does nothing (no error, no iteration), so ADE only calls it when the tracker issue carries an iteration |
 
 ## Open questions (need a paid instance)
 

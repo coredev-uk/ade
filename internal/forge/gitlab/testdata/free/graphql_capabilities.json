@@ -1,0 +1,14 @@
+{
+  "errors": [
+    {
+      "message": "The resource that you are attempting to access does not exist or you don't have permission to perform this action",
+      "path": ["group", "iterationCadences"]
+    }
+  ],
+  "data": {
+    "group": {
+      "iterationCadences": null,
+      "workItemTypes": {"nodes": []}
+    }
+  }
+}

@@ -1,0 +1,30 @@
+[
+  {
+    "id": 12,
+    "iid": 3,
+    "group_id": 16,
+    "title": "10.0",
+    "description": "Version",
+    "due_date": "2013-11-29",
+    "start_date": "2013-11-10",
+    "state": "active",
+    "updated_at": "2013-10-02T09:24:18Z",
+    "created_at": "2013-10-02T09:24:18Z",
+    "expired": false,
+    "web_url": "https://gitlab.com/groups/gitlab-org/-/milestones/42"
+  },
+  {
+    "id": 13,
+    "iid": 4,
+    "group_id": 16,
+    "title": "Someday",
+    "description": "No dates yet",
+    "due_date": null,
+    "start_date": null,
+    "state": "closed",
+    "updated_at": "2013-10-02T09:24:18Z",
+    "created_at": "2013-10-02T09:24:18Z",
+    "expired": false,
+    "web_url": "https://gitlab.com/groups/gitlab-org/-/milestones/43"
+  }
+]

@@ -1,0 +1,21 @@
+{
+  "id": 77,
+  "iid": 7,
+  "project_id": 1,
+  "title": "An issue nobody has estimated",
+  "description": null,
+  "state": "opened",
+  "created_at": "2016-01-04T15:31:51.081Z",
+  "updated_at": "2016-01-04T15:31:51.081Z",
+  "closed_at": null,
+  "labels": [],
+  "milestone": null,
+  "assignees": [],
+  "author": {"id": 18, "username": "eileen.lowe", "name": "Alexandra Bashirian", "state": "active"},
+  "web_url": "http://gitlab.example.com/my-group/my-project/issues/7",
+  "references": {"short": "#7", "relative": "#7", "full": "my-group/my-project#7"},
+  "task_completion_status": {"count": 0, "completed_count": 0},
+  "weight": null,
+  "epic": null,
+  "iteration": null
+}

@@ -1,0 +1,55 @@
+{
+  "id": 76,
+  "iid": 6,
+  "project_id": 1,
+  "title": "Consequatur vero maxime deserunt laboriosam est voluptas dolorem.",
+  "description": "Ratione dolores corrupti mollitia soluta quia.",
+  "state": "closed",
+  "created_at": "2016-01-04T15:31:51.081Z",
+  "updated_at": "2016-01-05T15:31:51.081Z",
+  "closed_at": "2016-01-05T15:31:51.081Z",
+  "labels": ["foo", "bar"],
+  "milestone": null,
+  "assignees": [],
+  "assignee": null,
+  "author": {
+    "state": "active",
+    "id": 18,
+    "web_url": "https://gitlab.example.com/eileen.lowe",
+    "name": "Alexandra Bashirian",
+    "avatar_url": null,
+    "username": "eileen.lowe"
+  },
+  "web_url": "http://gitlab.example.com/my-group/my-project/issues/6",
+  "references": {
+    "short": "#6",
+    "relative": "my-project#6",
+    "full": "my-group/my-project#6"
+  },
+  "task_completion_status": {
+    "count": 0,
+    "completed_count": 0
+  },
+  "weight": 3,
+  "epic": {
+    "id": 42,
+    "iid": 5,
+    "title": "My epic epic",
+    "url": "/groups/h5bp/-/epics/5",
+    "group_id": 8
+  },
+  "iteration": {
+    "id": 90,
+    "iid": 4,
+    "sequence": 2,
+    "group_id": 162,
+    "title": null,
+    "description": null,
+    "state": 2,
+    "created_at": "2022-03-14T05:21:11.929Z",
+    "updated_at": "2022-03-14T05:21:11.929Z",
+    "start_date": "2022-03-08",
+    "due_date": "2022-03-14",
+    "web_url": "https://gitlab.com/groups/my-group/-/iterations/90"
+  }
+}
