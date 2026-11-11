@@ -12,7 +12,7 @@ ADE's GitLab driver is built from the official docs, not from a paid test instan
 
 ### Tracker → child issue
 
-- **No hierarchy link.** The docs only allow issue → task as an issue's child, and tasks must sit in the same project as their parent issue. Issue → issue parenting is not supported. Epics can hold cross-project issues, but they are Premium and their REST API is deprecated. ADE therefore never relies on hierarchy or epics.
+- **No hierarchy link.** The docs only allow issue → task as an issue's child, and tasks must sit in the same project as their parent issue. Issue → issue parenting is not supported. Epics can hold cross-project issues, but they are Premium and their REST API is deprecated. ADE therefore never relies on hierarchy for the tracker → child link. It only *reads* a tracker issue's parent epic (GraphQL hierarchy widget, capability-gated) to display it.
 - **Link convention, Free tier:** `POST /projects/:id/issues/:iid/links` with `link_type=relates_to`, `target_project_id`, and `target_issue_iid` (cross-project works), **plus** a `Parent: group/tracker#N` line in the child's description.
 - **Reading back** accepts: the link, the description reference, MR closing patterns, and the work-item hierarchy where one happens to exist.
 - `blocks` / `is_blocked_by` links are Premium, so ADE only *reads* them, for blocker detection.

@@ -99,7 +99,6 @@ label() { # name color description
 # iterations are a paid feature and are exercised through the fake server instead.
 label "type::story" "#009966" "User-facing change"
 label "type::bug" "#dc143c" "Defect"
-label "type::epic" "#6a5acd" "Groups related stories via issue links"
 label "app::api" "#1f75cb" "Routes work to the api project"
 label "app::web" "#6699cc" "Routes work to the web project"
 label "workflow::in progress" "#428bca" "Being worked on"
@@ -191,9 +190,6 @@ T_DEPS=$(issue "$TRACKER" "Upgrade export worker dependencies" \
 T_STALE=$(issue "$TRACKER" "Exports page sometimes shows stale totals" \
   "Reported by support: totals lag behind the table after a filter change. No labels yet (needs triage)." \
   "" "$M_CUR" yes)
-T_EPIC=$(issue "$TRACKER" "Export reliability" \
-  "Umbrella for work that keeps large exports fast and predictable." \
-  "type::epic,app::api" "$M_CUR" no)
 
 # --- child issues + links (tracker-project pattern) -------------------------
 child() { # code_pid parent_iid title labels -> child iid
@@ -218,9 +214,6 @@ C_FONT=$(child "$WEB_P" "$T_FONT" "Fix truncated column headers in export previe
 link "$T_FONT" "$WEB_P" "$C_FONT"
 C_DEPS=$(child "$API_P" "$T_DEPS" "Upgrade export worker dependencies" "type::story")
 link "$T_DEPS" "$API_P" "$C_DEPS"
-
-# Epic-typed tracker issue groups its stories through same-project links.
-for t in "$T_RATE" "$T_BILL" "$T_WEBHOOK"; do link "$T_EPIC" "$TRACKER" "$t"; done
 
 # --- branches, commits, MRs -------------------------------------------------
 slug() { tr '[:upper:]' '[:lower:]' <<<"$1" | sed -E 's/[^a-z0-9]+/-/g; s/^-|-$//g'; }
@@ -309,7 +302,7 @@ cat <<EOF
 Done.
   group     $GITLAB_URL/$GROUP
   tracker   #$T_RATE #$T_AUDIT #$T_WEBHOOK #$T_CSV #$T_TZ #$T_BILL #$T_DARK #$T_SCHED #$T_FONT #$T_DEPS
-            epic #$T_EPIC (links #$T_RATE #$T_BILL #$T_WEBHOOK)   needs triage #$T_STALE   multi-app #$T_SCHED
+            needs triage #$T_STALE   multi-app #$T_SCHED
   api       child #$C_RATE  MR !$MR_RATE (ready, 2 open threads)   child #$C_DEPS (closed)
   web       child #$C_AUDIT MR !$MR_AUDIT (draft)                  child #$C_FONT  MR !$MR_FONT (merged)
 EOF

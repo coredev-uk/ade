@@ -147,7 +147,7 @@ iterations = { source = "gitlab-iterations", cadence = "Delivery" }   # cadence 
 
 # Labels carry three independent facets. Patterns are per team; values come from the forge.
 [labels.type]
-pattern = "type::{value}"              # story | bug | epic | …  (display, filters, sprint review grouping)
+pattern = "type::{value}"              # story | bug | … (display, filters)
 
 [labels.app]
 pattern = "app::{value}"               # value routes the issue to repos whose `app` lists it
@@ -155,7 +155,7 @@ pattern = "app::{value}"               # value routes the issue to repos whose `
 [labels.workflow]
 pattern = "workflow::{value}"          # the board column
 stage   = { started = "in progress", draft = "in progress", review = "in review", merged = "done" }
-sync    = "ask"                        # off | ask | auto: move the label when the derived stage changes
+sync    = "auto"                       # auto | ask | off: move the label when the derived stage changes
 
 [repos.api]
 path  = "acme/api"
@@ -346,12 +346,14 @@ stateDiagram-v2
   - **GitHub** supports real cross‑repo sub‑issues. This was verified on the sandbox, so ADE uses them plus the same description reference.
   - **Reading** accepts any of: link, sub‑issue/hierarchy, description reference, or MR/PR `Closes`/mentions, so inconsistent historical data still resolves. See [gitlab-api/README.md](gitlab-api/README.md).
 - **Labels:** three facets, each described by a pattern in the manifest (2):
-  - **type** (story, bug, epic, …): shown as a glyph and word on every row. Used for filters, and for grouping in sprint review. Epic‑typed issues group the issues linked to them.
+  - **type** (story, bug, …): shown as a glyph and word on every row, and used for filters.
   - **app**: the routing signal. Every `app` value on a tracker issue maps to the repos that list it. More than one value means a cross‑repo work item, and Start work offers a child in each.
-  - **workflow**: the team's board column. ADE derives the stage from forge facts (child, branch, MR, CI, approvals) and *compares* it with the workflow label.
-    - A mismatch shows as drift, e.g. `label: in review · MR still draft`.
-    - With `sync = ask|auto`, ADE moves the label as the stage changes. It always removes the old workflow label explicitly, because `::` labels are not exclusive on Free (verified) and ADE can't rely on scoped‑label exclusivity.
+  - **workflow**: the team's board column. ADE derives the stage from forge facts (child, branch, MR, CI, approvals) and, with `sync = "auto"` (the default), moves the label to match.
+    - Every move removes the old workflow label explicitly, because `::` labels are not exclusive on Free (verified) and ADE can't rely on scoped‑label exclusivity. Each move is audited.
+    - Moves are edge‑triggered: they happen only when the derived stage *changes*. A label someone sets by hand stays until the next transition, and meanwhile any contradiction shows as drift (`label: in review · MR still draft`). `ask` confirms each move; `off` only shows drift.
   - **Unmatched issues:** issues missing a type or app label appear in a "needs triage" filter. `c` (classify) suggests the missing labels, deterministically from title and description keywords, or with AI when it is enabled. Labels are applied only on confirm.
+- **Epics:** teams differ, so nothing is assumed. Where tracker issues have a parent epic (GitLab group‑level epics, Premium), ADE shows the epic title on the row and preview, and can group sprint review by it. It reads the epic through the work‑item hierarchy widget and gates it by capability. ADE never creates or edits epics.
+- **No team convention is hard‑coded.** Label patterns, workflow values, cadence choice, child‑link style, and branch naming all come from the manifest, because they vary between teams even inside one company.
 - **Iteration window:** show the current iteration. Within `overlap` (default 1 working day) of its end, also show the next. Within `overlap` of its start, also show the previous. Working days come from `user.workdays`. Iteration sources implement one interface: `Current(now)`, `Adjacent(n)`, `Issues(it)`.
   - **GitLab iterations (primary at work):**
     - Find them with `GET /groups/:id/iterations?state=current|upcoming|closed&include_ancestors=true`, narrowed to one cadence by `search=<cadence>&in=cadence_title` when configured.
@@ -359,6 +361,7 @@ stateDiagram-v2
     - Iterations created by an automatic cadence have `title: null`, so ADE labels them `<cadence> · 3–14 Nov`.
     - Start work copies the parent's iteration to the child with GraphQL `issueSetIteration`, since REST has no iteration write.
   - Iterations are Premium, so they are tested against the fake server's premium mode and confirmed at work by `ade doctor --probe`. The Free sandbox exercises the same window logic through milestones.
+  - Cadences can start on any weekday. GitLab's `due_date` is an iteration's last day, and the next iteration starts the following day. So the header reads `ends Mon 16 Nov · next starts Tue 17`, and "within 1 working day of the end" counts back from `due_date`. Tests cover cadences that start mid‑week, weekends inside an iteration, and 1/2/3/4‑week lengths.
 
 ---
 
