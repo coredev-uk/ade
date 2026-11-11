@@ -16,5 +16,8 @@ result-*
 .ade/
 /.sandbox/
 
-# impeccable runtime dirs ignore themselves; keep config.local.json private
+# impeccable runtime dirs; keep config.local.json private
 .impeccable/config.local.json
+.impeccable/mocks/
+.impeccable/review/
+.impeccable/questions/

@@ -21,8 +21,10 @@ func configChecks(o Options) []Check {
 	case o.Config == nil:
 		return nil
 	case o.Config.Missing:
-		return []Check{{group, "config file", Warn, "not found at " + o.ConfigFile + "; defaults in use",
-			"create " + o.ConfigFile + " with at least one [forges.<name>] and a [[projects]] entry"}}
+		return []Check{{
+			group, "config file", Warn, "not found at " + o.ConfigFile + "; defaults in use",
+			"create " + o.ConfigFile + " with at least one [forges.<name>] and a [[projects]] entry",
+		}}
 	}
 	checks := []Check{{Group: group, Name: "config file", Status: OK, Detail: o.ConfigFile}}
 	issues := o.Config.Validate()

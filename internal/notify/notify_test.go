@@ -83,6 +83,25 @@ func TestNilChannelsStillRecord(t *testing.T) {
 	}
 }
 
+func TestTransientToastsButIsNotRecorded(t *testing.T) {
+	a := newApp(t, config.Notify{Toast: []string{"*"}, Terminal: []string{"*"}})
+	var toasts int
+	var term strings.Builder
+	stop, err := Attach(context.Background(), a, Channels{Toast: func(events.Event) { toasts++ }, Terminal: &term})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := events.New("git.update.done", events.Success, "all repos up to date")
+	e.Transient = true
+	a.Bus.Publish(e)
+	stop()
+	st, _ := a.Cache()
+	n, err := NewInbox(st).UnreadCount()
+	if err != nil || n != 0 || toasts != 1 || term.Len() != 0 {
+		t.Fatalf("unread=%d err=%v toasts=%d terminal=%q; want 0, nil, 1, empty", n, err, toasts, term.String())
+	}
+}
+
 func TestQuietMutesTerminalNotToast(t *testing.T) {
 	n := &notifier{
 		cfg: config.Notify{Toast: []string{"*"}, Terminal: []string{"*"}, Quiet: "22:00-07:00"},
@@ -157,14 +176,14 @@ func TestTerminalSanitised(t *testing.T) {
 	e := events.New("x.y", events.Error, "bad\x1b]0;pwn\x07 ti;tle")
 	e.Detail = "line1\x1b[31m red\nsecond line"
 	seq := terminalSequence(e)
-	// Exactly the sequence's own ESC (2) and BEL (3) bytes may remain.
-	if got := strings.Count(seq, "\x1b"); got != 2 {
-		t.Errorf("ESC count = %d in %q, want 2", got, seq)
+	// Exactly the sequence's own ESC and BEL bytes may remain.
+	if got := strings.Count(seq, "\x1b"); got != 1 {
+		t.Errorf("ESC count = %d in %q, want 1 (the OSC introducer only)", got, seq)
 	}
-	if got := strings.Count(seq, "\a"); got != 3 {
-		t.Errorf("BEL count = %d in %q, want 3", got, seq)
+	if got := strings.Count(seq, "\a"); got != 1 {
+		t.Errorf("BEL count = %d in %q, want 1 (the OSC terminator only)", got, seq)
 	}
-	want := "\x1b]777;notify;bad]0,pwn ti,tle;line1[31m red\a\x1b]9;bad]0,pwn ti,tle\a\a"
+	want := "\x1b]9;bad]0,pwn ti,tle: line1[31m red\a"
 	if seq != want {
 		t.Errorf("got %q\nwant %q", seq, want)
 	}
@@ -282,5 +301,26 @@ func TestDesktopRequiresDisplayAndBinary(t *testing.T) {
 	got, err := os.ReadFile(out)
 	if err != nil || !strings.Contains(string(got), "--urgency=critical") {
 		t.Errorf("args = %q, %v", got, err)
+	}
+}
+
+func TestInboxRecordRedactsSecrets(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "cache.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	in := NewInbox(st)
+	e := events.New("git.fetch.failed", events.Error, "fetch failed")
+	e.Detail = "fatal: unable to access 'https://oauth2:glpat-abcdefghij0123456789@gitlab.com/a/b.git/'"
+	if err := in.Record(e); err != nil {
+		t.Fatal(err)
+	}
+	it, err := in.Get(e.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(it.Detail, "glpat") || !strings.Contains(it.Detail, "https://***@gitlab.com") {
+		t.Errorf("detail not redacted: %q", it.Detail)
 	}
 }

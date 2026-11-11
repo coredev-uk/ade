@@ -32,8 +32,10 @@ type repoSync struct {
 // syncRepo makes sure one repo is cloned, has its baseline worktree, and (when
 // updating) is fetched and fast-forwarded. A failure stops this repo only.
 func (s *Service) syncRepo(ctx context.Context, r *run, name string, m mode) RepoResult {
-	rs := &repoSync{s: s, run: r, name: name, repo: r.manifest.Repos[name], m: m,
-		dir: filepath.Join(r.dir, name), res: RepoResult{Project: r.name, Repo: name}}
+	rs := &repoSync{
+		s: s, run: r, name: name, repo: r.manifest.Repos[name], m: m,
+		dir: filepath.Join(r.dir, name), res: RepoResult{Project: r.name, Repo: name},
+	}
 	rs.bare = filepath.Join(rs.dir, ".bare")
 	rs.sync(ctx)
 	return rs.res
@@ -51,6 +53,12 @@ func (rs *repoSync) sync(ctx context.Context) {
 		rs.fail(ctx, "clone", "git.clone.failed", "", fmt.Errorf("write .git file: %w", err))
 		return
 	}
+	// A worktree whose directory was deleted by hand stays registered and
+	// blocks re-adding it, and would fail every pull below.
+	if err := rs.git.PruneWorktrees(ctx, rs.bare); err != nil {
+		rs.fail(ctx, "clone", "git.clone.failed", "", fmt.Errorf("prune worktrees: %w", err))
+		return
+	}
 	created, ok := rs.ensureBaseline(ctx)
 	if !ok {
 		return
@@ -59,7 +67,7 @@ func (rs *repoSync) sync(ctx context.Context) {
 		rs.runHooks(ctx)
 	}
 	if rs.m == modeUpdate && !fresh {
-		rs.pullAll(ctx, created)
+		rs.pullAll(ctx)
 	}
 }
 
@@ -92,8 +100,10 @@ func (rs *repoSync) ensureBare(ctx context.Context) (fresh, ok bool) {
 	}
 	rs.res.Cloned = true
 	rs.s.publish("git.clone.ok", events.Success, rs.run.name, rs.name, "cloned "+rs.run.name+"/"+rs.name, "")
-	rs.s.audit(audit.Entry{Action: "git.clone", Target: url, Project: rs.run.name,
-		Params: map[string]any{"repo": rs.name}})
+	rs.s.audit(audit.Entry{
+		Action: "git.clone", Target: url, Project: rs.run.name,
+		Params: map[string]any{"repo": rs.name},
+	})
 	return true, true
 }
 
@@ -147,8 +157,10 @@ func (rs *repoSync) ensureBaseline(ctx context.Context) (created, ok bool) {
 func (rs *repoSync) runHooks(ctx context.Context) {
 	for _, cmd := range rs.repo.Hooks.PostClone {
 		out, err := git.RunHook(ctx, rs.baseDir, cmd)
-		e := audit.Entry{Action: "git.hook", Target: rs.baseDir, Project: rs.run.name,
-			Params: map[string]any{"hook": "post_clone", "cmd": cmd}}
+		e := audit.Entry{
+			Action: "git.hook", Target: rs.baseDir, Project: rs.run.name,
+			Params: map[string]any{"hook": "post_clone", "cmd": cmd},
+		}
 		if err != nil {
 			e.Outcome, e.Error = "error", err.Error()
 			rs.s.audit(e)
@@ -162,10 +174,8 @@ func (rs *repoSync) runHooks(ctx context.Context) {
 }
 
 // pullAll fast-forwards the baseline and then the feature worktrees.
-func (rs *repoSync) pullAll(ctx context.Context, baselineCreated bool) {
-	if !baselineCreated {
-		rs.pull(ctx, rs.baseDir, true)
-	}
+func (rs *repoSync) pullAll(ctx context.Context) {
+	rs.pull(ctx, rs.baseDir, true)
 	trees, err := rs.git.Worktrees(ctx, rs.bare)
 	if err != nil {
 		rs.fail(ctx, "pull", "git.pull.failed", rs.name, err)
@@ -234,8 +244,10 @@ func (rs *repoSync) fastForward(ctx context.Context, tree, subject string, behin
 	rs.res.Pulled = append(rs.res.Pulled, subject)
 	rs.s.publish("git.pull.ok", events.Success, rs.run.name, subject,
 		fmt.Sprintf("%s fast-forwarded (%d new)", subject, behind), "")
-	rs.s.audit(audit.Entry{Action: "git.pull", Target: tree, Project: rs.run.name,
-		Params: map[string]any{"from": from, "to": to, "commits": behind}})
+	rs.s.audit(audit.Entry{
+		Action: "git.pull", Target: tree, Project: rs.run.name,
+		Params: map[string]any{"from": from, "to": to, "commits": behind},
+	})
 }
 
 // fail records a failure, publishes its event with git's stderr as detail, and

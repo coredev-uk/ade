@@ -126,7 +126,7 @@ func (s *Service) client(ctx context.Context, preferredForge, rawURL string) (gi
 	}
 	tok, err := s.tokens.get(ctx, name, f)
 	if err != nil {
-		return git.Client{}, fmt.Errorf("forge %s token: %w", name, err)
+		return git.Client{}, fmt.Errorf("forge %s token: %w: %w", name, git.ErrCredentials, err)
 	}
 	return git.Client{Env: git.TokenEnv(rawURL, gitUser(f.Kind), tok)}, nil
 }

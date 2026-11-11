@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/coredev-uk/ade/internal/audit"
 	"github.com/coredev-uk/ade/internal/events"
 	"github.com/coredev-uk/ade/internal/store"
 )
@@ -49,10 +50,12 @@ func NewInbox(s *store.Store) *Inbox { return &Inbox{db: s.DB} }
 
 const cols = `id, time, kind, severity, project, subject, title, detail, link, read`
 
-// Record stores e unread; recording the same ID twice is a no-op.
+// Record stores e unread, with credentials masked (git stderr can echo a
+// URL carrying one); recording the same ID twice is a no-op.
 func (in *Inbox) Record(e events.Event) error {
 	_, err := in.db.Exec(`INSERT OR IGNORE INTO inbox (`+cols+`) VALUES (?,?,?,?,?,?,?,?,?,0)`,
-		e.ID, e.Time.UnixNano(), e.Kind, e.Severity.String(), e.Project, e.Subject, e.Title, e.Detail, e.Link)
+		e.ID, e.Time.UnixNano(), e.Kind, e.Severity.String(), e.Project, e.Subject,
+		audit.Redact(e.Title), audit.Redact(e.Detail), audit.Redact(e.Link))
 	if err != nil {
 		return fmt.Errorf("record inbox event %s: %w", e.ID, err)
 	}

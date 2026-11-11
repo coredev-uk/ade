@@ -91,8 +91,10 @@ func ValidateAll(ms []*Manifest, cfg *Config) map[string][]Issue {
 		}
 		list := newManifestValidator(m, cfg, byName).run()
 		if first, dup := byName[m.Name]; dup && first != m {
-			list = append(list, Issue{SeverityError, "name",
-				fmt.Sprintf("project name %q is already defined by %s", m.Name, first.Source)})
+			list = append(list, Issue{
+				SeverityError, "name",
+				fmt.Sprintf("project name %q is already defined by %s", m.Name, first.Source),
+			})
 		}
 		out[key] = append(out[key], list...)
 	}
@@ -512,8 +514,22 @@ func (v *manifestValidator) checkConventions() {
 	if s := m.Labels.Workflow.Sync; !oneOf(s, "", "auto", "ask", "off") {
 		v.errorf("labels.workflow.sync", "unknown value %q: want auto, ask or off", s)
 	}
+	if s := m.Conventions.ChildIssue; !oneOf(s, "", "auto", "always", "never") {
+		v.errorf("conventions.child_issue", "unknown value %q: want auto, always or never", s)
+	}
+	if s := m.Conventions.MR.Create; !oneOf(s, "", "ask", "always", "never") {
+		v.errorf("conventions.mr.create", "unknown value %q: want ask, always or never", s)
+	}
 	if s := m.Tracker.Iterations.Source; !oneOf(s, "", "auto", "gitlab-iterations", "milestones", "labels", "github-project", "cadence") {
 		v.errorf("tracker.iterations.source", "unknown source %q: want auto, gitlab-iterations, milestones, labels, github-project or cadence", s)
+	}
+	switch w := m.Tracker.Weight; {
+	case !oneOf(w.Source, "", "auto", "gitlab", "label", "github-field", "none"):
+		v.errorf("tracker.weight.source", "unknown source %q: want auto, gitlab, label, github-field or none", w.Source)
+	case w.Source == "label" && !strings.Contains(w.Pattern, "{value}"):
+		v.errorf("tracker.weight.pattern", "label weights need a pattern containing {value}, e.g. \"weight::{value}\"")
+	case w.Source == "github-field" && w.Field == "":
+		v.errorf("tracker.weight.field", "github-field weights need the project field name, e.g. \"Estimate\"")
 	}
 }
 

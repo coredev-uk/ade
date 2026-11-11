@@ -28,6 +28,14 @@ type Tracker struct {
 	Project    string           `toml:"project"`
 	Board      string           `toml:"board"`
 	Iterations IterationsSource `toml:"iterations"`
+	Weight     WeightSource     `toml:"weight"`
+}
+
+// WeightSource says where issue weights (story points) come from.
+type WeightSource struct {
+	Source  string `toml:"source"`  // auto | gitlab | label | github-field | none
+	Pattern string `toml:"pattern"` // label source, e.g. "weight::{value}"
+	Field   string `toml:"field"`   // github-field source, e.g. "Estimate"
 }
 
 type IterationsSource struct {
@@ -115,13 +123,16 @@ type Conventions struct {
 	ChildTitle string   `toml:"child_title"`
 	ChildBody  string   `toml:"child_body"`
 	Link       []string `toml:"link"`
+	ChildIssue string   `toml:"child_issue"` // auto | always | never
 	MR         MRConv   `toml:"mr"`
 }
 
 type MRConv struct {
-	Draft   bool   `toml:"draft"`
-	Closes  string `toml:"closes"`
-	Mention string `toml:"mention"`
+	Create   string `toml:"create"`   // ask | always | never
+	Template string `toml:"template"` // template name in the repo's MR template dir
+	Draft    bool   `toml:"draft"`
+	Closes   string `toml:"closes"`
+	Mention  string `toml:"mention"`
 }
 
 type Workspace struct {

@@ -247,12 +247,11 @@ func TestAddFillsGaps(t *testing.T) {
 	if _, err := e.svc.Add(context.Background(), src); err != nil {
 		t.Fatal(err)
 	}
-	// A deleted baseline tree is recreated; its stale worktree record is pruned first.
+	// A deleted baseline tree is recreated: its stale worktree record is pruned by ADE.
 	main := e.tree("demo", "api", "main")
 	if err := os.RemoveAll(main); err != nil {
 		t.Fatal(err)
 	}
-	gitCmd(t, filepath.Join(e.app.Root, "demo", "api"), "worktree", "prune")
 	rep, err := e.svc.Add(context.Background(), src)
 	if err != nil || rep.Failed() {
 		t.Fatalf("add: %v %+v", err, rep)
@@ -302,6 +301,28 @@ func TestUpdateFastForwardsCleanBaseline(t *testing.T) {
 	}
 }
 
+func TestUpdateRecreatesDeletedBaselineAndCatchesUp(t *testing.T) {
+	e := newEnv(t)
+	r := newRemote(t, "api")
+	src := e.manifest("demo", map[string]*remote{"api": r}, nil)
+	if _, err := e.svc.Add(context.Background(), src); err != nil {
+		t.Fatal(err)
+	}
+	main := e.tree("demo", "api", "main")
+	if err := os.RemoveAll(main); err != nil {
+		t.Fatal(err)
+	}
+	r.commit("new", "data")
+	r.push("main")
+	rep, err := e.svc.Update(context.Background())
+	if err != nil || rep.Failed() {
+		t.Fatalf("update: %v %+v", err, rep)
+	}
+	if !exists(filepath.Join(main, "new")) {
+		t.Error("recreated baseline is behind origin")
+	}
+}
+
 func TestUpdateNothingToDo(t *testing.T) {
 	e := newEnv(t)
 	r := newRemote(t, "api")
@@ -314,8 +335,8 @@ func TestUpdateNothingToDo(t *testing.T) {
 		t.Fatal(err)
 	}
 	evs := e.drain()
-	if len(evs) != 1 || evs[0].Title != "all repos up to date" || evs[0].Severity != events.Success {
-		t.Errorf("events = %+v", evs)
+	if len(evs) != 1 || evs[0].Title != "all repos up to date" || evs[0].Severity != events.Success || !evs[0].Transient {
+		t.Errorf("events = %+v, want one transient success summary", evs)
 	}
 }
 

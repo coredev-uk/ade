@@ -56,6 +56,9 @@ type Event struct {
 	Title    string // one line, shown in toasts and the inbox list
 	Detail   string // multi-line detail (stderr, log tail)
 	Link     string // URL or ade-internal target
+	// Transient events are shown (toast) but not recorded in the inbox or sent
+	// to terminal/desktop channels: status, not news.
+	Transient bool
 }
 
 // New fills ID and Time.

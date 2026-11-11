@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -29,17 +30,22 @@ func TestErrorCapturesStderrAndClassifies(t *testing.T) {
 
 func TestReason(t *testing.T) {
 	tests := map[string]string{
-		"remote: HTTP Basic: Access denied":                         "auth",
-		"fatal: could not read Username: terminal prompts disabled": "auth",
-		"git@x: Permission denied (publickey).":                     "auth",
-		"fatal: Could not resolve host: gitlab.com":                 "network",
-		"remote: Repository not found.":                             "not found",
-		"something else":                                            "failed",
+		"remote: HTTP Basic: Access denied":                           "auth",
+		"fatal: could not read Username: terminal prompts disabled":   "auth",
+		"git@x: Permission denied (publickey).":                       "auth",
+		"fatal: Could not resolve host: gitlab.com":                   "network",
+		"remote: Repository not found.":                               "not found",
+		"fatal: repository 'https://x/y.git/' not found":              "not found",
+		"remote: The project you were looking for could not be found": "not found",
+		"something else": "failed",
 	}
 	for stderr, want := range tests {
 		if got := Reason(&Error{Stderr: stderr, Err: errors.New("exit 128")}); got != want {
 			t.Errorf("Reason(%q) = %q, want %q", stderr, got, want)
 		}
+	}
+	if got := Reason(fmt.Errorf("forge x token: %w: boom", ErrCredentials)); got != "auth" {
+		t.Errorf("credentials = %q", got)
 	}
 	if got := Reason(context.Canceled); got != "cancelled" {
 		t.Errorf("cancel = %q", got)

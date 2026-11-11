@@ -80,6 +80,12 @@ func desktopBinary() string {
 }
 
 func (n *notifier) handle(ctx context.Context, e events.Event) {
+	if e.Transient {
+		if n.ch.Toast != nil && matchAny(n.cfg.Toast, e.Kind) {
+			n.ch.Toast(e)
+		}
+		return
+	}
 	// Delivery is best-effort; a full disk must not stop toasts.
 	if err := n.inbox.Record(e); err != nil {
 		fmt.Fprintln(os.Stderr, "ade: notify:", err)
@@ -139,15 +145,21 @@ func parseClock(s string) (int, bool) {
 	return t.Hour()*60 + t.Minute(), true
 }
 
-// terminalSequence builds OSC 777 (kitty/VTE/zellij-style) and OSC 9 (iTerm2,
-// Windows Terminal, VS Code) notifications plus a BEL for terminals with
-// neither.
+// terminalSequence builds one OSC 9 desktop notification ("title: body").
+// One sequence, not several: terminals that understand both OSC 9 and OSC 777
+// would otherwise notify twice, and zellij rewrites a pane's OSC 777 into
+// OSC 9 anyway (verified with zellij 0.45). No BEL: zellij drops it and
+// elsewhere it only beeps.
 func terminalSequence(e events.Event) string {
 	title, body := sanitize(e.Title), sanitize(e.Detail)
 	if body == "" {
 		body = sanitize(e.Subject)
 	}
-	return "\x1b]777;notify;" + title + ";" + body + "\a" + "\x1b]9;" + title + "\a" + "\a"
+	msg := title
+	if body != "" {
+		msg += ": " + body
+	}
+	return "\x1b]9;" + msg + "\a"
 }
 
 // sanitize drops control characters (and ';', the OSC 777 field separator) so

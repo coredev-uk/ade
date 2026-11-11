@@ -54,10 +54,16 @@ func (e *Error) Error() string {
 
 func (e *Error) Unwrap() error { return e.Err }
 
+// ErrCredentials marks failures to obtain a forge token before git even ran.
+var ErrCredentials = errors.New("credentials unavailable")
+
 // Reason condenses err into a few words for summaries ("auth", "network", ...).
 func Reason(err error) string {
 	if errors.Is(err, context.Canceled) {
 		return "cancelled"
+	}
+	if errors.Is(err, ErrCredentials) {
+		return "auth"
 	}
 	var ge *Error
 	if !errors.As(err, &ge) {
@@ -76,7 +82,8 @@ func Reason(err error) string {
 	case has("authentication failed", "could not read username", "terminal prompts disabled",
 		"permission denied", "invalid credentials", "error: 401", "error: 403", "access denied"):
 		return "auth"
-	case has("repository not found", "does not appear to be a git repository"):
+	case has("repository not found", "does not appear to be a git repository",
+		"' not found", "could not be found"):
 		return "not found"
 	case has("could not resolve host", "connection refused", "timed out", "network is unreachable",
 		"unable to access", "could not read from remote"):
@@ -214,6 +221,12 @@ func BranchDir(branch string) string { return strings.ReplaceAll(branch, "/", "-
 // origin/<branch>.
 func (c Client) AddTracking(ctx context.Context, bare, dir, branch string) error {
 	_, err := c.Run(ctx, bare, "worktree", "add", "--track", "-b", branch, dir, "origin/"+branch)
+	return err
+}
+
+// PruneWorktrees drops registrations of worktrees whose directory is gone.
+func (c Client) PruneWorktrees(ctx context.Context, bare string) error {
+	_, err := c.Run(ctx, bare, "worktree", "prune")
 	return err
 }
 

@@ -1,29 +1,53 @@
-// Package tui is the ADE dashboard.
+// Package tui is the ADE dashboard (Interchange direction; see
+// .impeccable/surfaces/internal-tui.md).
 package tui
 
 import (
 	"context"
+	"fmt"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/coredev-uk/ade/internal/app"
+	"github.com/coredev-uk/ade/internal/events"
+	"github.com/coredev-uk/ade/internal/notify"
+	"github.com/coredev-uk/ade/internal/project"
 )
 
-type model struct{}
-
-func (model) Init() tea.Cmd { return nil }
-
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if k, ok := msg.(tea.KeyPressMsg); ok && (k.String() == "q" || k.String() == "ctrl+c") {
-		return m, tea.Quit
+// Run shows the dashboard until the user quits. It owns the update loop and
+// the notifier for this process: events become toasts and inbox rows, and
+// terminal notifications are written through the renderer, never around it.
+func Run(ctx context.Context, a *app.App) error {
+	cache, err := a.Cache()
+	if err != nil {
+		return fmt.Errorf("open cache: %w", err)
 	}
-	return m, nil
+	svc := project.New(a, "ade:update")
+	m := model{ctx: ctx, app: a, svc: svc, in: notify.NewInbox(cache), g: glyphSet(a.Config.Host.Glyphs)}
+	p := tea.NewProgram(m, tea.WithContext(ctx))
+
+	svc.OnProgress = func(pr project.Progress) { p.Send(progressMsg(pr)) }
+	stop, err := notify.Attach(ctx, a, notify.Channels{
+		Toast:    func(e events.Event) { p.Send(eventMsg(e)) },
+		Terminal: rawWriter{p},
+	})
+	if err != nil {
+		return err
+	}
+	defer stop()
+
+	_, err = p.Run()
+	if err != nil && ctx.Err() != nil {
+		return nil // interrupted: not a failure
+	}
+	return err
 }
 
-func (model) View() tea.View { return tea.NewView("ADE\n") }
+// rawWriter routes terminal-notification escape sequences through Bubble Tea
+// so they never interleave with a half-drawn frame.
+type rawWriter struct{ p *tea.Program }
 
-// Run shows the dashboard until the user quits.
-func Run(ctx context.Context, _ *app.App) error {
-	_, err := tea.NewProgram(model{}, tea.WithContext(ctx)).Run()
-	return err
+func (w rawWriter) Write(b []byte) (int, error) {
+	w.p.Send(rawMsg(string(b)))
+	return len(b), nil
 }

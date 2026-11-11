@@ -18,7 +18,8 @@ import (
 	"github.com/oklog/ulid/v2"
 )
 
-// Entry is one audited action. Params must already be free of secrets.
+// Entry is one audited action. Append masks credentials in Target, Error,
+// URL and Params (see Redact), but callers should still keep secrets out.
 type Entry struct {
 	ID      string         `json:"id"`
 	TS      time.Time      `json:"ts"`
@@ -79,6 +80,7 @@ func (l *Log) Append(e Entry) error {
 	if e.Outcome == "" {
 		e.Outcome = "ok"
 	}
+	redactEntry(&e)
 	line, err := json.Marshal(e)
 	if err != nil {
 		return err

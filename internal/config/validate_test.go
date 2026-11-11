@@ -68,17 +68,27 @@ func TestManifestValidate(t *testing.T) {
 		{"repo without path or url", header + "[repos.a]\n", []string{"error: repos.a: needs path or url"}},
 		{"repo with url only", header + "[repos.a]\nurl = \"https://example.com/a.git\"\n", nil},
 		{"reserved repo name", header + "[repos.services]\npath = \"x\"\n", []string{"repos.services: \"services\" is reserved"}},
-		{"unknown repo require", header + "[repos.a]\npath = \"x\"\nrequires = [\"b\"]\n",
-			[]string{"error: repos.a.requires[0]: unknown repo \"b\""}},
-		{"checkout cycle", header + "[repos.a]\npath = \"x\"\nrequires = [\"b\"]\n[repos.b]\npath = \"y\"\nrequires = [\"a\"]\n",
-			[]string{"checkout dependency cycle: a → b → a"}},
-		{"checkout self cycle", header + "[repos.a]\npath = \"x\"\nrequires = [\"a\"]\n",
-			[]string{"checkout dependency cycle: a → a"}},
+		{
+			"unknown repo require", header + "[repos.a]\npath = \"x\"\nrequires = [\"b\"]\n",
+			[]string{"error: repos.a.requires[0]: unknown repo \"b\""},
+		},
+		{
+			"checkout cycle", header + "[repos.a]\npath = \"x\"\nrequires = [\"b\"]\n[repos.b]\npath = \"y\"\nrequires = [\"a\"]\n",
+			[]string{"checkout dependency cycle: a → b → a"},
+		},
+		{
+			"checkout self cycle", header + "[repos.a]\npath = \"x\"\nrequires = [\"a\"]\n",
+			[]string{"checkout dependency cycle: a → a"},
+		},
 		{"qualified repo require alone is unchecked", header + "[repos.a]\npath = \"x\"\nrequires = [\"shared/auth\"]\n", nil},
-		{"unknown task require", header + "[repos.a]\npath = \"x\"\n[repos.a.tasks.t]\ncmd = \"x\"\nrequires = [\"a.nope\"]\n",
-			[]string{"error: repos.a.tasks.t.requires[0]: unknown reference \"a.nope\""}},
-		{"malformed require", header + "[repos.a]\npath = \"x\"\n[repos.a.tasks.t]\ncmd = \"x\"\nrequires = [\"a\"]\n",
-			[]string{"requires[0]: malformed reference"}},
+		{
+			"unknown task require", header + "[repos.a]\npath = \"x\"\n[repos.a.tasks.t]\ncmd = \"x\"\nrequires = [\"a.nope\"]\n",
+			[]string{"error: repos.a.tasks.t.requires[0]: unknown reference \"a.nope\""},
+		},
+		{
+			"malformed require", header + "[repos.a]\npath = \"x\"\n[repos.a.tasks.t]\ncmd = \"x\"\nrequires = [\"a\"]\n",
+			[]string{"requires[0]: malformed reference"},
+		},
 		{"qualified require alone is unchecked", header + "[repos.a]\npath = \"x\"\n[repos.a.tasks.t]\ncmd = \"x\"\nrequires = [\"shared/auth.dev\"]\n", nil},
 		{"run cycle with path", header + `
 [repos.a]
@@ -95,20 +105,30 @@ requires = ["a.one"]
 `, []string{"error: services.s.requires[0]: dependency cycle: a.one → a.two → services.s → a.one"}},
 		{"bad kind", header + "[services.s]\ncmd = \"x\"\nkind = \"daemon\"\n", []string{"services.s.kind: unknown kind \"daemon\""}},
 		{"missing cmd", header + "[services.s]\nport = \"auto\"\n", []string{"services.s.cmd: required"}},
-		{"two ready probes", header + "[services.s]\ncmd = \"x\"\nready = { http = \"http://x\", tcp = \"x:1\" }\n",
-			[]string{"services.s.ready: set at most one"}},
-		{"oneshot with ready", header + "[services.s]\ncmd = \"x\"\nkind = \"oneshot\"\nready = { tcp = \"x:1\" }\n",
-			[]string{"services.s.ready.tcp: oneshot tasks are ready when they exit 0"}},
+		{
+			"two ready probes", header + "[services.s]\ncmd = \"x\"\nready = { http = \"http://x\", tcp = \"x:1\" }\n",
+			[]string{"services.s.ready: set at most one"},
+		},
+		{
+			"oneshot with ready", header + "[services.s]\ncmd = \"x\"\nkind = \"oneshot\"\nready = { tcp = \"x:1\" }\n",
+			[]string{"services.s.ready.tcp: oneshot tasks are ready when they exit 0"},
+		},
 		{"oneshot without ready", header + "[services.s]\ncmd = \"x\"\nkind = \"oneshot\"\n", nil},
 		{"bad ready log regexp", header + "[services.s]\ncmd = \"x\"\nready = { log = \"(\" }\n", []string{"services.s.ready.log: invalid regular expression"}},
-		{"fixed port clash", header + "[services.a]\ncmd = \"x\"\nport = 5432\n[services.b]\ncmd = \"x\"\nport = 5432\n",
-			[]string{"error: services.b.port: fixed port 5432 is also used by services.a"}},
+		{
+			"fixed port clash", header + "[services.a]\ncmd = \"x\"\nport = 5432\n[services.b]\ncmd = \"x\"\nport = 5432\n",
+			[]string{"error: services.b.port: fixed port 5432 is also used by services.a"},
+		},
 		{"auto ports never clash", header + "[services.a]\ncmd = \"x\"\nport = \"auto\"\n[services.b]\ncmd = \"x\"\nport = \"auto\"\n", nil},
 		{"invalid task name", header + "[services.\"a.b\"]\ncmd = \"x\"\n", []string{"services.a.b: invalid name"}},
-		{"group unknown member", header + "[services.s]\ncmd = \"x\"\n[groups]\ndev = [\"services.s\", \"s.t\"]\n",
-			[]string{"error: groups.dev[1]: unknown reference \"s.t\""}},
-		{"workspace unknown group", header + "[workspaces]\nd = { layout = \"code\", run = \"nope\" }\n",
-			[]string{"error: workspaces.d.run: unknown group \"nope\""}},
+		{
+			"group unknown member", header + "[services.s]\ncmd = \"x\"\n[groups]\ndev = [\"services.s\", \"s.t\"]\n",
+			[]string{"error: groups.dev[1]: unknown reference \"s.t\""},
+		},
+		{
+			"workspace unknown group", header + "[workspaces]\nd = { layout = \"code\", run = \"nope\" }\n",
+			[]string{"error: workspaces.d.run: unknown group \"nope\""},
+		},
 		{"workspace without run", header + "[workspaces]\nd = { layout = \"code\" }\n", nil},
 		{"label pattern without value", header + "[labels.type]\npattern = \"type::\"\n", []string{"labels.type.pattern: pattern \"type::\" must contain {value}"}},
 		{"workflow pattern without value", header + "[labels.workflow]\npattern = \"wf\"\n", []string{"labels.workflow.pattern:"}},
@@ -152,12 +172,16 @@ func TestEnvTemplates(t *testing.T) {
 	}{
 		{"own port dir state", envBase + "[repos.web.tasks.dev.env]\nA = \"{port}{dir}{state}\"\n", nil},
 		{"shell syntax ignored", envBase + "[repos.web.tasks.dev.env]\nA = \"${HOME}/x\"\n", nil},
-		{"port without port", envBase + "[repos.web.tasks.t]\ncmd = \"x\"\n[repos.web.tasks.t.env]\nA = \"{port}\"\n",
-			[]string{"repos.web.tasks.t.env.A: {port} used but this node declares no port"}},
+		{
+			"port without port", envBase + "[repos.web.tasks.t]\ncmd = \"x\"\n[repos.web.tasks.t.env]\nA = \"{port}\"\n",
+			[]string{"repos.web.tasks.t.env.A: {port} used but this node declares no port"},
+		},
 		{"ref in requires closure", strings.Replace(envBase, "[repos.web.tasks.dev]\n", "[repos.web.tasks.dev]\nrequires = [\"api.dev\"]\n", 1) +
 			"[repos.web.tasks.dev.env]\nA = \"{api.dev.port}\"\n", nil},
-		{"ref outside requires closure", envBase + "[repos.web.tasks.dev.env]\nA = \"{api.dev.port}\"\n",
-			[]string{"error: repos.web.tasks.dev.env.A: {api.dev.port} references api.dev, which is outside this node's requires closure"}},
+		{
+			"ref outside requires closure", envBase + "[repos.web.tasks.dev.env]\nA = \"{api.dev.port}\"\n",
+			[]string{"error: repos.web.tasks.dev.env.A: {api.dev.port} references api.dev, which is outside this node's requires closure"},
+		},
 		{"transitive closure", header + `
 [services.db]
 cmd = "x"

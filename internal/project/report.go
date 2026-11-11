@@ -47,6 +47,20 @@ func (r Report) Failed() bool {
 	return false
 }
 
+// Changed reports whether the run did anything worth recording: a clone, a
+// fast-forward, a skip, a failure, or a rejected manifest.
+func (r Report) Changed() bool {
+	if len(r.Invalid) > 0 {
+		return true
+	}
+	for _, res := range r.Results {
+		if res.Cloned || len(res.Pulled) > 0 || len(res.Skipped) > 0 || len(res.Failures) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // Severity is Error when anything failed, Warn when anything was skipped or a
 // manifest was rejected, else Success.
 func (r Report) Severity() events.Severity {

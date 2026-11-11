@@ -107,8 +107,10 @@ func (s *Service) Add(ctx context.Context, source string) (Report, error) {
 		return Report{}, fmt.Errorf("register project: %w", err)
 	}
 	rep, err := s.syncRuns(ctx, []*run{r}, modeAdd)
-	s.audit(audit.Entry{Action: "project.add", Target: r.source, Project: r.name,
-		Params: map[string]any{"registered": registered, "repos": len(rep.Results)}, Outcome: outcome(err)})
+	s.audit(audit.Entry{
+		Action: "project.add", Target: r.source, Project: r.name,
+		Params: map[string]any{"registered": registered, "repos": len(rep.Results)}, Outcome: outcome(err),
+	})
 	return rep, err
 }
 
@@ -121,7 +123,11 @@ func (s *Service) Update(ctx context.Context) (Report, error) {
 	if err != nil {
 		return rep, err
 	}
-	s.publish("git.update.done", rep.Severity(), "", "", rep.Title(), "")
+	e := events.New("git.update.done", rep.Severity(), rep.Title())
+	// A run that changed nothing is worth a toast, not an inbox row: periodic
+	// updates would otherwise bury real events under "all repos up to date".
+	e.Transient = !rep.Changed()
+	s.App.Bus.Publish(e)
 	return rep, nil
 }
 
