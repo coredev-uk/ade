@@ -1,0 +1,15 @@
+# direnv
+.direnv/
+
+# build output
+/bin/
+/dist/
+result
+result-*
+
+# local-only ADE state and overrides (may contain real hosts/projects)
+*.local.toml
+.ade/
+
+# impeccable runtime dirs ignore themselves; keep config.local.json private
+.impeccable/config.local.json
