@@ -105,6 +105,8 @@ label "workflow::in progress" "#428bca" "Being worked on"
 label "workflow::in review" "#9400d3" "MR open for review"
 label "workflow::blocked" "#36454f" "Waiting on something outside the team"
 label "workflow::done" "#2e8b57" "Merged and verified"
+# Free tier has no issue weight field: weights ride on labels (tracker.weight.source = label).
+for w in 1 2 3 5 8; do label "weight::$w" "#7f8c8d" "Story points ($w)"; done
 
 # Optional cleanup of labels from earlier seed versions. Deletes group labels the script does not
 # declare, so it only runs when explicitly asked for, against a sandbox group.
@@ -159,34 +161,34 @@ close_issue() { gl PUT "/projects/$1/issues/$2" '{"state_event":"close"}' >/dev/
 
 T_RATE=$(issue "$TRACKER" "Rate-limit the export endpoint" \
   $'Tenants can trigger unbounded CSV exports and starve the worker pool.\n\n## Acceptance\n- [x] Agree limits with support (50 req/min per tenant)\n- [ ] Token-bucket limiter in api\n- [ ] 429 response with Retry-After\n- [ ] Dashboard shows remaining quota' \
-  "type::story,app::api,workflow::in review" "$M_CUR" yes)
+  "type::story,app::api,workflow::in review,weight::5" "$M_CUR" yes)
 T_AUDIT=$(issue "$TRACKER" "Paginate the audit log view" \
   $'The audit log page renders every row and freezes for large tenants.\n\n## Acceptance\n- [ ] Cursor pagination in the UI\n- [ ] Keep current filters when paging' \
-  "type::bug,app::web,workflow::in progress" "$M_CUR" yes)
+  "type::bug,app::web,workflow::in review,weight::3" "$M_CUR" yes)   # label ahead of the draft MR: drift
 T_WEBHOOK=$(issue "$TRACKER" "Retry failed webhook deliveries" \
   $'Webhook deliveries that fail are dropped.\n\n## Acceptance\n- [ ] Exponential backoff, max 6 attempts\n- [ ] Dead-letter list visible to admins' \
-  "type::story,app::api" "$M_CUR" yes)
+  "type::story,app::api,weight::5" "$M_CUR" yes)
 T_CSV=$(issue "$TRACKER" "Remove the legacy CSV export path" \
   "The v1 CSV path is unused since the new exporter shipped. Remove it and its feature flag." \
-  "type::story,app::api" "$M_CUR" yes)
+  "type::story,app::api,weight::2" "$M_CUR" yes)
 T_TZ=$(issue "$TRACKER" "Export timestamps ignore tenant timezone" \
   "Exports always use UTC. Tenants with a configured timezone expect local time with offset." \
-  "type::bug,app::api,workflow::blocked" "$M_CUR" yes)
+  "type::bug,app::api,workflow::blocked,weight::3" "$M_CUR" yes)
 T_BILL=$(issue "$TRACKER" "Billing export times out for large tenants" \
   "Exports over 200k rows hit the 30s gateway timeout." \
   "type::bug,app::api" "$M_CUR" no)
 T_DARK=$(issue "$TRACKER" "Dark mode for the export dashboard" \
   "Follow the design tokens already used by the settings pages." \
-  "type::story,app::web" "$M_NEXT" no)
+  "type::story,app::web,weight::3" "$M_NEXT" no)
 T_SCHED=$(issue "$TRACKER" "Scheduled exports" \
   "Let tenants schedule a daily or weekly export delivered by email. Needs an api scheduler and a web settings form." \
-  "type::story,app::api,app::web" "$M_NEXT" yes)
+  "type::story,app::api,app::web,weight::8" "$M_NEXT" yes)
 T_FONT=$(issue "$TRACKER" "Fix truncated column headers in export preview" \
   "Long column names are cut off without a tooltip." \
-  "type::bug,app::web,workflow::done" "$M_PREV" yes)
+  "type::bug,app::web,workflow::done,weight::1" "$M_PREV" yes)
 T_DEPS=$(issue "$TRACKER" "Upgrade export worker dependencies" \
   "Routine upgrade of the worker's HTTP and CSV libraries." \
-  "type::story,app::api,workflow::done" "$M_CUR" yes)
+  "type::story,app::api,workflow::done,weight::2" "$M_CUR" yes)
 T_STALE=$(issue "$TRACKER" "Exports page sometimes shows stale totals" \
   "Reported by support: totals lag behind the table after a filter change. No labels yet (needs triage)." \
   "" "$M_CUR" yes)
@@ -229,8 +231,8 @@ branch_with_commit() { # pid branch file content message
   fi
 }
 
-mr() { # pid branch title body draft(yes|no) -> mr iid
-  local found t=$3
+mr() { # pid branch title body draft(yes|no) [target=main] -> mr iid
+  local found t=$3 target=${6:-main}
   found=$(gl GET "/projects/$1/merge_requests?state=all&source_branch=$(enc "$2")" | jq -r '.[0].iid // empty')
   if [[ -n $found ]]; then
     echo "$found"
@@ -238,7 +240,7 @@ mr() { # pid branch title body draft(yes|no) -> mr iid
   fi
   [[ $5 == yes ]] && t="Draft: $t"
   gl POST "/projects/$1/merge_requests" "$(jq -n --arg b "$2" --arg t "$t" --arg d "$4" --argjson a "$ME_ID" --argjson m "$M_CUR" \
-    '{source_branch:$b, target_branch:"main", title:$t, description:$d, assignee_id:$a, milestone_id:$m, remove_source_branch:true}')" |
+    --arg tb "$target" '{source_branch:$b, target_branch:$tb, title:$t, description:$d, assignee_id:$a, milestone_id:$m, remove_source_branch:true}')" |
     jq -r .iid
   log "MR $t"
 }
@@ -256,6 +258,21 @@ branch_with_commit "$WEB_P" "$B_AUDIT" "src/audit/pager.ts" \
   "Add cursor page type"
 MR_AUDIT=$(mr "$WEB_P" "$B_AUDIT" "Paginate the audit log view" \
   "$(printf 'Closes #%s\n\nPart of %s/tracker#%s.' "$C_AUDIT" "$GROUP" "$T_AUDIT")" yes)
+
+# A stacked MR whose diff holds a RENAMED file: it targets api!1's branch and moves limit/bucket.go to
+# limit/token_bucket.go with edits (commits API action "move" + previous_path + content). Never merged.
+B_TOKEN="rename-bucket-to-token-bucket"
+if [[ -z $(gl GET "/projects/$API_P/merge_requests?state=all&source_branch=$(enc "$B_TOKEN")" | jq -r '.[0].iid // empty') ]]; then
+  if ! ALLOW_404=1 gl GET "/projects/$API_P/repository/branches/$(enc "$B_TOKEN")" >/dev/null; then
+    gl POST "/projects/$API_P/repository/branches" "$(jq -n --arg b "$B_TOKEN" --arg r "$B_RATE" '{branch:$b, ref:$r}')" >/dev/null
+    gl POST "/projects/$API_P/repository/commits" "$(jq -n --arg b "$B_TOKEN" \
+      --arg c $'package limit\n\n// Bucket is a per-tenant token bucket that refills continuously.\ntype Bucket struct {\n\tRate  int // tokens per minute\n\tBurst int\n\tTokens float64\n}\n\n// Allow reports whether a token is free.\nfunc (b *Bucket) Allow() bool { return b.Tokens >= 1 }\n' \
+      '{branch:$b, commit_message:"Rename Bucket to its own file and track tokens", actions:[{action:"move", file_path:"limit/token_bucket.go", previous_path:"limit/bucket.go", content:$c}]}')" >/dev/null
+    log "branch $B_TOKEN"
+  fi
+fi
+MR_TOKEN=$(mr "$API_P" "$B_TOKEN" "Rename bucket to token bucket" \
+  "Stacked on !$MR_RATE: renames Bucket's file and tracks tokens explicitly." no "$B_RATE")
 
 # Review threads on the ready MR: one resolved, two open.
 if [[ $(gl GET "/projects/$API_P/merge_requests/$MR_RATE/discussions" | jq 'map(select(.individual_note|not))|length') == 0 ]]; then
@@ -305,4 +322,5 @@ Done.
             needs triage #$T_STALE   multi-app #$T_SCHED
   api       child #$C_RATE  MR !$MR_RATE (ready, 2 open threads)   child #$C_DEPS (closed)
   web       child #$C_AUDIT MR !$MR_AUDIT (draft)                  child #$C_FONT  MR !$MR_FONT (merged)
+  api       MR !$MR_TOKEN (stacked on !$MR_RATE; renames limit/bucket.go -> limit/token_bucket.go)
 EOF
