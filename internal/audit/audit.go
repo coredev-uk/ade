@@ -38,16 +38,18 @@ type Entry struct {
 
 // AIInfo is filled for ai.* actions (Phase 4).
 type AIInfo struct {
-	Profile    string  `json:"profile"`
-	Model      string  `json:"model"`
-	TokensIn   int     `json:"tokens_in"`
-	TokensOut  int     `json:"tokens_out"`
-	CostUSD    float64 `json:"cost_usd"`
-	CostSource string  `json:"cost_source"`
-	CacheHit   bool    `json:"cache_hit"`
-	Artifact   string  `json:"artifact,omitempty"`
-	DestHost   string  `json:"dest_host,omitempty"`
-	Bytes      int     `json:"bytes,omitempty"`
+	Profile     string  `json:"profile"`
+	Driver      string  `json:"driver,omitempty"`
+	Model       string  `json:"model"`
+	TokensIn    int     `json:"tokens_in"`
+	TokensOut   int     `json:"tokens_out"`
+	TokensCache int     `json:"tokens_cache,omitempty"`
+	CostUSD     float64 `json:"cost_usd"`
+	CostSource  string  `json:"cost_source"`
+	CacheHit    bool    `json:"cache_hit"`
+	Artifact    string  `json:"artifact,omitempty"`
+	DestHost    string  `json:"dest_host,omitempty"`
+	Bytes       int     `json:"bytes,omitempty"`
 }
 
 // Log appends entries to monthly JSONL files under Dir.

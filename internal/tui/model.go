@@ -2,22 +2,33 @@ package tui
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/coredev-uk/ade/internal/app"
+	"github.com/coredev-uk/ade/internal/domain"
 	"github.com/coredev-uk/ade/internal/events"
-	"github.com/coredev-uk/ade/internal/notify"
+	"github.com/coredev-uk/ade/internal/forge"
+	"github.com/coredev-uk/ade/internal/forgesync"
 	"github.com/coredev-uk/ade/internal/project"
+	"github.com/coredev-uk/ade/internal/review"
+	"github.com/coredev-uk/ade/internal/store"
 )
+
+const inboxPollEach = 2 * time.Second
+
+type page int
 
 const (
-	toastTTL      = 5 * time.Second
-	inboxPollEach = 2 * time.Second
+	pageHome   page = iota // work items from the forge
+	pageTrees              // projects → repos → worktrees
+	pageBudget             // AI spend, caps and profiles (budget.go)
+	pageLog                // the audit log (log.go)
 )
 
-// row is one selectable line: a worktree of a repo of a project.
+// row is one selectable line on the Worktrees page.
 type row struct {
 	project string
 	repo    project.RepoStatus
@@ -26,19 +37,33 @@ type row struct {
 }
 
 type model struct {
-	ctx  context.Context
-	app  *app.App
-	svc  *project.Service
-	in   *notify.Inbox
-	g    glyphs
-	w, h int
+	ctx   context.Context
+	app   *app.App
+	svc   *project.Service
+	sync  *forgesync.Service
+	cache *store.Store
+	g     glyphs
+	w, h  int
+	page  page
 
+	// Home
+	results    []forgesync.Result
+	homeRows   []homeRow
+	homeSel    int
+	homeFilter homeFilter
+	homeLoaded bool // cache read: before it, "nothing assigned" would be a lie
+	syncing    bool
+	lastSync   time.Time
+	syncErr    error
+
+	// Worktrees
 	projects []project.ProjectStatus
 	rows     []row
 	sel      int
 	loadErr  error
-	loaded   bool // first status read finished: before it, "no projects" would be a lie
-	// showDetail swaps the list for the selected tree's details on narrow
+	loaded   bool
+
+	// showDetail swaps the list for the selection's details on narrow
 	// terminals, where the two-pane layout does not fit.
 	showDetail bool
 
@@ -47,17 +72,36 @@ type model struct {
 	lastUpdate time.Time
 	lastReport *project.Report
 
-	unread  int
-	recent  []notify.Item
-	toasts  []toast
-	drawer  bool
-	drawSel int
-	help    bool
-}
+	nc   *notifCenter
+	help bool
 
-type toast struct {
-	ev      events.Event
-	expires time.Time // zero: stays until acknowledged (failures)
+	// MR page (mrpage*.go): mr is the open page, nil on the dashboard;
+	// mrCache keeps each MR's data for the session; reviews stores drafts.
+	mr      *mrPage
+	mrCache map[string]*mrData
+	reviews *review.Store
+	be      *mrBackends
+	dial    func(ctx context.Context, ref forge.Ref, forgeKey string) (review.Backend, error) // nil: the configured forge
+
+	// ag is the Standup / Sprint review pages' state (agile.go).
+	ag agileUI
+
+	// bud and lg are the Budget and Log pages' state (budget.go, log.go).
+	bud budgetState
+	lg  logState
+
+	// sw is the open Start work dialog, nil when closed (startwork.go).
+	sw *startDialog
+	// cl is the open Classify dialog (classify.go); chip is the header's AI
+	// spend figure (aichip.go).
+	cl   *classifyDialog
+	chip aiChip
+
+	// agt is the open agent dialog, nil when closed (agent.go).
+	agt *agentDialog
+
+	// ws is the running-instances view behind Home's Services strip (workspace.go).
+	ws wsState
 }
 
 // --- messages ----------------------------------------------------------------
@@ -67,24 +111,24 @@ type (
 		projects []project.ProjectStatus
 		err      error
 	}
+	resultsMsg struct {
+		results []forgesync.Result
+		err     error
+		synced  bool // from a sync run, not the cache
+	}
 	progressMsg   project.Progress
 	updateDoneMsg struct {
 		report project.Report
 		err    error
 	}
-	eventMsg events.Event
-	inboxMsg struct {
-		recent []notify.Item
-		unread int
-	}
-	rawMsg         string
+	eventMsg       events.Event
 	tickMsg        time.Time
 	updateTickMsg  time.Time
 	startUpdateMsg struct{}
 )
 
 func (m model) Init() tea.Cmd {
-	cmds := []tea.Cmd{m.loadStatus(), m.pollInbox(), tick()}
+	cmds := []tea.Cmd{m.loadStatus(), m.loadResults(), m.nc.poll(), tick(), m.loadAIChip()}
 	if m.app.Config.UpdateOnStart() {
 		cmds = append(cmds, func() tea.Msg { return startUpdateMsg{} })
 	}
@@ -105,6 +149,22 @@ func (m model) loadStatus() tea.Cmd {
 	}
 }
 
+// loadResults reads the last sync from the cache: Home renders from it at
+// once, before any network call.
+func (m model) loadResults() tea.Cmd {
+	return func() tea.Msg {
+		rs, err := forgesync.Load(m.cache)
+		return resultsMsg{results: rs, err: err}
+	}
+}
+
+func (m model) runSync() tea.Cmd {
+	return func() tea.Msg {
+		rs, err := m.sync.Sync(m.ctx)
+		return resultsMsg{results: rs, err: err, synced: true}
+	}
+}
+
 func (m model) runUpdate() tea.Cmd {
 	return func() tea.Msg {
 		r, err := m.svc.Update(m.ctx)
@@ -112,18 +172,34 @@ func (m model) runUpdate() tea.Cmd {
 	}
 }
 
-func (m model) pollInbox() tea.Cmd {
-	return func() tea.Msg {
-		items, err := m.in.List(notify.ListOpts{Limit: 50})
-		if err != nil {
-			return inboxMsg{}
-		}
-		n, _ := m.in.UnreadCount()
-		return inboxMsg{items, n}
+// refresh starts whichever of the update (git) and sync (forge) loops are
+// idle; they run in parallel and report independently.
+func (m *model) refresh() tea.Cmd {
+	var cmds []tea.Cmd
+	if !m.updating {
+		m.updating, m.progress = true, project.Progress{}
+		cmds = append(cmds, m.runUpdate())
 	}
+	if !m.syncing && m.sync != nil {
+		m.syncing = true
+		cmds = append(cmds, m.runSync())
+	}
+	return tea.Batch(cmds...)
 }
 
+// pollInbox re-reads the inbox: rows from other ade processes pop up.
+func (m model) pollInbox() tea.Cmd { return m.nc.poll() }
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if next, cmd, ok := m.startUpdate(msg); ok {
+		return next, cmd
+	}
+	if next, cmd, ok := m.classifyUpdate(msg); ok {
+		return next, cmd
+	}
+	if next, cmd, ok := m.agentUpdate(msg); ok {
+		return next, cmd
+	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
@@ -131,18 +207,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.projects, m.loadErr, m.loaded = msg.projects, msg.err, true
 		m.rows = flatten(msg.projects)
 		m.sel = min(m.sel, max(len(m.rows)-1, 0))
-	case startUpdateMsg:
-		if !m.updating {
-			m.updating, m.progress = true, project.Progress{}
-			return m, m.runUpdate()
+	case resultsMsg:
+		if msg.synced {
+			m.syncing, m.syncErr = false, msg.err
+			m.lastSync = time.Now()
 		}
+		if msg.err == nil || len(msg.results) > 0 {
+			m.setResults(msg.results)
+		}
+		m.homeLoaded = true
+		return m, m.pollInbox()
+	case startUpdateMsg:
+		return m, m.refresh()
 	case updateTickMsg:
 		next := tea.Tick(m.app.Config.Update.Interval.Duration, func(t time.Time) tea.Msg { return updateTickMsg(t) })
-		if m.updating {
-			return m, next
-		}
-		m.updating, m.progress = true, project.Progress{}
-		return m, tea.Batch(m.runUpdate(), next)
+		return m, tea.Batch(m.refresh(), next)
 	case progressMsg:
 		m.progress = project.Progress(msg)
 	case updateDoneMsg:
@@ -153,101 +232,245 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(m.loadStatus(), m.pollInbox())
 	case eventMsg:
-		m.toasts = append(m.toasts, newToast(events.Event(msg)))
+		m.nc.onEvent(events.Event(msg))
 		return m, m.pollInbox()
 	case inboxMsg:
-		m.recent, m.unread = msg.recent, msg.unread
-		m.drawSel = min(m.drawSel, max(len(m.recent)-1, 0))
-	case rawMsg:
-		return m, tea.Raw(string(msg))
+		m.nc.onInbox(msg)
+	case mrResultMsg:
+		return m, m.onMRResult(msg)
+	case historyMsg:
+		m.onHistory(msg)
+	case mrSpinMsg:
+		return m, m.onSpin()
 	case tickMsg:
-		m.toasts = expire(m.toasts, time.Time(msg))
+		m.nc.tick(time.Time(msg))
 		cmds := []tea.Cmd{tick()}
 		if time.Time(msg).Second()%int(inboxPollEach/time.Second) == 0 {
 			cmds = append(cmds, m.pollInbox()) // rows written by other ade processes
 		}
+		if time.Time(msg).Second()%aiChipEvery == 0 {
+			cmds = append(cmds, m.loadAIChip())
+		}
+		if time.Time(msg).Second()%wsPollEach == 0 {
+			cmds = append(cmds, m.wsPoll())
+		}
 		return m, tea.Batch(cmds...)
+	case wsOpenedMsg:
+		return m, m.onWsOpened(msg)
+	case wsChipsMsg:
+		m.ws.chips = msg.chips
+	case aiChipMsg:
+		m.chip = aiChip(msg)
+	case agileMsg:
+		return m.agileUpdate(msg)
+	case budgetMsg:
+		return m.onBudget(msg)
+	case logMsg:
+		return m.onLog(msg)
 	case tea.KeyPressMsg:
 		return m.key(msg)
 	}
 	return m, nil
 }
 
-func newToast(e events.Event) toast {
-	t := toast{ev: e}
-	if e.Severity != events.Error {
-		t.expires = time.Now().Add(toastTTL)
+// setResults replaces Home's data and keeps the selection on the same row
+// (by ref) when it still exists.
+func (m *model) setResults(rs []forgesync.Result) {
+	keep := ""
+	if m.homeSel < len(m.homeRows) {
+		keep = m.homeRows[m.homeSel].ref()
 	}
-	return t
+	// Projects with work come first; one that failed and has nothing cached
+	// sinks to the bottom so its error doesn't push work off screen.
+	m.results = append([]forgesync.Result(nil), rs...)
+	sort.SliceStable(m.results, func(i, j int) bool {
+		empty := func(r forgesync.Result) bool { return r.Err != "" && len(r.Items) == 0 }
+		return !empty(m.results[i]) && empty(m.results[j])
+	})
+	m.rebuildHome(keep)
 }
 
-func expire(ts []toast, now time.Time) []toast {
-	out := ts[:0]
-	for _, t := range ts {
-		if t.expires.IsZero() || now.Before(t.expires) {
-			out = append(out, t)
+func (m *model) rebuildHome(keep string) {
+	m.homeRows = buildHomeRows(m.results, m.homeFilter)
+	m.homeSel = min(m.homeSel, max(len(m.homeRows)-1, 0))
+	for i, r := range m.homeRows {
+		if r.ref() == keep {
+			m.homeSel = i
+			break
 		}
 	}
-	return out
+}
+
+// selectSubject moves the selection to the row an inbox item is about, on
+// whichever page shows it.
+func (m *model) selectSubject(project, subject string) {
+	for i, r := range m.homeRows {
+		if r.project == project && r.ref() == subject {
+			m.page, m.homeSel, m.showDetail = pageHome, i, true
+			return
+		}
+	}
+	for i, r := range m.rows {
+		if r.project == project && (subject == r.repo.Name || subject == r.repo.Name+"/"+r.tree.Name) {
+			m.page, m.sel, m.showDetail = pageTrees, i, true
+			return
+		}
+	}
 }
 
 func (m model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch k.String() {
+	ks := k.String()
+	if m.nc.open && ks != "ctrl+c" {
+		cmd, jump := m.nc.key(ks)
+		if jump != nil {
+			m.selectSubject(jump.Project, jump.Subject)
+			m.mr = nil // the jump leaves the MR page
+			m.ag.kind = agileNone
+		}
+		return m, cmd
+	}
+	if m.mr != nil {
+		if cmd, handled := m.mrKey(k); handled {
+			return m, cmd
+		}
+	}
+	if m.isAgilePage() {
+		if next, cmd, handled := m.agileKey(k); handled {
+			return next, cmd
+		}
+	}
+	if m.isToolPage() {
+		var next tea.Model
+		var cmd tea.Cmd
+		var handled bool
+		if m.page == pageBudget {
+			next, cmd, handled = m.budgetKey(k)
+		} else {
+			next, cmd, handled = m.logKey(k)
+		}
+		if handled {
+			return next, cmd
+		}
+	}
+	switch ks {
 	case "ctrl+c", "q":
-		if m.drawer || m.help {
-			m.drawer, m.help = false, false
+		if m.help {
+			m.help = false
 			return m, nil
 		}
 		return m, tea.Quit
 	case "esc":
 		switch {
-		case m.drawer || m.help:
-			m.drawer, m.help = false, false
-		case len(m.toasts) > 0:
-			m.toasts = m.toasts[:0] // acknowledge sticky failures
+		case m.help:
+			m.help = false
+		case m.nc.dismissToasts():
+		case m.showDetail:
+			m.showDetail = false
 		}
 	case "tab":
 		m.showDetail = !m.showDetail
 	case "?":
 		m.help = !m.help
 	case "i":
-		m.drawer = !m.drawer
-		m.drawSel = 0
+		m.nc.open, m.nc.sel = true, 0
+		return m, m.pollInbox()
+	case "S":
+		next, cmd := m.openStandup()
+		return next, cmd
+	case "V":
+		next, cmd := m.openReview()
+		return next, cmd
+	case "b":
+		next, cmd := m.openBudget()
+		return next, cmd
+	case "L":
+		next, cmd := m.openLog()
+		return next, cmd
+	case "s":
+		next, cmd := m.openStart(false)
+		return next, cmd
+	case "w":
+		next, cmd := m.openWorkspace()
+		return next, cmd
+	case "M":
+		next, cmd := m.openStart(true)
+		return next, cmd
+	case "c":
+		next, cmd := m.openClassify()
+		return next, cmd
+	case "a", "A":
+		if m.page == pageHome && m.mr == nil && !m.isAgilePage() {
+			var it *domain.WorkItem
+			if m.homeSel < len(m.homeRows) {
+				it = m.homeRows[m.homeSel].item
+			}
+			if ks == "a" && it == nil {
+				return m, nil // `a` needs an item; `A` lists every run
+			}
+			next, cmd := m.openAgent(it, ks == "A")
+			return next, cmd
+		}
+	case "enter":
+		if m.page == pageHome {
+			return m, m.openHomeRow()
+		}
+	case "t":
+		m.page = 1 - m.page
 	case "U":
-		if !m.updating {
-			m.updating, m.progress = true, project.Progress{}
-			return m, m.runUpdate()
+		return m, m.refresh()
+	case "f":
+		if m.page == pageHome {
+			m.homeFilter = (m.homeFilter + 1) % 5
+			m.homeSel = 0
+			m.rebuildHome("")
 		}
 	case "j", "down":
-		if m.drawer {
-			m.drawSel = min(m.drawSel+1, max(len(m.recent)-1, 0))
-		} else {
-			m.sel = min(m.sel+1, max(len(m.rows)-1, 0))
-		}
+		m.move(1)
 	case "k", "up":
-		if m.drawer {
-			m.drawSel = max(m.drawSel-1, 0)
-		} else {
-			m.sel = max(m.sel-1, 0)
-		}
-	case "r":
-		if m.drawer && m.drawSel < len(m.recent) {
-			m.in.MarkRead(m.recent[m.drawSel].ID) //nolint:errcheck // shown on next poll
-			return m, m.pollInbox()
-		}
-	case "R":
-		if m.drawer {
-			m.in.MarkAllRead() //nolint:errcheck // shown on next poll
-			return m, m.pollInbox()
-		}
+		m.move(-1)
+	case "g", "home":
+		m.move(-1 << 30)
+	case "G", "end":
+		m.move(1 << 30)
 	case "y":
-		if !m.drawer && m.sel < len(m.rows) {
-			r := m.rows[m.sel]
-			m.toasts = append(m.toasts, newToast(events.New("ui.copied", events.Info, "copied path "+r.tree.Path)))
-			return m, tea.SetClipboard(r.tree.Path)
-		}
+		return m, m.copySelection()
 	}
 	return m, nil
+}
+
+func (m *model) move(d int) {
+	if m.page == pageHome {
+		m.homeSel = clamp(m.homeSel+d, 0, len(m.homeRows)-1)
+		return
+	}
+	m.sel = clamp(m.sel+d, 0, len(m.rows)-1)
+}
+
+func clamp(v, lo, hi int) int { return max(lo, min(v, max(hi, lo))) }
+
+// copySelection copies the selected item's web URL (Home) or tree path
+// (Worktrees) with OSC 52, which works in VS Code and browser terminals.
+func (m *model) copySelection() tea.Cmd {
+	var what, text string
+	switch {
+	case m.page == pageHome && m.homeSel < len(m.homeRows):
+		r := m.homeRows[m.homeSel]
+		what = r.ref()
+		if r.item != nil {
+			text = r.item.Issue.WebURL
+		} else {
+			text = r.mr.WebURL
+		}
+	case m.page == pageTrees && m.sel < len(m.rows):
+		what, text = "path", m.rows[m.sel].tree.Path
+	}
+	if text == "" {
+		return nil
+	}
+	e := events.New("ui.copied", events.Info, "copied "+what+": "+text)
+	e.Transient = true
+	m.nc.push(e)
+	return tea.SetClipboard(text)
 }
 
 func flatten(ps []project.ProjectStatus) []row {

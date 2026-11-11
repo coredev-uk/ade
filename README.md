@@ -15,6 +15,28 @@ Status: **Phase 0**:
 
 Forge features (issues, MRs) start in Phase 1.
 
+## Install and onboard
+
+**Install** a release binary (`ade_<version>_<os>_<arch>.tar.gz`, linux and macOS, amd64 and arm64; one static binary, no runtime dependencies besides `git`) from the GitHub releases page, or with Nix:
+
+```sh
+nix run github:coredev-uk/ade -- version      # try it
+nix profile install github:coredev-uk/ade     # keep it
+```
+
+ADE drives `git`, `zellij`, `lazygit`, `delta`, `nvim` and the forge CLIs; `ade doctor` tells you which are missing. Inside this repo, `nix develop` provides all of them.
+
+**Onboard** with one command. Your team keeps its conventions in a shared manifest (see [docs/manifest.md](docs/manifest.md)); you only supply who you are and where your token comes from:
+
+```sh
+export GITLAB_TOKEN=...                       # or GITHUB_TOKEN, or use --token-cmd 'gh auth token'
+ade init                                      # interactive: asks for each answer
+ade init --yes --forge gitlab --host gitlab.example.com --token-env GITLAB_TOKEN \
+    --project 'git+https://gitlab.example.com/acme/tracker.git#.ade.toml'
+```
+
+`ade init` verifies the token against the forge *before* writing anything, then writes `~/.config/ade/config.toml` (or `$ADE_CONFIG`), clones the project's repos under `~/ade`, runs the first sync and `ade doctor`, and prints next steps. It never overwrites an existing config without `--force`, which keeps a `config.toml.bak-<timestamp>` copy. Tokens are never written to disk: the config stores an environment variable name or a command. Run `ade` afterwards to open the dashboard.
+
 ## Run
 
 ```sh
@@ -29,13 +51,15 @@ nix build              # result/bin/ade
 
 | Command | What it does |
 |---|---|
+| `ade init` | Onboarding: writes the user config, verifies the token, adds your team's project(s), runs the first sync and `ade doctor`, prints next steps. Prompts in a terminal; scriptable with `--yes`. |
+| `ade version` | Prints the version. |
 | `ade project add <manifest>` | Registers a project and clones every repo as `<root>/<project>/<repo>/{.bare,main}`. Idempotent. |
 | `ade project list` / `status [name]` | Lists projects, repos, worktrees, ahead/behind, and dirty state. |
 | `ade update` | Refreshes manifests, fetches every repo, and fast‑forwards clean trees (never merges, rebases, or stashes). Exits 2 if any repo failed. |
 | `ade inbox [--unread]` / `inbox show <id>` / `inbox read …` | Notifications. |
 | `ade audit [--since 1d] [--action 'git.*']` | The append‑only action log. |
 | `ade config check` / `ade doctor` | Validates config and manifests; checks tools, paths, and forge tokens. |
-| `ade notify test` | Sends a test notification through every channel. |
+| `ade notify send --title … [--kind … --subject …]` | Records a notification; a running dashboard shows it as a pop‑up. |
 
 Every command takes `--json`.
 

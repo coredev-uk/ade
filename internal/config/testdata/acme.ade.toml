@@ -19,6 +19,7 @@ pattern = "app::{value}"               # value routes the issue to repos whose `
 pattern = "workflow::{value}"          # the board column
 stage   = { started = "in progress", draft = "in progress", review = "in review", merged = "done" }
 sync    = "auto"                       # auto | ask | off: move the label when the derived stage changes
+done    = "done"                       # optional: an open tracker carrying this value counts as done
 
 [repos.api]
 path  = "acme/api"

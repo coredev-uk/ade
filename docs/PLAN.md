@@ -73,6 +73,7 @@ Two layers. Secrets never live in either file.
 handle   = "jdoe"
 timezone = "UTC"
 workdays = ["mon", "tue", "wed", "thu", "fri"]
+holidays = []                          # non-working dates, "2026-12-25"; standup skips them
 
 [forges.work]
 kind      = "gitlab"
@@ -89,7 +90,7 @@ root = "~/ade"                 # <root>/<project>/<repo>/{.bare, main, <branch>�
 [[projects]]                   # one entry per project; the manifest defines its repos
 source = "git+https://gitlab.example.com/acme/tracker.git#ade/acme.ade.toml"   # kept up to date by update
 [[projects]]
-source = "~/code/side-project/side.ade.toml"
+source = "~/src/side-project/side.ade.toml"
 
 [update]
 on_start         = true
@@ -97,11 +98,8 @@ interval         = "10m"
 feature_branches = "ff-if-clean"   # ff-if-clean | notify-only
 concurrency      = 4
 
-[notify]                       # event globs per channel (6.8)
-toast    = ["*"]
-terminal = ["ci.failed", "task.failed", "agent.run.end", "git.*.failed", "budget.stop"]
-desktop  = []                  # notify-send, on machines that have a desktop
-quiet    = "19:00-08:00"       # terminal/desktop channels silent; inbox still records
+[notify]                       # (6.8)
+toast = ["*"]                  # event kinds shown as pop-ups; every event is recorded in the inbox
 
 [ai]
 mode    = "ask"            # off | ask | auto
@@ -109,17 +107,23 @@ profile = "claude-sub"
 
 [ai.profiles.claude-sub]                       # personal machine
 driver  = "omp"
+models  = { explain = "anthropic/claude-haiku-4-5", draft = "anthropic/claude-sonnet-5", review = "anthropic/claude-sonnet-5" }   # role → model id (`ade ai models`)
 billing = { source = "omp", weekly_soft_usd = 10 }   # no quota API: list-price usage vs a soft cap
 
 [ai.profiles.gateway]                          # work machine
 driver   = "openai-compat"
 base_url = "https://llm.example.com/v1"
 key_cmd  = "pass show ade/llm"
+models   = { explain = "mini", draft = "sonnet" }   # review falls back to draft, then explain
 billing  = { source = "litellm" }              # cost headers + /key/info
+# [ai.profiles.gateway.prices.sonnet]            # optional USD per Mtok (input, output, cache_read, cache_write):
+# input = 3.0                                    # pre-flight prices when neither the driver nor the gateway publishes them
 
 [budget]
 daily_usd        = 2.00
 weekly_usd       = 8.00
+sprint_usd       = 0       # 0 = no cap; enforced only while a sprint window is known
+call_usd         = 0       # hard cap per call; also passed to omp as --max-cost
 confirm_over_usd = 0.25    # pre-flight confirmation threshold per action
 agent_run_usd    = 1.50    # passed as --max-cost to omp runs
 
@@ -157,6 +161,7 @@ pattern = "app::{value}"               # value routes the issue to repos whose `
 pattern = "workflow::{value}"          # the board column
 stage   = { started = "in progress", draft = "in progress", review = "in review", merged = "done" }
 sync    = "auto"                       # auto | ask | off: move the label when the derived stage changes
+done    = "done"                       # optional: an open tracker carrying this value counts as done
 
 [repos.api]
 path  = "acme/api"
@@ -226,8 +231,8 @@ A frontend that needs a running API is the normal case, not an edge case. ADE mo
 
 **Checkout graph (`repos.<r>.requires`).** Opening a workspace for a repo also prepares a tree for every repo it requires, transitively. Tree resolution, per required repo:
 
-1. **Same work item:** if the work item has its own child and branch in that repo, ADE uses that worktree. This is how a cross‑repo change gets web running against the *feature* API, not `main`.
-2. **Explicit pin:** `ade work web#12 --with api=some-branch` (also selectable in the TUI before opening).
+1. **Explicit pin:** `ade ws up --with api=some-branch` (a branch or worktree path; also selectable in the TUI before opening). A pin always wins, so web can be run against `main` even when the work item has its own api tree.
+2. **Same work item:** if the work item has its own child and branch in that repo, ADE uses that worktree. This is how a cross‑repo change gets web running against the *feature* API, not `main`.
 3. **Baseline:** otherwise the repo's `main/` worktree (2.2), kept current by the update loop (2.3).
 
 **Run graph (`tasks.*.requires`, `services.*`).** Nodes are tasks (`<repo>.<task>`) and services (`services.<name>`). Edges are `requires`. Each node declares:
@@ -248,6 +253,7 @@ A frontend that needs a running API is the normal case, not an edge case. ADE mo
 - Start order is a topological sort. Independent nodes start in parallel.
 - A dependent starts only after all of its requirements are ready.
 - If a requirement fails or times out, its dependents are not started. Each one shows `blocked: api.dev not ready (timeout 60s, last log line …)`. `r` restarts that subtree.
+- If a requirement dies *after* its dependents came up (api killed while web runs), the dependents keep running but are reported `blocked` (`ade ws status` shows `blocked by api.dev`, JSON `state: "blocked"` + `blocked_by`), and a foreground workspace (`ade ws up --no-zellij`, `ade task run`) raises one `task.blocked` warning per dependent. Nothing is restarted automatically.
 - Stopping a node stops its dependents first, in reverse order.
 
 **Validation (load time and `ade config check`):**
@@ -263,7 +269,7 @@ A frontend that needs a running API is the normal case, not an edge case. ADE mo
 - **Start work (6.3):** if the routed repo requires another, the confirm screen offers to also create a child issue there ("web requires api: create api child too?"). It is off by default.
 - **Agents (6.6):** required repos' trees are passed with `--add-dir` (verified omp flag), so plans and runs can read the API contract while they write only the routed repo.
 - **Merge order (3):** when one work item has open MRs in both repos and web requires api, the web MR shows `waits on api!N` until the api MR merges. Its court becomes `api!N` instead of `you`.
-- **Hosts (6.7):** zellij gets one pane per instance, with requirements in a stacked "services" pane. VS Code gets generated `tasks.json` with `dependsOn`, `isBackground`, and a `background.endsPattern` for `log` readiness. For `http`/`tcp` readiness the generated task wraps the command in `ade task run --wait`. On the plain host, ADE supervises the processes itself.
+- **Hosts (6.7):** zellij gets one pane per instance, with requirements in a stacked "services" pane. VS Code gets generated `tasks.json` with `dependsOn`, `isBackground`, and a `background.endsPattern`: the node's own regexp for `log` readiness, and for `http`/`tcp` (or no probe) the `ade: ready <node>` line that `ade task run <node>` prints once the probe passes. Panes and VS Code tasks both run nodes through `ade task run`, so an instance another workspace already started is reused, never started twice. On the plain host, `ade ws up --no-zellij` supervises the processes itself.
 
 ### 2.2 Projects, clones, and worktrees
 
@@ -353,6 +359,7 @@ stateDiagram-v2
   - **workflow**: the team's board column. ADE derives the stage from forge facts (child, branch, MR, CI, approvals) and, with `sync = "auto"` (the default), moves the label to match.
     - Every move removes the old workflow label explicitly, because `::` labels are not exclusive on Free (verified) and ADE can't rely on scoped‑label exclusivity. Each move is audited.
     - Moves are edge‑triggered: they happen only when the derived stage *changes*. A label someone sets by hand stays until the next transition, and meanwhile any contradiction shows as drift (`label: in review · MR still draft`). `ask` confirms each move; `off` only shows drift.
+    - **Done but kept open:** some teams leave sprint work open until the sprint review and mark it finished with a workflow label instead. With `labels.workflow.done` set, an open tracker carrying that value (and no open MR) is done: hidden from active Home rows, counted in done weight and sprint review, court `nobody · done · issue kept open`, never nagged to close. A merged item without the label asks for it (`you · set workflow::done`), and `sync = "auto"` applies it when `stage.merged` maps to the same value. The done value outranks other workflow labels that coexist on Free. A done label on an item whose MR is still open is ahead of the work: the item keeps its real stage and shows drift.
   - **Unmatched issues:** issues missing a type or app label appear in a "needs triage" filter. `c` (classify) suggests the missing labels, deterministically from title and description keywords, or with AI when it is enabled. Labels are applied only on confirm.
 - **Epics:** teams differ, so nothing is assumed. Where tracker issues have a parent epic (GitLab group‑level epics, Premium), ADE shows the epic title on the row and preview, and can group sprint review by it. It reads the epic through the work‑item hierarchy widget and gates it by capability. ADE never creates or edits epics.
 - **No team convention is hard‑coded.** Label patterns, workflow values, cadence choice, child‑link style, and branch naming all come from the manifest, because they vary between teams even inside one company.
@@ -430,6 +437,7 @@ items/work/acme/tracker/128/
   ai/20261111T091902-classify.md
   plans/20261111T100215-plan.md             agent plans (reviewed/approved state in frontmatter)
   runs/01JCQB…/run.md                       agent run: model, cost cap, spend, exit, commits, transcript path
+  runs/01JCQC…/run.md                       workspace run (kind: workspace): worktree, branch, instances with ports and pids; metadata only
 ```
 
 ```markdown
@@ -454,6 +462,7 @@ Free-form. ADE never edits outside the snapshot block.
   - The AI result cache resolves `input_hash` → artifact through `cache.db`.
   - If `cache.db` is lost, `ade reindex` rebuilds the mapping from frontmatter, so nothing is paid for twice.
 - **Notes feed context.** Plan and draft actions can include the item's `## Notes` (shown in the pre-flight prompt preview, toggle per call).
+- **Workspace run records.** `ade ws up --no-zellij` and `ade task run` write `runs/<id>/run.md` into the item whose child issue or MR owns the worktree's branch (frontmatter `kind: workspace`, state running, stopped, detached or failed, plus a table of instances). Env values, commands and output are never written, and a baseline `main/` tree belongs to no item, so it writes nothing.
 - **Offline:** the work item page renders from `item.md` and its artifacts when the forge is unreachable or the cache is empty.
 - **`ade item <ref>`** prints the record path, and `ade item <ref> --edit` opens `item.md` in the configured editor. In the TUI, `n` opens notes.
 - **Privacy:** these directories hold real work data, and they live outside every repository. `ade doctor` warns if `records.dir` resolves inside a git work tree. On remote CDEs, point `records.dir` at the persistent home volume.
@@ -467,6 +476,8 @@ There is no per‑project sensitivity policy. Work runs inside closed environmen
 - ADE has no telemetry. `--debug-http` logs method, path, status, and timing, never bodies. ADE never starts `zellij web`.
 
 ## 5. Forge layer
+
+**Scope:** ADE is built for work, on GitLab; that is where depth and polish go. The GitHub driver exists for personal GitHub projects and covers the same core flows (Home, MR/PR page and review, start work), but GitHub‑only features (Projects v2 iterations and fields, richer parity) are not a goal.
 
 ```go
 type Forge interface {
@@ -550,6 +561,11 @@ Global conventions: `j/k` move, `enter` open, `esc` back, `tab` switch pane, `/`
   - **History:** this item's audit events interleaved with its AI artifacts, plans, and runs (4.1, 4.2)
 - Actions: reply, resolve, approve, mark ready, merge (with an explicit confirm), retry pipeline. AI actions: summarise MR, summarise thread, draft reply, "address comments" (hands off to agent, 6.6).
 - The body editor is `$EDITOR` in a zellij floating pane (or a VS Code tab), so long replies never get typed into a cramped text field.
+- **As built in phase 2** (details in DESIGN.md, MR page and Review surface):
+  - The page opens with `enter` on a Home row and has a fifth tab, **Review** (the drafts and their triage, 6.9), between Diff and CI; History is the sixth and lists the audit entries of the MR and its item.
+  - Keys: `r` reply (Threads) or retry (CI), `x` resolve/reopen, `a` approve/withdraw, `R` ready/draft, `m` merge, `S` submit review, `c` comment on a diff line, `l` job log.
+  - The editor is inline (`enter` sends, `alt+enter` newline) for the short comments the review style asks for; `$EDITOR` in a pane and `delta`/syntax highlighting are not built yet. The diff is drawn by ADE with numbered lines, no highlighting.
+  - AI actions (summary, draft reply, address comments) are phase 4 and 6.
 
 ### 6.3 Start work (tracker‑project pattern)
 
@@ -586,7 +602,7 @@ One confirm screen shows every write before it happens. It is idempotent: re‑r
    | **Browse** | none | worktree on the default branch (or an existing branch) to read the code; nothing is assigned or announced |
 
 4. **MR template:**
-   - ADE reads the repo's template from the baseline tree: `.gitlab/merge_request_templates/Default.md` (or a chooser when there are several), and on GitHub `.github/pull_request_template.md`.
+   - ADE reads the repo's template from the default branch through the forge API (so a repo that is not cloned yet works too): `.gitlab/merge_request_templates/Default.md` (the name comes from `conventions.mr.template`; with several templates and no match, the dialog offers a chooser), and on GitHub `.github/pull_request_template.md`.
    - It fills the `Closes`/parent references and shows the rendered body for editing before anything is sent.
    - Quick actions in the template (`/assign`, `/assign_reviewer`, `/label`, …) run on the forge the moment the MR is created, which is how templates end up auto‑assigning everyone. The dialog lists them explicitly ("this template will request review from @a @b @c"), and each can be kept or stripped. Stripping them only affects this MR.
 5. **Confirm:** the station list of writes (as in the preview), then `enter`.
@@ -619,7 +635,7 @@ One confirm screen shows every write before it happens. It is idempotent: re‑r
 - **Merge rule:** displayed spend = last authoritative snapshot + local ledger since that snapshot's `as_of`.
   - Provider stop errors are the hard backstop and become `budget.stop` audit events. Classify them by body, not status: LiteLLM returns `budget_exceeded` / "Budget has been exceeded" with a status that varies by version, and Anthropic returns `enforced_spend_limit_reached`.
   - The undocumented Claude subscription quota endpoint is not used.
-- **Controls:** daily, weekly, and per‑sprint caps are enforced locally against the merged figure, next to the provider's own cap ("gateway $31.20 of $50 · resets 1 Dec"). Each action gets a pre‑flight estimate, with a confirm above `confirm_over_usd`. Agent runs get a hard cap (`--max-cost`). `ai.mode=off` gives a global kill switch.
+- **Controls:** daily, weekly, and per‑sprint caps are enforced locally against the merged figure, next to the provider's own cap ("gateway $31.20 of $50 · resets 1 Dec"). Each action gets a pre‑flight estimate (a ceiling: the output is assumed at its token cap), with a confirm above `confirm_over_usd` when `ai.mode = "ask"`. A call whose estimate would breach a cap, or the provider's remaining budget, is refused before anything is sent (exit 4, audited as `budget.stop`); `--override-budget` waives the local caps and is audited as `budget.override`. Agent runs get a hard cap (`--max-cost`). `ai.mode=off` gives a global kill switch for AI commands.
 - **Spend avoidance:** results are cached by `hash(prompt version, model, input content)`, and the cache is backed by durable artifacts (4.2). Unchanged issues and threads are never re‑summarised, even after a cache reset. Prompts are trimmed (thread diffs clipped, quoted replies collapsed). Explain calls use a minimal system prompt and no tools: omp's default prompt alone costs ~2.2k input tokens per call (observed), so ADE passes `--system-prompt` and `--no-tools`.
 - **Page:** spend by day, feature, and model; remaining headroom; top costly items; the active profile with per‑role models.
 
@@ -644,6 +660,11 @@ One confirm screen shows every write before it happens. It is idempotent: re‑r
 - **Plan:** ADE gathers the parent issue, child issue, comments, notes, and repo `AGENTS.md`, then starts omp in plan mode in the worktree with a seeded prompt file. The plan is saved to the item record (`plans/`, 4.2), never into the worktree, and reviewed in the TUI.
 - **Run:** omp executes the approved plan with `--max-cost` and the implement‑role model. `runs/<id>/run.md` tracks state, spend, exit, and resulting commits, and every run brackets with `agent.run.start/end` audit events. lazygit opens beside the run for review. "Address comments" uses the same path, seeded with unresolved threads.
 - **Agent CLI drivers:** `omp`, `claude`, and `codex` are discovered on PATH and chosen per profile.
+- **As built in phase 6** (`internal/agent`, `ade agent`, details in DESIGN.md, Agent dialog):
+  - A run is one lifecycle, `queued → planning → awaiting-approval → running → review → pushed | failed | cancelled`, persisted in `run.json` of its session directory `items/<forge>/<project>/<iid>/runs/<run-id>/` (indexed in cache.db, rebuilt from the directories when lost). The directory holds `plan.md`, `prompt-*.md`, `context.json`, `transcript.jsonl`, `diff.md`, `cost.json`, `run.md`. The transcript is nowhere else: the audit log gets `agent.run.start/end` with metadata and an `ai.agent-*` entry with the cost (the ledger's feed), never a body.
+  - `ade agent plan|approve|run|diff|review|push|address|list|show|cancel`. A plan is a read-only call (`--tools read,grep,glob`); approval hashes `plan.md`, and an edit after approval voids it. `run` needs a clean start-work worktree on the item's branch. `address` takes the MR's unresolved threads and drafts replies as pending agent drafts in the review store; nothing is posted until they are triaged and submitted.
+  - Cost: `budget.agent_run_usd` (lowered with `--max-usd`) is both the pre-flight check (the first call's estimate must fit, and the period caps apply) and a hard stop: the agent process group is killed as soon as the cost its stream reports passes the cap, recorded as `budget.stop`. omp and claude report cost; codex reports tokens, so it needs a price table entry or the run is refused.
+  - Drivers are picked per profile (`agent = "omp" | "claude" | "codex"`, `agent_command`) or per run (`--driver`). `ade doctor` reports a missing one as unavailable. Push commits with the configured git user marked `(ade agent)` as author and pushes the branch; the MR updates by itself.
 
 ### 6.7 Hosts and editors
 
@@ -664,7 +685,7 @@ VS Code specifics:
 
 ### 6.8 Notifications
 
-Every subsystem publishes typed events onto one in‑process bus: update/sync, git, task runner, agent runs, forge diffs, and budget. Events from other `ade` processes arrive through run records and the audit log (1). The notifier applies the `[notify]` rules and delivers to channels.
+Every subsystem publishes typed events onto one in‑process bus: update/sync, git, task runner, agent runs, forge diffs, and budget. Events from other `ade` processes (CLI commands, `ade notify send` from scripts and VS Code tasks, agents in other panes) are recorded in the shared inbox, and the dashboard picks them up within two seconds. The notifier records every event and applies the `[notify]` toast rules.
 
 | Event (examples) | Source |
 |---|---|
@@ -676,22 +697,27 @@ Every subsystem publishes typed events onto one in‑process bus: update/sync, g
 | `agent.run.end`, `agent.run.failed`, `agent.plan.ready` | agent runs (6.6) |
 | `budget.warn` (80 %), `budget.stop`, `project.manifest.invalid`, `worktree.removable` | budget, projects, worktrees |
 
-Channels:
+Notifications live only inside the dashboard. ADE never sends terminal escape sequences or desktop notifications: support is unreliable across the terminals ADE runs in (VS Code, browser terminals, zellij), so the dashboard is the one place they are guaranteed to appear (decided 2026‑11‑11).
 
-- **Inbox (always on):**
-  - Every notification is stored in `cache.db` with read/unread state. Losing the cache loses only read state, because history stays in the audit log and run records.
-  - `i` opens it, and the header shows the unread count (`● 3`).
-  - `enter` jumps to the subject: the MR, failing job log, task pane, agent run, or worktree. Bulk mark‑read and per‑event mute are available.
-  - `ade inbox [--unread] [--json]` gives the CLI view.
-- **Toast:** a transient line in the TUI footer, lasting 5 s, or until dismissed for failures. Failures stack and stay until acknowledged.
-- **Terminal:** best effort.
-  - It writes one OSC 9 notification (`title: body`) through the renderer.
-  - Verified with zellij 0.45: a pane's OSC 9 passes through unchanged, OSC 777 is rewritten to OSC 9, and BEL is dropped. So ADE sends only OSC 9 and never doubles up.
-  - Whether the outer terminal shows it depends on the terminal: iTerm2, WezTerm, Ghostty, and Windows Terminal do. VS Code's integrated terminal is still to be checked by hand.
-  - In zellij it also prefixes the affected work item's tab name with `●` until the item is viewed.
-- **Desktop:** `notify-send` where a desktop session exists. Off by default, so it never runs on remote CDEs.
+- **Pop‑ups:**
+  - a stack in the bottom‑right corner, up to three visible, with `+n earlier` above them
+  - each pop‑up shows a severity glyph, the title, and a faint `kind · subject` line, with its border in the severity colour
+  - non‑failures disappear after 6 s; failures stay until `esc`
+  - transient status (for example a no‑op update) only pops up
+  - a sync failure identical to the previous run's (same project, same error) is transient: it is news once, not every interval
+  - a project's first good sync after failed ones has no baseline, so it raises no per‑item events (no "assigned to you" for everything)
+- **Notification centre (`i`):**
+  - lists everything recorded in `cache.db`, newest first, with read/unread state
+  - `f` cycles the filter: all, unread, problems (warn and error)
+  - the selected item expands up to four lines of detail
+  - `enter` jumps to the subject (work item, MR, worktree, task, agent run) and marks it read
+  - `r` marks one item read and `R` marks all read
+  - losing the cache loses only read state; history stays in the audit log and run records
+- **Unread count:** shown in the header (`● 3 unread`).
+- **Row markers:** every list row whose subject has unread notifications carries a `●` marker in the warn colour, until they are read.
+- **CLI:** `ade inbox [--unread] [--json]` reads the inbox, and `ade notify send --kind … --title … --subject …` records a notification from a script.
 
-Quiet hours mute the terminal and desktop channels; the inbox still records everything. Forge‑derived events are computed by diffing consecutive syncs, so they work on every tier with no webhooks. Events caused by your own actions in ADE (for example, you approving) are not echoed back to you.
+Forge‑derived events are computed by diffing consecutive syncs, so they work on every tier with no webhooks. Events caused by your own actions in ADE (for example, you approving) are not echoed back to you.
 
 ### 6.9 Review
 
@@ -723,7 +749,7 @@ One review surface serves both modes: reviewing yourself and triaging an agent's
   Severity can be changed while triaging. Every decision is audited (`review.comment.accept|edit|deny`). Accept, edit, and deny rates per profile show on the budget page, so a noisy reviewer model is visible.
 - **Submit once:** every accepted comment goes out as a single batch, so the author gets one notification, not twenty.
   - **GitLab:** draft notes (Free tier), then bulk publish. Diff positions come from the MR's latest version SHAs.
-  - **GitHub:** a pending review with comments, submitted as `COMMENT`, `REQUEST_CHANGES`, or `APPROVE`.
+  - **GitHub:** a pending review with comments, submitted as `COMMENT`, `REQUEST_CHANGES`, or `APPROVE`. Driver specifics (built, Phase 7): comments are added to the pending review through GraphQL (`addPullRequestReviewThread`, a reply inside the review through `addPullRequestReviewThreadReply`) and read back from the review threads query, because REST reports pending comments without line or side; a context line is anchored on the new side, a removed line on the left side, and a renamed file by its new path. GitHub cannot edit a pending review's body, so the overall summary is held by the client and sent with the submit event: it lives as long as the process (a resumed `ade review submit` in a new process cannot recover a summary whose upload was interrupted). Publishing is one `COMMENT` event, so approval is a second, separate review, and GitHub refuses approving one's own pull request. Start work's branch has no commit of its own, which GitHub refuses a pull request for ("No commits between"), so the driver adds one empty "Start work: …" commit before opening the draft PR. Milestones have no start date: a sprint's start is the `Start: YYYY-MM-DD` line of the milestone description, its end the due date.
 
   An optional overall summary is drafted too and edited like any comment. Approving stays a separate, explicit key.
 - **Agent‑free:** with `ai.mode = off` the same surface works for manual review. Only `A` disappears.
@@ -768,14 +794,14 @@ Verification:
 
 | # | Phase | Delivers | Acceptance |
 |---|---|---|---|
-| 0 | Foundations | flake (done), Go module, cobra skeleton, config load + `ade doctor`, audit writer + `ade audit`, projects (`ade project add/list/status`), bare clone + worktree layout (2.2), startup/periodic update (2.3), event bus + inbox/toast/terminal notifications (6.8), zellij launcher (`ade` attaches/creates session `ade`), **visual‑world round → DESIGN.md**, Phase‑0 Home (projects → repos → worktrees, update progress, inbox drawer, toasts) in the Interchange direction | `ade project add` on the GitHub and GitLab sandbox manifests clones every repo into `<root>/<project>/<repo>/{.bare,main}`, and every worktree has an upstream. Re‑running it is a no‑op. Starting `ade` fetches all repos and fast‑forwards clean `main/` trees. A dirty `main/` is skipped with a notification. A deliberately broken remote raises `git.fetch.failed` in the inbox while the other repos still update. OSC behaviour through zellij is checked and recorded (done: OSC 9 only). A no‑op update toasts but adds no inbox row. Every command leaves an audit line |
-| 1 | Read‑only home | GitLab forge (issues, links, MRs, pipelines, milestones, iterations read), capability probe + `ade doctor --probe`, fake GitLab (free/premium), committed GraphQL schema + query validation, sync + cache, item records (`item.md` snapshots), iteration sources (GitLab iterations with cadence filter and null‑title naming; milestones, labels, cadence), weight sources (GitLab weight, label, none) + row/section weight display, label facets (type/app/workflow) + drift display, stage/court derivation, Home page + preview | Fake‑server tests pass in both tier modes, including the iteration window over current/upcoming/closed iterations from one named cadence, and weights read from the Premium `weight` field; every GraphQL document validates against the schema; on the GitLab sandbox (`scripts/sandbox/gitlab-seed.sh`), assigned tracker issues show correct child, MR, stage, court, type, app, label‑based weight (unweighted shown as `–`, not 0), workflow drift, and a milestone‑based iteration window with weight totals; navigation never waits on network; notes below the snapshot survive re‑sync |
-| 2 | MR page + manual review | threads, diff, CI tabs; reply, resolve, approve, ready, merge, retry; review surface (6.9) with line comments, draft batching, and single submit (GitLab draft notes + bulk publish, GitHub pending review) | Full review round‑trip on a sandbox MR without the web UI; five line comments arrive as one batch (one notification); a comment on a renamed file lands on the right line |
-| 3 | Start work + workspaces | Start‑work flow (6.3): repo picker with app‑label preselection, child issue auto/always/never, Draft MR / Branch only / Browse modes, MR template read from the baseline tree with quick actions listed and strippable, `M` to create the MR later; iteration copy via `issueSetIteration`, workflow label sync, checkout + run dependency graphs (2.1), baseline trees, port allocation, readiness probes, shared instances, layouts, VS Code host + tasks.json export, ade-nvim; sandbox `api` gains a tiny HTTP server with `/healthz` and `web` a dev server that calls `API_URL` | `s` on a tracker issue yields linked child + draft MR + worktree + tab; re‑run is idempotent; Branch only creates no MR and `M` later creates it from the template; Browse makes no forge write at all (audit shows none); a template containing `/assign_reviewer` lists the reviewers and, when stripped, the created MR has no reviewers; an issue with two app labels offers a child in each repo; with `sync = auto` the tracker's workflow label moves to "in progress" and the old one is removed. Opening a `web` workspace starts db → api (ready on `/healthz`) → web, with `API_URL` pointing at the right port. A second web workspace reuses the same baseline api instance. A work item with its own api branch gets its own api on a different port. Killing api leaves web marked `blocked`. Cycles are rejected with the path. The same flow works in VS Code via tasks.json without zellij |
-| 4 | AI explain + budget + agent review | drivers (omp, anthropic, openai‑compat), billing sources (litellm, omp first; anthropic, openai, moonshot, openrouter), AI artifacts + result cache, ledger over audit, caps, pre‑flight, budget page, Log page + History tab, profiles (incl. `review` role), summaries/classify/draft reply, agent review drafts with accept/edit/deny triage (6.9) | Second summary of an unchanged MR costs $0 (cache hit), also after deleting `cache.db` and running `ade reindex`; against a local LiteLLM proxy (`nix develop .#gateway`) with a budgeted virtual key, the budget page matches `/key/info` and an over‑budget call is classified as `budget.stop`; agent review on a sandbox MR yields structured comments, denied ones are never posted, edited ones post as edited, all accepted ones arrive as one batch; cap breach blocks with a clear message; `ai.mode=off` hides nothing essential |
-| 5 | Agile | standup, sprint review (deterministic + AI narrative) with weight‑based committed/done/carried, velocity, and burn‑down, sprint load in the header, exports, OSC 52 copy | Standup over a Monday correctly uses Friday; review totals (count and weight) match forge data on the sandbox; an unweighted issue never contributes 0 to velocity |
-| 6 | Agents | plan/run/address‑comments via omp (claude/codex drivers), session dir in item record, run tracking, cost caps, lazygit integration | Plan → approve → run → review → push completes on a sandbox issue within `agent_run_usd`; the transcript lands only in the item record |
-| 7 | GitHub + team | GitHub forge parity (sub‑issues as the child link), `ade init` onboarding, shared manifest docs, release (goreleaser + flake package) | Same Home/MR/Start flows on the GitHub sandbox (`scripts/sandbox/github-seed.sh`); a teammate goes from zero to dashboard via `ade init` |
+| 0 ✅ | Foundations | flake, Go module, cobra skeleton, config load + `ade doctor`, audit writer + `ade audit`, projects (`ade project add/list/status`), bare clone + worktree layout (2.2), startup/periodic update (2.3), event bus + inbox and in‑dashboard notifications (6.8), zellij launcher (`ade` attaches/creates session `ade`), **visual‑world round → DESIGN.md**, Phase‑0 Home (projects → repos → worktrees, update progress, notification centre, pop‑ups) in the Interchange direction | `ade project add` on the GitHub and GitLab sandbox manifests clones every repo into `<root>/<project>/<repo>/{.bare,main}`, and every worktree has an upstream. Re‑running it is a no‑op. Starting `ade` fetches all repos and fast‑forwards clean `main/` trees. A dirty `main/` is skipped with a notification. A deliberately broken remote raises `git.fetch.failed` in the inbox while the other repos still update. Notifications appear only inside the dashboard: a `ci.failed` event yields a sticky pop‑up, an inbox row, an unread‑count increment, and a row marker (`internal/tui/notifications_test.go`). A no‑op update pops up but adds no inbox row. Every command leaves an audit line |
+| 1 ✅ | Read‑only home | GitLab forge (issues, links, MRs, pipelines, milestones, iterations read), capability probe + `ade doctor --probe`, fake GitLab (free/premium), committed GraphQL schema + query validation, sync + cache, item records (`item.md` snapshots), iteration sources (GitLab iterations with cadence filter and null‑title naming; milestones, labels, cadence), weight sources (GitLab weight, label, none) + row/section weight display, label facets (type/app/workflow) + drift display, done‑but‑kept‑open (`labels.workflow.done`), stage/court derivation, Home page + preview | Fake‑server tests pass in both tier modes, including the iteration window over current/upcoming/closed iterations from one named cadence, and weights read from the Premium `weight` field; every GraphQL document validates against the schema; on the GitLab sandbox (`scripts/sandbox/gitlab-seed.sh`), assigned tracker issues show correct child, MR, stage, court, type, app, label‑based weight (unweighted shown as `–`, not 0), workflow drift, and a milestone‑based iteration window with weight totals; navigation never waits on network; notes below the snapshot survive re‑sync. **Evidence:** `scripts/verify/phase1.sh` (live sandbox; weight totals compared with the forge API), `internal/forgesync`, `internal/domain` tests; screens `scripts/verify/capture.sh`, finish review: ship |
+| 2 ✅ | MR page + manual review | threads, diff, CI tabs; reply, resolve, approve, ready, merge, retry; review surface (6.9) with line comments, draft batching, and single submit (GitLab draft notes + bulk publish, GitHub pending review) | Full review round‑trip on a sandbox MR without the web UI; five line comments arrive as one batch (one notification); a comment on a renamed file lands on the right line. **Evidence:** `scripts/verify/phase2.sh` (live: five comments on api!2 in one publish, positions on `limit/bucket.go → limit/token_bucket.go`, reply/resolve/reopen, ready/draft, approve/unapprove, every write audited), `internal/review` and `internal/tui` MR page tests; screens `scripts/verify/capture-mr.sh`, finish review: ship |
+| 3 ✅ | Start work + workspaces | Start‑work flow (6.3): repo picker with app‑label preselection, child issue auto/always/never, Draft MR / Branch only / Browse modes, MR template read from the default branch with quick actions listed and strippable, `M` to create the MR later; iteration copy via `issueSetIteration`, workflow label sync, checkout + run dependency graphs (2.1), baseline trees, port allocation, readiness probes, shared instances, layouts, VS Code host + tasks.json export, ade-nvim; sandbox `api` gains a tiny HTTP server with `/healthz` (and a db node) and `web` a dev server that calls `API_URL` | `s` on a tracker issue yields linked child + draft MR + worktree + tab; re‑run is idempotent; Branch only creates no MR and `M` later creates it from the template; Browse makes no forge write at all (audit shows none); a template containing `/assign_reviewer` lists the reviewers and, when stripped, the created MR has no reviewers; an issue with two app labels offers a child in each repo; with `sync = auto` the tracker's workflow label moves to "in progress" and the old one is removed. Opening a `web` workspace starts db → api (ready on `/healthz`) → web, with `API_URL` pointing at the right port. A second web workspace reuses the same baseline api instance. A work item with its own api branch gets its own api on a different port. Killing api leaves web marked `blocked`. Cycles are rejected with the path. The same flow works in VS Code via tasks.json without zellij. **Evidence:** `scripts/verify/phase3.sh` + `phase3-workspaces.sh` (live sandbox, throwaway `ade-test-*` zellij sessions deleted, tasks.json run without zellij, nvim headless smoke); screens `capture-startwork.sh`, `capture-services.sh`, finish reviews: ship |
+| 4 ✅ | AI explain + budget + agent review | drivers (omp, anthropic, openai‑compat), billing sources (litellm, omp first; anthropic, openai, moonshot, openrouter), AI artifacts + result cache, ledger over audit, caps, pre‑flight, budget page, Log page + History tab, profiles (incl. `review` role), summaries/classify/draft reply, agent review drafts with accept/edit/deny triage (6.9) | Second summary of an unchanged MR costs $0 (cache hit), also after deleting `cache.db` and running `ade reindex`; against a local LiteLLM proxy (`nix develop .#gateway`) with a budgeted virtual key, the budget page matches `/key/info` and an over‑budget call is classified as `budget.stop`; agent review on a sandbox MR yields structured comments, denied ones are never posted, edited ones post as edited, all accepted ones arrive as one batch; cap breach blocks with a clear message; `ai.mode=off` hides nothing essential. **Evidence:** `nix develop .#gateway -c bash scripts/verify/phase4.sh` (real omp calls, under $0.02 a run; LiteLLM with a mock model); screens `capture-budget.sh`, `capture-log.sh`, `capture-classify.sh`, finish review: ship |
+| 5 ✅ | Agile | standup, sprint review (deterministic + AI narrative) with weight‑based committed/done/carried, velocity, and burn‑down, sprint load in the header, exports, OSC 52 copy | Standup over a Monday correctly uses Friday; review totals (count and weight) match forge data on the sandbox; an unweighted issue never contributes 0 to velocity. **Evidence:** `scripts/verify/phase5.sh` (totals recomputed from the GitLab API; narrative via omp, cache hit on repeat), `internal/agile` tests incl. kept‑open done; screens `capture-standup.sh`, `capture-sprint.sh`, finish review: ship |
+| 6 ✅ | Agents | plan/run/address‑comments via omp (claude/codex drivers), session dir in item record, run tracking, cost caps, lazygit integration | Plan → approve → run → review → push completes on a sandbox issue within `agent_run_usd`; the transcript lands only in the item record. **Evidence:** `scripts/verify/phase6.sh` (live on a sandbox issue, run cost under $0.01 of the $0.50 cap, transcript marker found only under `runs/<id>/`); screens `capture-agents.sh`, finish review: ship |
+| 7 ✅ | GitHub + team | GitHub forge parity (sub‑issues as the child link), `ade init` onboarding, shared manifest docs, release (goreleaser + flake package) | Same Home/MR/Start flows on the GitHub sandbox (`scripts/sandbox/github-seed.sh`); a teammate goes from zero to dashboard via `ade init`. **Evidence:** `scripts/verify/phase7.sh` (scripted `ade init` in a fresh HOME against the GitLab sandbox, goreleaser snapshot, `nix build`/`nix run`) sourcing `phase7-github.sh` (GitHub sandbox sync, PR review batch, start work); GitHub is kept to these core flows (see 5) |
 
 ---
 
@@ -787,6 +813,6 @@ Verification:
 - **Data egress** is governed only by which AI profiles each machine has configured. There is no per‑project policy, by decision; see 4.3.
 - **Local records** hold real work content in plain files. They stay outside repos, are created `0700`, and are never synced between machines. Backups are the user's call.
 - **Writes are irreversible‑ish.** Every forge write goes through a preview/confirm, and `--dry-run` is available on every write command.
-- **Terminal notification support is uneven.** zellij passes OSC 9 (verified), but terminals differ in whether they show it, and VS Code's integrated terminal is unverified. The inbox and toasts are the guaranteed channels, and the terminal channel is an extra.
+- **Notifications exist only inside the dashboard.** While the dashboard is closed, events accumulate in the inbox (`ade inbox`), and they show in the unread count and row markers when it next opens. Only events that arrive while it is open pop up.
 - **Disk use:** a bare clone per repo per project, plus per‑worktree dependencies (`node_modules`). `ade gc` and merged‑worktree prompts keep it bounded.
 - Open: diff rendering inside the TUI vs always delegating to delta (decide after the Phase 2 spike); whether run tracking needs a socket once agents run in parallel; whether services should optionally run via `docker compose` / `process-compose` instead of plain commands (the run graph stays the same either way).

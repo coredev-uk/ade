@@ -20,7 +20,7 @@ func TestLinesKeepsSelectionVisible(t *testing.T) {
 		})
 	}
 	ps := []project.ProjectStatus{{Name: "p", Repos: repos}}
-	m := model{projects: ps, rows: flatten(ps), g: unicodeGlyphs}
+	m := model{projects: ps, rows: flatten(ps), g: unicodeGlyphs, nc: newNotifCenter(nil)}
 	for _, sel := range []int{0, 15, 39} {
 		m.sel = sel
 		out := ansi.Strip(m.lines(80, 10))

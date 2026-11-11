@@ -19,12 +19,20 @@ func ink(repo string) lipgloss.Style {
 	return lipgloss.NewStyle().Foreground(lipgloss.Color(lineInks[int(h.Sum32())%len(lineInks)]))
 }
 
+// State and overlay colours (DESIGN.md); line inks are above.
+const (
+	colWarn = "#e8a33d"
+	colOK   = "#3fa66b"
+	colBad  = "#e0453a"
+	colRule = "#666666"
+)
+
 var (
 	stBold  = lipgloss.NewStyle().Bold(true)
 	stFaint = lipgloss.NewStyle().Faint(true)
-	stWarn  = lipgloss.NewStyle().Foreground(lipgloss.Color("#e8a33d"))
-	stOK    = lipgloss.NewStyle().Foreground(lipgloss.Color("#3fa66b"))
-	stBad   = lipgloss.NewStyle().Foreground(lipgloss.Color("#e0453a"))
+	stWarn  = lipgloss.NewStyle().Foreground(lipgloss.Color(colWarn))
+	stOK    = lipgloss.NewStyle().Foreground(lipgloss.Color(colOK))
+	stBad   = lipgloss.NewStyle().Foreground(lipgloss.Color(colBad))
 	stRule  = lipgloss.NewStyle().Faint(true)
 )
 

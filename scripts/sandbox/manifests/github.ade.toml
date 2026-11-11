@@ -1,13 +1,26 @@
 # Manifest for the synthetic GitHub sandbox seeded by scripts/sandbox/github-seed.sh.
+# Same shape as gitlab.ade.toml: repos/labels/milestones are per repo, so every repo carries the same
+# label set; sprints are milestones whose description starts with `Start: YYYY-MM-DD` (GitHub
+# milestones have no start date); tracker -> child links are GitHub sub-issues.
 name  = "demo-gh"
 forge = "sandbox-github"
 
 [tracker]
 project    = "coredev-uk/ade-sandbox-tracker"
 iterations = { source = "milestones" }
+weight     = { source = "label", pattern = "weight:{value}" }   # GitHub has no weight field
 
 [labels.type]
 pattern = "type:{value}"
+
+[labels.app]
+pattern = "app:{value}"
+
+[labels.workflow]
+pattern = "workflow:{value}"
+stage   = { started = "in progress", draft = "in progress", review = "in review", merged = "done" }
+sync    = "auto"
+done    = "done"                       # open tracker labelled done counts as done (closed at sprint end)
 
 [repos.api]
 path = "coredev-uk/ade-sandbox-api"
@@ -17,3 +30,12 @@ app  = ["api"]
 path     = "coredev-uk/ade-sandbox-web"
 app      = ["web"]
 requires = ["api"]
+
+[conventions]
+branch = "{child_iid}-{slug}"
+link   = ["relates_to", "description"]
+mr     = { draft = true, closes = "child", mention = "parent" }
+
+# No run graph: apps-seed.sh pushes the sandbox apps to the GitLab project only.
+[workspaces]
+default = { layout = "code" }

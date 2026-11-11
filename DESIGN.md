@@ -115,9 +115,12 @@ Inks colour a repo's stations and its branch connectors, and nothing else.
 - **Scrolling:** the list scrolls so the selected row always stays visible.
 - **Header:**
   - left: scope (`ADE · 2 projects · 4 repos`)
-  - centre: update state (`⟳ updating 3/4` / `⟳ updated 40s ago` / the warning title)
-  - right: unread count
+  - centre: activity (`⟳ updating 3/4` / `⟳ syncing` only while work runs; idle is plain faint `synced 40s ago`; a warning shows its severity glyph and title)
+  - right: the AI chip, then the unread count. The chip is `AI $0.38 / $2.00 day`: spend against the cap of the budget period nearest its cap (day, week or sprint), faint while there is room; amber with `▲` from 80% (`▲ AI $1.70 / $2.00 day`); red with `✕` and the word `cap` at the cap. With no cap set it is just `AI $0.38`; with `ai.mode = "off"`, a faint `AI off`; with no AI profile configured, nothing. It is read from the ledger off the UI loop, so the header never waits on it.
 - **Footer:** a toast when there is one, otherwise key hints.
+- **Worktrees preview:** a long `path` is cut from the left (`…/demo-gl/api/main`) at a separator, so repo and tree stay visible.
+- **Help (`?`):** a blank‑field dialog (nothing of the page shows around it, the way every dialog sits) listing every Home and Worktrees key under Move, Selected item, Pages and Leave section rules, one key per row. On a terminal too short for that it tightens to paired keys (`s M  start work; create the MR for started work`) so the whole list still fits; no description is cut mid‑word. Toasts are held back while it is open.
+- **Station legend:** the `as st br dr ci rv mg` row appears once, above the first project that has tracks, never above a project whose sync failed.
 
 ## Elevation & Depth
 
@@ -151,24 +154,132 @@ The base layer is flat. Depth is one step: overlays composite above the screen. 
 - **`Last update`:** this repo's failures and skips, if any.
 - **`Recent`:** up to eight inbox rows: severity glyph, title (bold if unread), and a right‑aligned faint age.
 
-### Toast
+### Work item row (Home, signature)
 
-One footer line: severity glyph and title.
+One line per item:
 
-- Non‑failures expire after 5 s.
-- Failures stay until `esc`.
-- Stacked toasts show `+n earlier`.
-- Transient events (for example a no‑op update) appear only as toasts, never in the inbox.
+- **Columns:** marker (`▸` when selected), short ref (`#1`, or `api!3` outside the tracker; the column is as wide as the longest ref), title, an unread marker (bold amber `new`, or `3 new`) when notifications about the item are unread, then the track, weight (`5w`, or a faint `–` when unweighted, never `0`), and court · reason. The unread marker is a word because dots are stations on this screen.
+- **Legend:** one faint line under the first project rule names the stations above their columns (`as st br dr ci rv mg`; initials when the track is compact).
+- **Track:** seven stations (assigned, started, branch, draft, ci, review, merged) joined by `━━` (travelled, in the item's line ink) and `──` (to come, faint). Below 110 columns the connectors shorten to one cell (`●━●━◉─○─○─○─○`) so titles keep their room.
+  - Done stations are `●`; the current one is the train `◉` in the line ink (bold).
+  - The train is `◎` when the item spans repos, and warn amber when the item is blocked.
+  - A done item is a fully travelled line.
+  - An item missing both type and app shows a faint `? untriaged` (`? triage` when compact) instead of a track.
+- **Court:** `you` is bold with a normal‑ink reason; `blocked` and `waits` are amber, bold and lead with the warn glyph (`▲ blocked`, `! blocked` in ascii) so they carry emphasis without colour; all other courts are faint. The column is as wide as the longest court text (capped at 40, or two fifths of a narrow list); a reason that still doesn't fit is cut at a word boundary with `…`, never mid‑word.
+- **Done but kept open:** an open tracker carrying the manifest's `labels.workflow.done` value is done (hidden from rows, counted in done weight); a merged item without it reads `you · set workflow::done`.
+- **Sections:**
+  - Each project starts with a section rule: `<project> · <sprint>`, then guide words in priority order: end date and workdays left (amber at ≤ 1), weight load (`20w committed · 2w done · 2 unweighted`, or `no weights`), the next sprint. When the full guide doesn't fit, the sprint and load squeeze into one compact group (`ends Fri 13 Nov · 3d left · 2/20w`, done/committed) before any group is dropped; lower‑priority groups then drop whole. Sync age lives only in the header.
+  - Sub‑rules are indented three cells: My work, Reviews requested, Sprint · open, Next sprint.
 
-### Inbox drawer
+### Item preview
+
+- **Header:** a bold `ref  title`, then a faint meta line (type · apps · sprint · weight or "unweighted").
+- **Workflow label:** a faint `label in review ✓`, or an amber `▲ label in review · stage says in progress` when they drift.
+- **Station list:** the item's line drawn vertically, `┃` in its ink where travelled and a faint `│` ahead. Each station carries its evidence: assignee, child issue, branch, MR and state, pipeline, approvals and unresolved threads, merge date.
+- **Below the stations:** the court line, then the Services strip when any of the item's workspaces runs something, an amber `▲ needs …` when triage is missing, the task count, and the first lines of the description, faint.
+- **Services strip:** one faint-labelled line, `services  api.dev ● 54031 (feature tree) · web.dev ● 54044`, wrapped to the pane. Every state is a glyph plus a word or number: `●` and the port when ready, `○ starting`, `✕ stopped` (it was running and its process is gone), `✕ failed` (it died before it became ready), `▲ blocked by api.dev` (it still runs but a requirement died) (ascii `*`, `o`, `x`, `!`). `(feature tree)` marks an instance running from a feature worktree rather than the repo's baseline; `(shared)` marks one held by more than one worktree's workspace, and it shows under every item that holds it. Chips that need a look come first (failed, blocked, stopped, starting) and a ready chip never shares their line; long strips wrap between instances, never inside one. Tags merge into one parenthetical: `(feature tree, shared)`. Nothing is drawn when no workspace of the item runs anything; it refreshes every two seconds.
+
+### Pop‑ups
+
+- **Shape and position:** a stack in the bottom‑right corner, a third of the width (44–64 cells; full width below 100 columns), up to three visible. A faint `+n earlier · esc dismisses all` line sits above them when more are waiting.
+- **Each pop‑up:** a rounded box whose border is the severity colour (failed red, warn amber, ok green, overlay grey for info). It shows the severity glyph and title, then a faint line with what it is about (`ade-demo-env/api!1`) and, for failures, `esc dismiss`. The dotted event id (`mr.load.failed`) belongs to the inbox and the audit log, never to the pop‑up.
+- **Lifetime:** non‑failures expire after 6 s; failures stay until `esc`. Every pop-up wraps its title and subject (up to five lines each) so the end, which is often the instruction, is never cut; a command is kept on a line of its own after the cause (`port 37007 is already in use` / `free the port, then run ade ws up`).
+- **Under a dialog:** while the Start work, Agent or an MR page dialog (or its help) is open, pop‑ups are held back (they stay queued and show when it closes), so they never cover its key row.
+- **Transient events** (for example a no‑op update) only pop up and are never recorded.
+- **Other processes:** rows recorded by other ade processes while the dashboard is open pop up once. The task runner (`ade task run`, `ade ws up`) reports this way: `task.ready` and `task.done` are green, `task.blocked` and `task.exited` amber and, like failures, stay until `esc`, `task.failed` red (stays until `esc`), `task.exited` amber. Titles say what happened in a few words (`api.dev failed to start`, `web.dev waits for api.dev`); the line beneath says what is new: the tree a ready node runs in (`api/1-rate-limit`), or the cause and the way out (`port 37007 is already in use`, then `free the port, then run ade ws up` on the next line). The raw error and the log path go to the notification centre's detail.
+- **Workspace key (`w`):** a success pops up `opened workspace api/418-limit` (transient); a missing `ade` zellij session is an amber transient hint, `workspace not opened: no ade session`, with `start ADE with ade, then press w` on the subject line; on a host that cannot open a tab (a plain terminal) the pop-up reads `api/main: no tab on this host` / `command copied, paste it in a shell` and the full `cd … && ade ws up --no-zellij` command goes to the clipboard (OSC 52) instead of being wrapped in the box; any other failure is a red pop-up that stays.
+
+### Notification centre
 
 - **Shape:** a rounded overlay, 60 cells wide (full width when narrow), right‑aligned, full height.
-- **Contents:** rows of severity glyph, title, and age, with the kind beneath. The selected row expands up to four lines of detail. The empty state explains what will land there.
-- **Keys:** `r`, `R`, `esc`.
+- **Title line:** `Notifications · n unread · showing <filter>`.
+- **Rows:** severity glyph, title (bold if unread), and age, with a faint `kind · subject` beneath. The selected row expands up to four lines of detail behind a faint `┃`. The empty state explains what will land there.
+- **Keys:** `enter` goes to the subject and marks it read, `f` cycles the filter (all / unread / problems), `r`/`R` mark read, `esc` closes. While the centre is open the footer shows these keys instead of the page's.
 
 ### Help dialog
 
 A rounded, centred overlay. Each key row starts with a faint `┃`, then the bold key in a 7‑cell column, then the description.
+
+### Start work dialog (`s`, `M` on a Home row)
+
+A blank field that replaces the body (the Agent dialog's mechanism): a rounded box at a fixed top row, at most 100 columns wide and centred (full width below), so no list or preview shows around it and it does not move between screens. It walks the PLAN 6.3 flow in two screens. It opens at once and reads the issue, manifest and forge in a command; the list beneath never waits on the network.
+
+- **Choose.** Three section rules with guide words:
+  - `Repos` (`app::api routes here`): one row per manifest repo, `[x]`/`[ ]` and the repo name in its line ink, then the forge path in faint. The repos the app labels route to are pre‑selected, and a repo that a chosen one `requires` (web requires api) carries a faint `web requires api: also a child here?`. The tracker project is a last, faint row (`work lives in the tracker project`).
+  - `What to create`: three radio rows, `●` chosen and `○` not (`*` and `o` in ascii): Draft MR, Branch only, Browse, each with a faint line of what it writes.
+  - `Child issue` (`conventions.child_issue`): auto, always, never, same radio form.
+  - Keys: `j/k` move, `space` selects, `m` and `c` cycle mode and child policy, `enter` continues, `esc` cancels.
+- **Confirm.** `Confirm` with the count of forge writes and local steps in its guide (`9 forge writes · 2 local steps`; `no forge writes` for Browse; `nothing to create: everything exists` on a re‑run). Each repo is a station line in its ink, `●━ api ade-demo-env/api`, with its steps hanging off it on `┣━`/`┗━` connectors. Every step carries a glyph‑and‑word mark: bold `+ forge` for a forge write, `+ local` for git and the workspace tab (the guide counts exactly these rows), a faint `✓ exists` for what is already there. The workflow label move hangs under the stations on a faint `┃`. When the item spans repos the lines meet at the tracker item: an interchange `◎ tracker#8 the lines of api and web meet here` (`%` in ascii) opens the list and each repo hangs from it on `┣━●`/`┗━●`, its steps indented beneath. Before the child exists its number and reference are words, never `?`: the branch reads `<child iid>-retry-failed-webhook-deliveries`.
+- **MR block** (Draft MR mode): a section rule `MR · api` with the template name, the body exactly as it will be sent behind a faint `┃` (`Closes <child issue, created first>` until the child has a number), then `Quick actions` with one row each: bold `keep` or faint `strip`, the plain‑words summary (`request review from @reviewer-rae`), and the template line in faint. `x` toggles the action under the cursor, `X` all of them, `e` edits the body in `$EDITOR` (the dialog is suspended meanwhile; an edited body is sent as written and the toggles stop applying), `t` cycles templates, `p` switches repo, `l` confirms the workflow move when `labels.workflow.sync = ask`. When the terminal is short the confirm keeps its keys on screen: each repo's step list collapses to one line (`┗━ + forge child issue, link, branch, draft MR · + local worktree, workspace`) before the body is touched; then the body loses its blank lines, then the spacer rows from the bottom up (the ones above the keys and a warning first, so the gaps above the section rules go last), and what still does not fit is clipped with a faint `┃ … 14 more lines` (`e` shows all of it). It folds away entirely only when the terminal is too short for two lines of it. Stripping only changes this MR, never the template in the repo.
+- **Done.** One row per step with `✓ created`, a faint `· exists`, an amber `▲ skipped` or a red `✕ failed`, naming what was produced (`child issue api#3`); under it a faint `┃` line per repo with child, MR and worktree. An amber note under the rows (`▲ workspace not opened:`) puts its recovery command on its own lines, wrapped at path separators so none of it is cut. A failure keeps the rows that succeeded and says `s resumes where it stopped`.
+- `M` opens the same dialog on its confirm screen with only the MR step (the branch must exist; it says so when there is nothing to create).
+- While the dialog is open it owns the keys (`q` closes it, it does not quit). Under `NO_COLOR` and the ascii glyph set every state still reads from its word and glyph.
+
+### Classify dialog (`c` on a Home row)
+
+A rounded, centred overlay (full width below 100 columns) in the shape of the Start work dialog, for PLAN 3's "needs triage" items. It opens at once and reads the issue, manifest and suggestion in commands.
+
+- **Suggested labels.** One section rule whose guide words say where the proposal came from: `keywords · AI is off or not configured · no cost`, or `AI · <model> · $0.0010` (`cached, $0` on a repeat). One row per label, `●` ticked and `○` not (`*` and `o` in ascii), the ticked name bold; then a faint `why:` line and a faint `ignored …` line for anything the model proposed outside the team's values. The keyword classifier says what it could not find in the `why:` line (`…point at bug; no app keyword matched`), so a facet left out is never silent. A faint footer names the facets still without a suggestion (`no app label suggested · labels are only added, never removed`; just the second half when every missing facet is covered).
+- **Keys.** `j/k` move, `space` or `x` ticks, `enter` adds the ticked labels (nothing ticked: an amber `▲` line says so and the dialog stays), `esc` closes without any write. Adding the labels refreshes Home from the forge only; it never starts a git update.
+- **Pre-flight.** When `ai.mode = "ask"` and the estimate passes the ask-first amount, the dialog first shows an amber `▲ this asks the model first` line, then the profile, model, role, token estimate, price and destination as faint fields laid out under it with a two-cell hanging indent (a wrapped line never starts with a bare `·`), then the amber reason (`▲ estimated $0.0010 is over the $0.0001 you set to be asked first`). No config key appears in the text; `y` sends, `esc` cancels.
+- **Done / nothing to do.** `✓ added type::bug`, closed with `enter`; an item that already has both facets says so in a green `✓` line and that no model call was made.
+- **Failure.** A red `✕ <cause>` and a faint line of what to do: `✕ omp is not installed` / `install it or set ai.mode = off`; a spending cap or the provider's budget (`the Budget page shows the caps`); an unusable model answer or a timeout (`try again`); a forge that could not be read or written (`check the connection and press c again`, `try again, or add them on the forge`). The raw error (an exec message, an HTTP body) is never on screen; every failure is in the audit log (`ai.classify` with outcome error), where the Log page shows it whole.
+
+### MR page (`enter` on a Home row)
+
+Opens the MR of the selected item (the first open one; `[` `]` switch when the item has several), or the MR of a review request. `esc` goes back to Home; inside a thread (narrow) or the diff pane it first goes one step back. Data is read when a tab is first shown and kept per MR for the session, so reopening is instant; `U` reloads it.
+
+- **Head, four lines:** the bold `#1 › api!1  title` (faint item ref, then the MR); a **status strip** (`Ready · ✓ CI passed · 1 of 2 approvals · 2 unresolved · ✓ mergeable`, with a spinner and the action word, `⠋ merging…`, in front while a write runs); the tab bar (`[Threads 2]` bold in brackets, others faint, a count or CI glyph as badge); then the tab's section rule, its guide words on the right. Under pressure the strip drops its lowest-priority segments whole, merge verdict first.
+- **Tabs:** Overview, Threads, Diff, Review, CI, History (`tab`, `shift+tab`, `1`–`6`). An item with no MR yet opens on Overview (with its station list) and History only.
+- **History:** the audit entries recorded against this MR and its work item, newest first, one line each (`12m ago ✓ forge thread resolve … ok`), read when the tab is first shown and again after each write. A faint `+n earlier · ade audit shows them all` closes a long list.
+- **Overview:** the item's station list (as in the Home preview), then a key/value block for the MR (faint 10‑cell keys: state, author, branch, reviewers, approvals, pipeline, threads, merge) and the description. Scrolls.
+- **Threads:** list left (5/12 of the width), conversation right; below 100 columns one pane (`enter` opens the conversation, `esc` closes it). Sub‑rules `Unresolved (2)`, `Comments (1)`, `Resolved (5)`; a row is the marker, `● open` (amber) / `✓ done` (faint) / `note`, `path:line` (`general` without a position), the quoted first line and the author. The conversation shows the position, the diff lines around it (the thread's line bold), then each note under a bold author and a faint age. A long conversation shows its latest notes.
+- **Diff:** file list left (a third of the width, 30–44 cells), diff right. Each file is `R limit/{bucket.go → token_bucket.go}  +5 -1 ✎2`: a one-letter status (A added, M modified, R renamed, D deleted; the legend is in the rule's guide words), the shared directory outside the braces of a rename, counts, and `✎n` for your drafts. When the column is tight the name that says what the change is survives and `✎n` never moves: a rename drops its directory (`{bucket.go → token_bucket.go}`), then the old name (`→ token_bucket.go`), a plain path loses its directory from the left (`…/limit/bucket.go`). Below 100 columns the list and the diff take turns; `enter` opens a file, `h` returns. A diff line is the cursor marker, the old and new number (faint, four cells each: a removed line has only the old, an added line only the new), then `+`/`-`/space and the text in the diff's own state mark (green added, red removed); long lines end in `…`. Non‑adjacent hunks are separated by a faint `┃ ───`. Drafts and existing threads sit under their line behind a faint `┃`.
+- **Loading and errors:** a tab that has not been read shows `⠋ reading the diff…`, and its rule makes no claim about what it has not read (CI says `pipeline #9001` until the jobs arrive, then `· 2 jobs`); the status strip says `⠋ reading from the forge` on the first read of an MR (the Home summary stands in meanwhile, with the description marked as still arriving) and `⠋ refreshing` once there is data to refresh. A failed read raises one pop-up for the whole outage, `Could not load api!1 · U retries`, and the tab says `✕ could not read the diff: the forge is unreachable` with `U tries again`. The screen carries a short cause (unreachable, token rejected, not found, rate limited, forge error, timed out), never the event id or the request URL; the full error is in the audit log (`mr.load`, `ade log`) and the inbox row's detail. A retry that fails again raises a new pop-up.
+- **CI:** the pipeline as a station line in the repo's ink (`● build ━━ ✕ lint ──  ○ test`: passed stages filled, the first stage that has not passed ends the travelled line), then one row per job: glyph and word (`✓ passed`, `✕ failed`, `⟳ running`, `○ pending`, `– skipped`, `▸ manual`), name, stage, duration. `l` opens the job's log tail in a dialog; `r` retries the failed jobs.
+- **Footer:** the tab's keys, then the page actions (`a approve · R ready/draft · m merge · S submit review`), then `tab`, `esc back`, `? keys`. On a narrow terminal whole hints drop from the end of the line, the way out and the help never.
+- **Writes** (approve, ready/draft, merge, reply, resolve, retry, submit) run in the background, one at a time per MR. The strip shows the progress; the result arrives as a pop‑up and an inbox row (`mr.merge`, `mr.resolve`, `review.submitted`, … and `….failed` in red with the error as detail); the forge write is audited (`forge.*`).
+
+### Review surface (Review tab, `c` on the Diff tab, `S`)
+
+One surface for reviewing yourself and for triaging an agent's drafts. A comment is a **draft** until `S`; drafts live in the cache, so quitting loses none and `ade review add` drafts appear.
+
+- **Draft block (under a diff line):** `✎ your draft · comment`, or `✎ agent draft · pending triage · y accept · n deny · e edit · ▲ blocking · long`, then the body wrapped behind the `┃` at the pane's width or 100 cells, whichever is smaller. A blocking draft reads `▲ blocking` in amber, the same mark as the Review list (the `▲` carries it under `NO_COLOR`). When the head does not fit (a narrow pane) its segments move to their own lines in the order who and state, severity and `long`, then the keys: nothing is cut mid-word, and the severity is never the part that goes. Denied drafts stay faint with `denied · never posted`. A body over 280 characters carries an amber `long`. Scrolling never opens a view on the tail of a block: it starts on the code line that owns it.
+- **Review list:** under the `Review` section rule (guide words: `4 drafts · 2 agent pending · 2 will be sent`), pending agent drafts first (they need you), then what will be sent, then denied. A row is the severity (`▲ blocking` amber, the rest plain; `comment` when none), `path:line` (`(removed)` for the old side) with an amber `long` after it when the body is over the house limit, and the right-aligned `agent · pending` (bold amber) / `you · accepted` / `… · denied`; that column ends on the section rule's right edge. The selected draft shows its body and, if pending, its keys. Accepting a pending draft moves it down, so the next one takes its place: `y y n y` triages a list.
+- **Keys:** `y` accept, `n` deny (asks for an optional one‑word reason, kept in the audit log), `e` edit (an agent draft becomes accepted), `s` cycles severity, `Y` accepts all pending, `d` deletes your own draft, `enter` jumps to its diff line. `y`/`n`/`e` also work on the Diff tab for the draft under the cursor. Every decision is audited (`review.comment.accept|edit|deny|delete`).
+- **Comment dialog (`c`):** the target line (`limit/token_bucket.go:3`, `(removed line)` on the old side) with the line's text behind a `┃`, severity chips (`[comment] blocking suggestion question nit`, `tab` cycles), the editor. `enter` adds the draft, `alt+enter` is a newline. House style shows as the placeholder: one point, problem first, at most two sentences.
+- **Reply dialog (`r` on Threads):** the thread being answered (`general · reviewer-rae: "Is a burst of 50 too high…"`) behind a `┃`, then the editor. `enter` posts at once, as a reply is not a draft.
+- **Submit dialog (`S`):** `3 comments go out as one batch: one notification for the author`; an amber `▲ 2 agent drafts still pending · they stay drafts until triaged`; a faint `1 denied · never posted`; an optional summary editor; `[ ] also approve 7f6e5d4c` (`tab` toggles). Refuses when there is nothing to send, no summary and no approval.
+- **Merge dialog (`m`):** `source → target`; the verdict (`✓ mergeable · head 7f6e5d4c is what you reviewed`, amber `▲ not mergeable yet: the pipeline is still running` when merge-when-pipeline-succeeds is possible, red `✕ cannot merge: …` otherwise); unresolved threads, approvals and CI; the options `[ ] s squash commits`, `[ ] d delete the source branch`, `[ ] w merge when the pipeline succeeds`. A refusal shows only `esc close`. The merge is pinned to the head the page showed.
+- **Job log dialog (`l` on CI):** the tail of the log (last 16 KiB) in ADE's own ink, scrolled to the end; `j/k`, `g/G`.
+- **Editor:** a reverse‑video cursor cell (so it shows under `NO_COLOR`), soft wrap at word boundaries, `ctrl+w`/`ctrl+u`/`ctrl+a`/`ctrl+e`.
+- **Dialogs** (reply, comment, edit, deny, submit, merge, job log and the page's help) take the Agent dialog's shape: one rounded box, at most 100 columns (full width below), centred and anchored at the top, on a blank field that replaces the tab while it is open, so no fragment of the Overview, Threads or Review text shows beside or below it (the field is deliberate: a dialog floated over a live body leaves mid-word fragments and orphan station rows). Bold title, a blank line, the content, a blank line, the key hints in the footer's style; the footer repeats the hints. Pop-ups are held back while one is open.
+
+### Standup page (`S`)
+
+A single column that scrolls (`j/k`, `g/G`); it has no preview pane, so it reads the same at every width.
+
+- **Sections**, each a section rule with guide words: `Standup` (`Mon 9 Nov · since Fri 6 Nov`), `Yesterday` (`Fri 6 Nov · 3 changes`), `Today` (`2 items in your court`), `Blockers` (`1 blocker`). *Yesterday* is the previous working day, and its window runs to this morning, so weekend work is listed under it.
+- **Yesterday rows:** a mark (`✓` for merges, closes and approvals, `●` for the rest), the sentence, and a right‑aligned faint `15:04 forge` (`audit` for ADE's own log, `sync` for changes a sync noticed on your items).
+- **Today rows:** the item's station line (the Home track, one‑cell connectors) in its line ink, bold short ref, title, faint `you · 2 unresolved threads`, and the weight right‑aligned (`5w`, or a faint `–`, never `0`). A review request has a faint `○` instead of a track and `review requested`. When the reason does not fit after the title (narrow), it moves whole to a faint second line under the title; the same goes for a blocker's reason and an Items row's `added mid‑sprint · merged …`.
+- **Blockers:** an amber bold `▲` (`!` in ascii), bold ref, title, faint reason. Empty sections say so in faint words (`nothing recorded`).
+- **Narrative:** when an AI summary exists it sits under the first rule behind a faint `┃`, wrapped at word boundaries, one blank rail line between paragraphs.
+- **States:** `reading standup…` while loading (the page never blocks on the network), `⟳ refreshing` in the guide while reloading a page that already has data, an amber `▲ refresh failed: …` above stale data, `Nothing cached yet. U syncs now`. Sources that could not be read appear as faint `▲` warning lines at the end.
+- **Keys:** `r` reload, `n` write the AI narrative, `y` copy as Markdown (OSC 52, with a pop‑up saying so), `esc` back, `S` closes, `t` home.
+- **`n` narrative:** one cached, audited call. A pop‑up says `narrative written ($0.0012)` or `(cached, $0)`; with AI off or a needed confirmation it says so instead, naming the command in the pop‑up's second line (`run: ade standup --ai --yes`, `run: ade sprint review --ai --yes`). A reload keeps a narrative already bought for that day.
+
+### Sprint review page (`V`)
+
+A single scrolling column, like Standup.
+
+- **Section rule:** `Sprint review · Sprint 42` with guide words `2–13 Nov · by weight` (`by count` when nothing is weighted; `· mine` when filtered to your issues).
+- **Totals block:** four faint‑keyed rows (`Committed`, `Added`, `Done`, `Carried`). Each value is `10w · 5 items (2 unweighted)`; the unweighted count is always shown beside the weight and is never folded into it as zero. By count the value is just `5 items`. `Added` means entered after the first day.
+- **Progress line:** under the block, a 24‑cell station line in the project's ink: `━` for the share done, faint `─` for what is left, then `8w of 18w done`.
+- **Velocity:** one row per closed sprint (`Sprint 41  ━━━━────  4w of 6w`). A sprint with no weighted work reads `○ no weighted work · not in the average` and is left out of the average in the rule's guide words (`by weight · last 3 sprints · average 4.0w per sprint`; velocity keeps its own basis even when the sprint under review is by count).
+- **Burn‑down:** one row per working day so far, a bar scaled to the sprint's peak, the remaining figure, and faint `ideal 9.0`.
+- **By epic** appears only when some issue has an epic (Premium).
+- **Items:** a mark (`●` in the line ink for done, faint `○` for carried), the word (`done`, `done, kept open`, `carried`; the column is as wide as the widest word present), bold ref, title, faint `added mid‑sprint · merged api!4`, and the weight right‑aligned.
+- **Keys:** `[` / `]` step through sprints, `m` toggles your issues only, `p` cycles projects, `r` reloads, `n` writes the AI narrative (behind a faint `┃` under the rule, like Standup's), `y` copies Markdown, `esc` back.
 
 ## Do's and Don'ts
 
@@ -178,7 +289,8 @@ A rounded, centred overlay. Each key row starts with a faint `┃`, then the bol
 - **Do** pair every state with a glyph and a word; test under `NO_COLOR=1` and `host.glyphs = "ascii"`.
 - **Do** put scope and counts in guide words on section rules, not in separate headers.
 - **Do** make overlays full‑width below 100 columns, so no cut fragments show around them.
-- **Do** keep update and notification state in the header and footer; never block the list on the network.
+- **Do** keep update and sync state in the header and notifications in pop‑ups; never block the list on the network.
+- **Do** keep notifications inside the dashboard: no terminal escape sequences, no desktop notifiers.
 
 ### Don't:
 
@@ -187,3 +299,45 @@ A rounded, centred overlay. Each key row starts with a faint `┃`, then the bol
 - **Don't** put borders on the base layer. Borders mark overlays only.
 - **Don't** truncate mid‑word without `…`. Wrap prose instead (The No‑Mid‑Word Rule).
 - **Don't** record no‑op status (for example "all repos up to date") in the inbox. It is a toast.
+
+## Budget page
+
+`b` opens it from Home or Worktrees; `b` or `esc` returns to the page it was opened over, `L` switches to the Log, `t` still flips Home and Worktrees. It answers four questions in one scroll: how much of each cap is left, which profile is active and what its provider says, where the money went, and how the agent's review drafts fared.
+
+- **Layout:** the Home pattern. At 100 columns or more the list takes 64% and the selection's details sit to the right behind a faint `│`; below that the list fills the width and `tab` swaps in the details. Every row is one line and selectable (`j/k`, `g/G`); the list scrolls to keep the selection in view.
+- **Status line:** one faint line above the first rule says where the figures came from: `⟳ refreshing providers · figures as of 4s ago`, `provider figures as of 12s ago`, an amber `▲ stale: cached provider figures as of 3h ago · r reads providers now` (a profile whose read failed keeps its old snapshot; the age is the oldest figure on the page), a red `✕ no provider figure for gateway · r tries again`, a red `✕ refresh failed: …`, or an amber `▲ AI is off (ai.mode = off)`. With no figure read at all it says `figures not read yet`, never an age. The page paints from the ledger and cached snapshots at once; the provider read runs in the background and never blocks it. `r` reads the providers now.
+- **Sections:** each opens with a section rule whose guide words carry the headline figures and drop whole groups from the right when they do not fit.
+  - **Caps** (`day $0.38 of $2.00 · week $1.10 of $8.00`): one station line per cap, `●━━◉────○`, the baseline, the ground spent, the train where the spend stands, the cap at the end. The train reaches the end and the line turns red at the cap. Beside it, the share used and the state in a glyph and words: `✓ ok · $1.62 left`, amber `▲ near cap · $0.40 left` from 80%, red `✕ cap reached · calls stopped`, red `✕ over cap by $0.40 · calls stopped`. A cap that is not set says `no cap set`; a sprint cap with no sprint window says `no sprint known · U syncs to learn it` (the cap is then not enforced, rather than guessed).
+  - **Profiles:** the active profile is the train `◉` with a bold `active`; the others are a faint `○`. The right of the row is the merged provider figure in words: `gateway $0.0080 of $0.01 · resets 12 Nov`, `moonshot $0.12 spent · balance $4.80`, a soft limit as `… of $5.00 soft limit`. A figure older than asked for adds amber `▲ stale · timed out`; a source that failed with nothing cached says `✕ no figure · key rejected`; a source not read yet says `not read yet`. The row carries only a short cause (timed out, connection refused, host not found, key rejected, read failed). The details list the per-role models, this week's ledger spend, the provider's scope, cap, remaining, window, reset and age, and its caveat; a failed read adds a red `✕ provider read failed: <cause>`, the full reason wrapped whole in faint, and what to do (`r reads the provider again`), and a stale one an amber caveat that the provider may be further along. Reasons are redacted; no credential is ever shown.
+  - **By day / By feature / By model / Top items:** a spark bar of `━` cells scaled to the section's biggest bucket (`=` in ascii), the amount right-aligned, calls and cache hits faint. A day with no calls says `no calls`; today is marked `today`. `enter` on a top item goes to it on Home when Home knows it; otherwise it does nothing. With no calls at all the four collapse into one `Spend` rule and `no AI calls yet`.
+  - **Recent stops:** `✕ stopped`, the time, the feature, the profile and the provider's or ADE's message; `✓ no budget stops` when there are none.
+  - **Review triage:** per profile, `12 drafts · 58% accepted · 17% edited · 25% denied`, as shares of the drafts someone triaged, plus `· n pending`. Five or more triaged drafts with more than half denied add amber `▲ mostly denied`, so a noisy reviewer model shows.
+- **Detail scroll:** a detail taller than the pane (a profile, below 100 columns especially) ends in a faint `↓ 6 more lines · J scrolls` row instead of silently clipping; `J/K` scroll it until the last line (the caveat, `as of`) is on screen, and moving the selection resets it.
+- **Footer:** `j/k move   J/K detail   enter open item   r refresh providers   b back   L log   i inbox   ? keys   q quit`; below 100 columns `j/k move   tab details   r refresh   b back   L log   ? keys`, and with the details showing `j/k move   J/K scroll   tab list …`. A budget that cannot be read says `✕ could not read the budget`, the cause wrapped whole, and `r tries again`.
+
+## Log page and History tab
+
+`L` opens the audit log (PLAN 4.1); `L` or `esc` returns, `b` switches to the Budget. The History tab on the MR page draws the same entries for one item.
+
+- **Log layout:** the Home pattern again: list left, the selected entry in full on the right, or one pane with `tab`/`enter` swapping in the details. The `Log` rule's guide words say how many entries show and the window (`8 entries · since 1d`); a narrowing filter adds `actions forge.*` and `matching "merge"`, and the count reads `1 of 8 entries`. Entries sit under a faint day sub-rule indented three cells (`Wed 11 Nov ── 5 entries`), newest first; when the window holds a single day the sub-rule is bare, since the `Log` rule already carries the count. An unreadable log says `✕ could not read the audit log`, the cause wrapped whole under it (a path breaks after a `/`, so `permission denied` is never cut off) and `r tries again`.
+- **Row:** marker, the time, the actor (faint, dropped when the list is narrow), the action, the subject (the target, else the item, shortened like a ref), and the outcome at the right as a glyph and a word: `✓ ok`, red `✕ error`, amber `▲ cancelled`, faint `○ skipped`. A dry run adds `· dry run`. AI entries add the cost (`✓ ok · $0.0026`) or the words `cache hit`.
+- **Filters:**
+  - `/` opens an inline prompt in the footer (`/ text┃`); it filters as you type, over the action, target, item and error, ignoring case. `enter` keeps the text, `esc` restores the previous one, `ctrl+u` clears.
+  - `a` cycles the action group: all, `forge.*`, `ai.*`, `review.*`, `budget.*`, `git.* project.*`, errors only.
+  - `s` cycles the window: 1h, 1d (the default), 7d, all; it reads the log again. `c` clears the text and the group. The selection stays on the same entry when a filter changes and the entry is still listed.
+- **Jump:** `enter` goes to the entry's target, else its item, when Home knows it. A work item or child issue selects its row on Home (a Home filter that hides it is cleared); an MR opens the MR page on that MR. Anything else (a path, a draft id, a command) shows its details instead.
+- **Detail:** a bold action, the outcome glyph and word with the time, then every field the entry has behind faint 10-cell keys: id, actor, target, item, project, dry run, outcome, error (red), url. An entry with an ai block adds an `AI` heading and profile, driver, model, tokens in/out/cache, cost with its source, cache hit, artifact, destination host and bytes. Params follow, pretty-printed (already redacted when written); long values wrap, never cut, and a path wraps after a `/` rather than mid-word. A faint last line says what `enter` will do. `J`/`K` scroll a pane taller than the screen; a clipped pane ends in `↓ n more lines · J scrolls`. Below 100 columns the footer reads `enter go to item` (and `J/K scroll` while the details show).
+- **History tab:** one line per entry, newest first: a faint relative time (`10m ago`, `3h ago`, `2d ago`, then the date), the outcome glyph, the action in words (`forge thread reply`), and right-aligned the outcome word with `· $0.0026` or `· cache hit` for `ai.*` entries. When there are more entries than lines the last line says `+n earlier`. An item with no entries says `No recorded actions on this item yet.`
+
+## Agent dialog (`a` on a Home item, `A` on the MR page, `A` on Home for every run)
+
+One rounded overlay, at most 100 columns wide (full width below 100), centred and anchored at the top so it does not jump between states, on a blank field that replaces the Home body while it is open (a deliberate choice: a dialog over a cut-off list leaves mid-word fragments), with a footer that says the dialog has its own keys for PLAN 6.6. It owns the keys while open (`q` closes it). It polls the run store once a second, so a run started here or by `ade agent` in another pane appears and moves on by itself. All agent, forge and git work runs in commands; nothing blocks the list beneath. `a` on the MR page stays approve, so the agent menu is `A` there.
+
+- **Menu.** The item's title in faint, then two section rules:
+  - `Start` (`work in the item's worktree`): `p plan` with `read-only: issue, comments, AGENTS.md`, and `c address comments` with `api!1 · 2 unresolved, replies drafted`. With no open MR that has unresolved threads the second row is faint and says why, and `c` says it again as an amber warning rather than starting anything. Home's `A` is the same list without `Start`, for every item, each row led by the item in its repo ink.
+  - `Runs` (`5 runs`): one line each, newest first. Cursor `▸`, the state as glyph and word, the id, the kind, then at the right the spend against the cap and the time spent (`$0.07/$0.50 · 1m40s`).
+- **State marks** (always glyph and word, so `NO_COLOR` and ascii read the same): `⟳ running`, `⟳ planning`, amber `▲ needs approval`, amber `◉ review`, green `✓ pushed`, red `✕ failed`, faint `· cancelled`; ascii `~`, `!`, `@`, `+`, `x`, `-`.
+- **Plan review** (`enter` on a run that needs approval): a `Plan` rule with the run id, the spend so far and `awaiting your approval` (`approved` once it is), the plan text wrapped behind a faint `┃` and scrolled with `j/k`, `pgup/pgdn`, and a faint line with the worktree, driver and cap. `enter` approves; the same key then reads `run it in the worktree` and starts the implementation. Approving never runs by itself. `e` opens `plan.md` in `$EDITOR` (the dialog is suspended); editing after approval voids the approval, which the footer warns about. `x` discards the run.
+- **Run page** (`enter` on any other run): a `Run <id>` rule with the kind and state, faint 10-cell keys (state, item, driver, cost against the cap, elapsed, MR, commits, drafted replies, one `call` row per agent process with exit, cost and turns, and a call stopped by ADE leads with red `✕ stopped at the cost cap`), a red error line, and for a run with changes a `Diff` rule (`3 files · +10 -0`) with one row per file: status letter, path, green `+n`, red `-n`. Keys: `l` lazygit on the worktree (a floating zellij pane inside zellij, the terminal handed over otherwise), `P` push, `x` discards a run that has not finished (a failed, pushed or cancelled run has no `x`), `esc` back.
+- **Push** asks first: `Push` rule, the file and line counts, `Commits everything in the worktree as the configured git user, marked (ade agent), then pushes <branch>. The merge request updates by itself.` `y` commits and pushes, `n` backs out. A run that is not in review refuses `P` with the reason.
+- **Failures** are pop-ups (`agent <item>: …` through the notification centre) as well as a red row; a run that needs you raises one too (`plan needs your approval`, `ready for review`).

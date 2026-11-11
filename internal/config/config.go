@@ -31,6 +31,8 @@ type Config struct {
 	Notify   Notify           `toml:"notify"`
 	Records  Records          `toml:"records"`
 	Host     Host             `toml:"host"`
+	AI       AI               `toml:"ai"`
+	Budget   Budget           `toml:"budget"`
 
 	// File is the path the config was loaded from; Missing is true when no file
 	// existed and defaults are in effect.
@@ -44,6 +46,8 @@ type User struct {
 	Handle   string   `toml:"handle"`
 	Timezone string   `toml:"timezone"`
 	Workdays []string `toml:"workdays"`
+	// Holidays are non-working dates ("YYYY-MM-DD"); standup skips them.
+	Holidays []string `toml:"holidays"`
 }
 
 // Forge is one GitLab or GitHub host. Credentials come from TokenCmd or TokenEnv.
@@ -72,16 +76,74 @@ type Update struct {
 }
 
 type Notify struct {
-	Toast    []string `toml:"toast"`
-	Terminal []string `toml:"terminal"`
-	Desktop  []string `toml:"desktop"`
-	Quiet    string   `toml:"quiet"` // "HH:MM-HH:MM", local time
+	// Toast lists event-kind globs shown as pop-ups in the dashboard. Every
+	// event is recorded in the inbox regardless.
+	Toast []string `toml:"toast"`
 }
 
 type Records struct {
 	Dir              string `toml:"dir"`
 	AuditRetain      string `toml:"audit_retain"`
 	SnapshotComments int    `toml:"snapshot_comments"`
+}
+
+// AI selects the active profile and holds every profile of this machine.
+type AI struct {
+	Mode     string               `toml:"mode"`    // off | ask | auto
+	Profile  string               `toml:"profile"` // key into Profiles
+	Profiles map[string]AIProfile `toml:"profiles"`
+}
+
+// AIProfile is one place AI calls can go: a driver plus the models its roles
+// use and where its spend is read from.
+type AIProfile struct {
+	Driver  string `toml:"driver"` // omp | anthropic | openai-compat
+	BaseURL string `toml:"base_url"`
+	KeyCmd  string `toml:"key_cmd"`
+	KeyEnv  string `toml:"key_env"`
+	// Command is the omp binary (driver "omp"); default "omp".
+	Command string `toml:"command"`
+	// Agent is the CLI that runs agent work (plan, run, address comments) for
+	// this profile: omp (default), claude or codex. AgentCommand is its
+	// binary when not on PATH under that name.
+	Agent        string `toml:"agent"`
+	AgentCommand string `toml:"agent_command"`
+	// Models maps a role (explain, draft, plan, implement, review) to a model
+	// id. A missing review model falls back to draft.
+	Models map[string]string `toml:"models"`
+	// Prices maps a model id to its list prices, for pre-flight estimates and
+	// for drivers whose responses carry no cost.
+	Prices  map[string]Price `toml:"prices"`
+	Billing AIBilling        `toml:"billing"`
+}
+
+// Price is USD per million tokens.
+type Price struct {
+	Input      float64 `toml:"input"`
+	Output     float64 `toml:"output"`
+	CacheRead  float64 `toml:"cache_read"`
+	CacheWrite float64 `toml:"cache_write"`
+}
+
+// AIBilling says where a profile's authoritative spend comes from (see
+// docs/billing). AdminKey* are for sources that need an organisation key;
+// BaseURL overrides the source's default endpoint host.
+type AIBilling struct {
+	Source        string  `toml:"source"` // litellm | omp | anthropic | openai | moonshot | openrouter | none
+	WeeklySoftUSD float64 `toml:"weekly_soft_usd"`
+	BaseURL       string  `toml:"base_url"`
+	AdminKeyCmd   string  `toml:"admin_key_cmd"`
+	AdminKeyEnv   string  `toml:"admin_key_env"`
+}
+
+// Budget holds the local spend caps. Zero means no cap.
+type Budget struct {
+	DailyUSD       float64 `toml:"daily_usd"`
+	WeeklyUSD      float64 `toml:"weekly_usd"`
+	SprintUSD      float64 `toml:"sprint_usd"`
+	CallUSD        float64 `toml:"call_usd"`         // hard cap per call
+	ConfirmOverUSD float64 `toml:"confirm_over_usd"` // pre-flight confirmation threshold per action
+	AgentRunUSD    float64 `toml:"agent_run_usd"`    // passed as --max-cost to omp runs
 }
 
 type Host struct {
@@ -113,11 +175,12 @@ func Defaults() Config {
 		Paths:  PathsCfg{Root: "~/ade"},
 		Update: Update{OnStart: &on, Interval: Duration{10 * time.Minute}, FeatureBranches: "ff-if-clean", Concurrency: 4},
 		Notify: Notify{
-			Toast:    []string{"*"},
-			Terminal: []string{"ci.failed", "task.failed", "agent.run.end", "git.*.failed", "budget.stop"},
+			Toast: []string{"*"},
 		},
 		Records: Records{AuditRetain: "forever", SnapshotComments: 20},
 		Host:    Host{Mode: "auto", Editor: "auto", Glyphs: "unicode"},
+		AI:      AI{Mode: "ask", Profiles: map[string]AIProfile{}},
+		Budget:  Budget{DailyUSD: 2, WeeklyUSD: 8, ConfirmOverUSD: 0.25, AgentRunUSD: 1.5},
 	}
 }
 

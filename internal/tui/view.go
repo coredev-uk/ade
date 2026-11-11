@@ -10,7 +10,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/coredev-uk/ade/internal/events"
-	"github.com/coredev-uk/ade/internal/notify"
 )
 
 const (
@@ -37,21 +36,41 @@ func (m model) render() string {
 	// On narrow terminals overlays take the full width: a partly covered list
 	// would show cut-off fragments of the rows beneath.
 	narrow := w < twoPaneMinW
-	if m.drawer {
+	if m.nc.open {
 		dw := min(drawerW, w-4)
 		if narrow {
 			dw = w
 		}
-		d := m.drawerView(dw, h-2)
+		d := m.nc.drawer(m.g, dw, h-2)
 		layers = append(layers, lipgloss.NewLayer(fit(d, dw, h-2)).X(w-dw).Y(1).Z(1))
 	}
-	if m.help {
+	mrDialog := m.mr != nil && (m.mr.modal != nil || m.help)
+	if ts := m.nc.toastStack(m.g, toastWidth(w)); ts != "" && !m.nc.open && !m.help && m.agt == nil && m.sw == nil && !mrDialog { // a dialog owns the screen: toasts must not cover its keys
+		layers = append(layers, lipgloss.NewLayer(ts).X(w-lipgloss.Width(ts)-1).Y(max(1, h-1-lipgloss.Height(ts))).Z(3))
+	}
+	switch {
+	case m.help && m.mr != nil:
+		layers = append(layers, blankFieldLayer(mrHelpView(min(w, 100), h, m.g), w, h))
+	case m.help:
 		hw := min(76, w-4)
 		if narrow {
 			hw = w
 		}
-		d := helpView(hw, m.g)
-		layers = append(layers, lipgloss.NewLayer(d).X((w-lipgloss.Width(d))/2).Y(max(1, (h-lipgloss.Height(d))/2)).Z(2))
+		d := helpView(hw, h, m.g)
+		top := max(0, (h-2-lipgloss.Height(d))/2)
+		layers = append(layers, blankFieldLayer(strings.Repeat("\n", top)+d, w, h))
+	}
+	if l := blankFieldLayer(m.mrOverlay(w, h), w, h); l != nil {
+		layers = append(layers, l)
+	}
+	if l := m.swOverlayLayer(w, h); l != nil {
+		layers = append(layers, l)
+	}
+	if l := m.classifyOverlayLayer(w, h); l != nil {
+		layers = append(layers, l)
+	}
+	if l := m.agentOverlayLayer(w, h); l != nil {
+		layers = append(layers, l)
 	}
 	return lipgloss.NewCompositor(layers...).Render()
 }
@@ -59,31 +78,40 @@ func (m model) render() string {
 // --- header / footer -----------------------------------------------------------
 
 func (m model) header(w int) string {
-	// No project tabs: nothing is filtered in Phase 0, and the body already
-	// names every project. The header carries scope as a count.
+	// The header carries scope as a count and which page is showing; the body
+	// names every project.
 	repos := 0
 	for _, p := range m.projects {
 		repos += len(p.Repos)
 	}
 	left := stBold.Render("ADE")
+	if m.page == pageHome {
+		left += "  " + stBold.Render("Home") + stFaint.Render(" · worktrees")
+	} else {
+		left += "  " + stFaint.Render("home · ") + stBold.Render("Worktrees")
+	}
+	if m.mr != nil {
+		left = stBold.Render("ADE") + "  " + stFaint.Render("← Home "+m.g.Sep+" ") + stBold.Render(m.mrCrumb())
+	}
+	switch m.page {
+	case pageBudget:
+		left = m.budgetHeaderLeft()
+	case pageLog:
+		left = m.logHeaderLeft()
+	}
+	if m.isAgilePage() && m.mr == nil {
+		left = m.agileHeaderLeft()
+	}
 	if len(m.projects) > 0 {
 		left += stFaint.Render(fmt.Sprintf("  %s %d %s %s %d %s", m.g.Sep, len(m.projects), plural(len(m.projects), "project"), m.g.Sep, repos, plural(repos, "repo")))
 	}
-	var mid string
-	switch {
-	case m.updating && m.progress.Total > 0:
-		mid = m.g.Sync + fmt.Sprintf(" updating %d/%d", m.progress.Done, m.progress.Total)
-	case m.updating:
-		mid = m.g.Sync + " updating"
-	case !m.lastUpdate.IsZero():
-		mid = stFaint.Render(m.g.Sync + " updated " + ago(m.lastUpdate))
-		if m.lastReport != nil && m.lastReport.Severity() >= events.Warn {
-			mid = sevStyle(m.lastReport.Severity()).Render(m.g.Sync+" "+m.lastReport.Title()) + stFaint.Render(" · "+ago(m.lastUpdate))
-		}
-	}
+	mid := m.activity()
 	right := stFaint.Render("no unread")
-	if m.unread > 0 {
-		right = stBold.Render(fmt.Sprintf("%s %d unread", m.g.Unread, m.unread))
+	if m.nc.unread > 0 {
+		right = stBold.Render(fmt.Sprintf("%s %d unread", m.g.Unread, m.nc.unread))
+	}
+	if chip := m.chip.render(m.g); chip != "" {
+		right = chip + "  " + right
 	}
 	gap := w - lipgloss.Width(left) - lipgloss.Width(mid) - lipgloss.Width(right) - 2
 	if gap < 4 {
@@ -92,22 +120,80 @@ func (m model) header(w int) string {
 	return " " + left + strings.Repeat(" ", gap/2) + mid + strings.Repeat(" ", gap-gap/2) + right
 }
 
+// activity summarises the git update and forge sync loops in one phrase.
+func (m model) activity() string {
+	var parts []string
+	switch {
+	case m.updating && m.progress.Total > 0:
+		parts = append(parts, fmt.Sprintf("updating %d/%d", m.progress.Done, m.progress.Total))
+	case m.updating:
+		parts = append(parts, "updating")
+	}
+	if m.syncing {
+		parts = append(parts, "syncing")
+	}
+	if len(parts) > 0 {
+		return m.g.Sync + " " + strings.Join(parts, " "+m.g.Sep+" ")
+	}
+	switch {
+	case m.syncErr != nil:
+		return stBad.Render(m.g.Bad + " sync failed " + m.g.Sep + " i for details")
+	case m.lastReport != nil && m.lastReport.Severity() >= events.Warn:
+		return sevGlyph(m.g, m.lastReport.Severity()) + " " + sevStyle(m.lastReport.Severity()).Render(m.lastReport.Title()) + stFaint.Render(" "+m.g.Sep+" "+ago(m.lastUpdate))
+	case !m.syncedAt().IsZero():
+		return stFaint.Render("synced " + ago(m.syncedAt()))
+	case !m.lastUpdate.IsZero():
+		return stFaint.Render("updated " + ago(m.lastUpdate))
+	}
+	return ""
+}
+
 func (m model) footer(w int) string {
-	if n := len(m.toasts); n > 0 {
-		t := m.toasts[n-1]
-		line := " " + sevGlyph(m.g, t.ev.Severity) + " " + t.ev.Title
-		if t.expires.IsZero() {
-			line += stFaint.Render("   esc dismiss")
-		}
-		if n > 1 {
-			line += stFaint.Render(fmt.Sprintf("   +%d earlier", n-1))
-		}
-		return ansi.Truncate(line, w, "…")
+	narrow := w < twoPaneMinW
+	switch {
+	case m.agt != nil:
+		return " " + keys("esc", "back/close", "ctrl+c", "quit") + stFaint.Render("   the agent dialog has its own keys")
+	case m.nc.open:
+		return " " + keys("j/k", "move", "enter", "go to", "f", "filter: "+m.nc.filter.String(), "r", "read", "R", "all read", "esc", "close")
+	case m.mr != nil:
+		return m.mrFooter(w)
+	case m.help:
+		return " " + keys("esc", "close")
+	case m.isAgilePage():
+		return m.agileFooter(w)
+	case m.page == pageBudget:
+		return m.budgetFooter(w)
+	case m.page == pageLog:
+		return m.logFooter(w)
+	case m.page == pageHome && narrow:
+		return " " + keys("j/k", "move", "enter", "open", "tab", "details", "f", m.homeFilter.String(), "t", "trees", "i", "inbox", "?", "keys")
+	case m.page == pageHome:
+		return " " + keys("j/k", "move", "enter", "open", "w", "workspace", "f", "filter: "+m.homeFilter.String(), "y", "copy link", "U", "refresh", "t", "worktrees", "i", "notifications", "?", "keys", "q", "quit")
+	case narrow:
+		return " " + keys("j/k", "move", "tab", "details", "U", "update", "t", "home", "i", "inbox", "?", "keys")
 	}
+	return " " + keys("j/k", "move", "w", "workspace", "U", "update now", "y", "copy path", "t", "home", "i", "notifications", "?", "keys", "q", "quit")
+}
+
+// syncedAt is when Home's data last came from the forge: this process's last
+// sync, else the newest cached project.
+func (m model) syncedAt() time.Time {
+	t := m.lastSync
+	for i := range m.results {
+		if r := m.results[i].SyncedAt; r.After(t) {
+			t = r
+		}
+	}
+	return t
+}
+
+// toastWidth keeps pop-ups readable but out of the way: a third of a wide
+// screen, the full width (minus a margin) on a narrow one.
+func toastWidth(w int) int {
 	if w < twoPaneMinW {
-		return " " + keys("j/k", "move", "tab", "details", "U", "update", "i", "inbox", "?", "keys", "q", "quit")
+		return w - 2
 	}
-	return " " + keys("j/k", "move", "U", "update now", "y", "copy path", "i", "inbox", "?", "keys", "q", "quit")
+	return max(44, min(64, w/3))
 }
 
 func keys(kv ...string) string {
@@ -121,6 +207,21 @@ func keys(kv ...string) string {
 // --- body ------------------------------------------------------------------------
 
 func (m model) body(w, h int) string {
+	if m.mr != nil {
+		return m.mrBody(w, h)
+	}
+	if m.isAgilePage() {
+		return m.agileBody(w, h)
+	}
+	if m.page == pageBudget {
+		return m.budgetBody(w, h)
+	}
+	if m.page == pageLog {
+		return m.logBody(w, h)
+	}
+	if m.page == pageHome {
+		return m.homeBody(w, h)
+	}
 	if m.loadErr != nil {
 		return fit(" "+stBad.Render(m.g.Bad+" could not read projects: ")+m.loadErr.Error(), w, h)
 	}
@@ -140,6 +241,30 @@ func (m model) body(w, h int) string {
 	listW := w * 64 / 100
 	right := fit(m.detail(w-listW-4), w-listW-3, h) // one cell of right margin
 	return columns(stRule.Render(" │ "), h, m.lines(listW, h), right)
+}
+
+func (m model) homeBody(w, h int) string {
+	if !m.homeLoaded {
+		return fit(" "+stFaint.Render("reading work items…"), w, h)
+	}
+	if len(m.results) == 0 {
+		if m.syncing {
+			return fit(" "+stFaint.Render(m.g.Sync+" first sync with your forges…"), w, h)
+		}
+		if len(m.app.Config.Projects) == 0 {
+			return m.empty(w, h)
+		}
+		return fit(" "+stFaint.Render("No work items yet. U syncs now."), w, h)
+	}
+	if w < twoPaneMinW {
+		if m.showDetail {
+			return fit(m.homeDetail(w-2), w, h)
+		}
+		return m.homeLines(w, h)
+	}
+	listW := w * 66 / 100
+	right := fit(m.homeDetail(w-listW-4), w-listW-3, h)
+	return columns(stRule.Render(" │ "), h, m.homeLines(listW, h), right)
 }
 
 func (m model) empty(w, h int) string {
@@ -162,6 +287,7 @@ const repoCol = 10
 // selected tree stays in view.
 func (m model) lines(w, h int) string {
 	selLine := 0
+	marks := m.nc.marks()
 	var out []string
 	idx := 0
 	for _, p := range m.projects {
@@ -184,7 +310,7 @@ func (m model) lines(w, h int) string {
 					selLine = len(out)
 				}
 				last := idx+1 >= len(m.rows) || m.rows[idx+1].project != p.Name || m.rows[idx+1].repo.Name != r.Name
-				out = append(out, m.treeLine(m.rows[idx], idx == m.sel, first, last, w))
+				out = append(out, m.treeLine(m.rows[idx], idx == m.sel, first, last, w, rowUnread(marks, m.rows[idx])))
 				first = false
 				idx++
 			}
@@ -205,7 +331,16 @@ func section(title, guide string, w int, g glyphs) string {
 	return t + stRule.Render(strings.Repeat(g.Rule, fill)) + gd
 }
 
-func (m model) treeLine(r row, selected, first, last bool, w int) string {
+// rowUnread counts unread notifications about a tree or its repo.
+func rowUnread(marks map[string]int, r row) int {
+	n := marks[markKey(r.project, r.repo.Name+"/"+r.tree.Name)]
+	if r.base {
+		n += marks[markKey(r.project, r.repo.Name)]
+	}
+	return n
+}
+
+func (m model) treeLine(r row, selected, first, last bool, w, unread int) string {
 	mark := "   "
 	if selected {
 		mark = " " + stBold.Render(m.g.Selected) + " "
@@ -237,6 +372,9 @@ func (m model) treeLine(r row, selected, first, last bool, w int) string {
 		label = stBold.Render(label)
 	}
 	left := mark + name + station + " " + label
+	if unread > 0 {
+		left += " " + newMark(unread)
+	}
 	status := m.treeStatus(r)
 	if !r.repo.InManifest && first {
 		status = stFaint.Render("dropped from manifest") + "  " + status
@@ -293,6 +431,10 @@ func (m model) detail(w int) string {
 			if p[1] == "" {
 				continue
 			}
+			if p[0] == "path" {
+				l = append(l, stFaint.Render(pad(p[0], 10))+truncLeft(p[1], w-10))
+				continue
+			}
 			l = append(l, stFaint.Render(pad(p[0], 10))+ansi.Truncate(p[1], w-10, "…"))
 		}
 		if f := m.failuresFor(r); len(f) > 0 {
@@ -302,14 +444,28 @@ func (m model) detail(w int) string {
 			}
 		}
 	}
-	l = append(l, "", stBold.Render("Recent")+stFaint.Render(fmt.Sprintf(" %s %d unread %s i opens the inbox", m.g.Sep, m.unread, m.g.Sep)))
-	if len(m.recent) == 0 {
-		l = append(l, lipgloss.Wrap(stFaint.Render("Nothing yet. Update results land here, then task, CI and review events in later phases."), w-2, " "))
+	l = append(l, "", stBold.Render("Recent")+stFaint.Render(fmt.Sprintf(" %s %d unread %s i opens notifications", m.g.Sep, m.nc.unread, m.g.Sep)))
+	if len(m.nc.items) == 0 {
+		l = append(l, lipgloss.Wrap(stFaint.Render("Nothing yet. Updates, CI results, review activity, task and agent results land here."), w-2, " "))
 	}
-	for _, it := range m.recent[:min(len(m.recent), 8)] {
-		l = append(l, m.inboxLine(it, w, false))
+	for _, it := range m.nc.items[:min(len(m.nc.items), 8)] {
+		l = append(l, inboxLine(m.g, it, w, false))
 	}
 	return strings.Join(l, "\n")
+}
+
+// truncLeft shortens a path from the left so its tail (repo and tree) stays
+// visible: "…/demo-gl/api/main". The cut snaps to a separator when one is
+// left in the tail.
+func truncLeft(s string, w int) string {
+	if lipgloss.Width(s) <= w || w < 2 {
+		return s
+	}
+	tail := ansi.TruncateLeft(s, lipgloss.Width(s)-(w-1), "")
+	if i := strings.Index(tail, "/"); i > 0 {
+		tail = tail[i:]
+	}
+	return "…" + tail
 }
 
 func (m model) failuresFor(r row) []string {
@@ -331,56 +487,96 @@ func (m model) failuresFor(r row) []string {
 	return out
 }
 
-func (m model) inboxLine(it notify.Item, w int, selected bool) string {
-	title := it.Title
-	if !it.Read {
-		title = stBold.Render(title)
-	}
-	when := stFaint.Render(ago(it.Time))
-	mark := "  "
-	if selected {
-		mark = stBold.Render(m.g.Selected) + " "
-	}
-	left := mark + sevGlyph(m.g, it.Severity) + " "
-	room := w - lipgloss.Width(left) - lipgloss.Width(when) - 2
-	return left + pad(ansi.Truncate(title, room, "…"), room) + "  " + when
+// helpGroup is one titled block of the Home help dialog.
+type helpGroup struct {
+	title string
+	rows  [][2]string
 }
 
-func (m model) drawerView(w, h int) string {
-	var l []string
-	l = append(l, stBold.Render("Inbox")+stFaint.Render(fmt.Sprintf(" %s %d unread", m.g.Sep, m.unread)), "")
-	if len(m.recent) == 0 {
-		l = append(l, lipgloss.Wrap(stFaint.Render("Nothing yet. Update results, failed fetches and skipped pulls land here; task, CI and review events join them in later phases."), w-4, " "))
-	}
-	for i, it := range m.recent {
-		if len(l) > h-6 {
-			break
+// helpGroups lists every Home and Worktrees key. full gives each key its own
+// row; the tight form pairs related keys so the dialog still fits a short
+// terminal.
+func helpGroups(full bool) []helpGroup {
+	if !full {
+		return []helpGroup{
+			{"Move", [][2]string{
+				{"j k g G", "move; top or bottom"},
+				{"tab t", "details (narrow); Home or Worktrees"},
+				{"f", "Home filter: all, waiting on you, triage, blocked, drift"},
+			}},
+			{"Selected item", [][2]string{
+				{"enter", "open: the item's MR page"},
+				{"s M", "start work; create the MR for started work"},
+				{"c", "classify: suggest missing type/app labels"},
+				{"a A", "agent runs for the item; all runs"},
+				{"w y", "open workspace (zellij); copy link or path"},
+			}},
+			{"Pages", [][2]string{
+				{"S V", "standup; sprint review"},
+				{"b L", "budget; audit log"},
+				{"i U", "notifications; refresh now"},
+			}},
+			{"Leave", [][2]string{
+				{"esc ? q", "dismiss; close this; quit"},
+			}},
 		}
-		l = append(l, m.inboxLine(it, w-4, i == m.drawSel), "    "+stFaint.Render(it.Kind))
-		if i == m.drawSel && it.Detail != "" {
-			for _, d := range strings.Split(strings.TrimSpace(it.Detail), "\n")[:min(4, strings.Count(strings.TrimSpace(it.Detail), "\n")+1)] {
-				l = append(l, "    "+ansi.Truncate(d, w-8, "…"))
+	}
+	return []helpGroup{
+		{"Move", [][2]string{
+			{"j / k", "move"},
+			{"g / G", "jump to the top or bottom"},
+			{"t", "switch Home (work items) and Worktrees"},
+			{"f", "Home filter: all, waiting on you, triage, blocked, drift"},
+			{"tab", "details for the selection (narrow terminals)"},
+		}},
+		{"Selected item", [][2]string{
+			{"enter", "open the item's MR page (the MR itself for a review request)"},
+			{"s", "start work: child issue, branch, worktree, draft MR"},
+			{"M", "create the MR for work already started"},
+			{"c", "classify: suggest missing type/app labels (added on confirm)"},
+			{"a", "agents: plan or address review for this item"},
+			{"A", "agents: every run"},
+			{"w", "open the workspace (needs the ade zellij session)"},
+			{"y", "copy the item's link (Home) or the tree's path (Worktrees)"},
+		}},
+		{"Pages", [][2]string{
+			{"S", "standup: yesterday, today, blockers"},
+			{"V", "sprint review: committed, done, carried, velocity"},
+			{"b", "budget: caps, spend by day, feature and model"},
+			{"L", "log: the audit trail"},
+			{"i", "notifications; enter goes to the subject, r/R mark read"},
+			{"U", "refresh now: git update and forge sync"},
+		}},
+		{"Leave", [][2]string{
+			{"esc", "close an overlay or dismiss failure pop-ups"},
+			{"?", "close this"},
+			{"q", "quit (the zellij session keeps running)"},
+		}},
+	}
+}
+
+func helpView(w, h int, g glyphs) string {
+	render := func(full bool) []string {
+		inner := w - 4
+		l := []string{stBold.Render("Keys")}
+		for _, grp := range helpGroups(full) {
+			l = append(l, section(grp.title, "", inner, g))
+			for _, r := range grp.rows {
+				desc := ansi.Wrap(r[1], max(10, inner-9), " ")
+				for i, ln := range strings.Split(desc, "\n") {
+					key := ""
+					if i == 0 {
+						key = r[0]
+					}
+					l = append(l, " "+stBold.Render(pad(key, 8))+ln)
+				}
 			}
 		}
+		return l
 	}
-	l = append(l, "", keys("r", "mark read", "R", "all read", "esc", "close"))
-	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#666666")).
-		Padding(0, 1).Width(w).Height(h).Render(strings.Join(l, "\n"))
-}
-
-func helpView(w int, g glyphs) string {
-	rows := [][2]string{
-		{"j / k", "move between trees"},
-		{"tab", "details for the selected tree (narrow terminals)"},
-		{"U", "update now: manifests, fetch, fast-forward clean trees"},
-		{"y", "copy the selected tree's path"},
-		{"i", "inbox; r marks read, R marks all read"},
-		{"esc", "close an overlay or dismiss failure toasts"},
-		{"q", "quit (the zellij session keeps running)"},
-	}
-	l := []string{stBold.Render("Keys"), ""}
-	for _, r := range rows {
-		l = append(l, stRule.Render(g.Vertical)+" "+stBold.Render(pad(r[0], 7))+r[1])
+	l := render(true)
+	if len(l)+2 > h-2 { // the frame is two rows, and the footer and header stay visible
+		l = render(false)
 	}
 	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#666666")).
 		Padding(0, 1).Width(w).Render(strings.Join(l, "\n"))

@@ -1,0 +1,48 @@
+# Release build (docs/PLAN.md §8, Phase 7). Validate with `goreleaser check`;
+# try a build without tagging: `goreleaser build --snapshot --clean --single-target`.
+# The Nix package (`nix build`) is the other distribution path; both inject the
+# version into internal/cli.Version.
+version: 2
+
+project_name: ade
+
+builds:
+  - id: ade
+    main: ./cmd/ade
+    binary: ade
+    env:
+      - CGO_ENABLED=0 # pure-Go SQLite: one static binary per platform
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/coredev-uk/ade/internal/cli.Version={{ .Version }}
+
+archives:
+  - id: ade
+    formats:
+      - tar.gz
+    name_template: "ade_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - docs/manifest.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+release:
+  github:
+    owner: coredev-uk
+    name: ade

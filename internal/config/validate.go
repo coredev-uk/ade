@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Severity ranks an Issue. Errors make a config unusable; warnings are advice.
@@ -45,7 +46,6 @@ var (
 	// they separate the parts of a node id.
 	identName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
 	template  = regexp.MustCompile(`(\$?)\{([^{}]*)\}`)
-	quietSpan = regexp.MustCompile(`^(\d{2}):(\d{2})-(\d{2}):(\d{2})$`)
 	retainFmt = regexp.MustCompile(`^(forever|\d+d)$`)
 )
 
@@ -132,6 +132,7 @@ func newManifestValidator(m *Manifest, cfg *Config, others map[string]*Manifest)
 
 func (v *manifestValidator) run() []Issue {
 	v.checkHeader()
+	v.checkIterations()
 	v.checkRepos()
 	v.collectNodes()
 	v.checkNodes()
@@ -158,6 +159,23 @@ func (v *manifestValidator) checkHeader() {
 		if _, ok := v.cfg.Forges[m.Forge]; !ok {
 			v.errorf("forge", "forge %q is not defined in the user config (have: %s)", m.Forge, joinOrNone(slices.Sorted(maps.Keys(v.cfg.Forges))))
 		}
+	}
+}
+
+func (v *manifestValidator) checkIterations() {
+	it := v.m.Tracker.Iterations
+	if it.Start != "" {
+		if _, err := time.Parse("2006-01-02", it.Start); err != nil {
+			v.errorf("tracker.iterations.start", "%q is not a date: want YYYY-MM-DD", it.Start)
+		}
+	}
+	if it.Length != "" {
+		if _, err := ParseSprintLength(it.Length); err != nil {
+			v.errorf("tracker.iterations.length", "%v", err)
+		}
+	}
+	if it.Overlap < 0 {
+		v.errorf("tracker.iterations.overlap", "must not be negative")
 	}
 }
 
@@ -600,9 +618,6 @@ func (c *Config) Validate() []Issue {
 	if c.Update.Concurrency < 1 {
 		s.errorf("update.concurrency", "must be at least 1")
 	}
-	if err := validateQuiet(c.Notify.Quiet); err != "" {
-		s.errorf("notify.quiet", "%s", err)
-	}
 	if !retainFmt.MatchString(c.Records.AuditRetain) {
 		s.errorf("records.audit_retain", "%q: want \"forever\" or a day count like \"365d\"", c.Records.AuditRetain)
 	}
@@ -612,6 +627,7 @@ func (c *Config) Validate() []Issue {
 	if !oneOf(c.Host.Glyphs, "unicode", "nerd", "ascii") {
 		s.errorf("host.glyphs", "unknown value %q: want unicode, nerd or ascii", c.Host.Glyphs)
 	}
+	validateAI(&s, c)
 	for _, k := range c.Undecoded {
 		s.warnf(k, "unknown key")
 	}
@@ -631,24 +647,4 @@ func validateForge(s *issues, path string, f Forge) {
 	if f.TokenCmd == "" && f.TokenEnv == "" {
 		s.warnf(path, "no token_cmd or token_env: API calls will be unauthenticated and fail")
 	}
-}
-
-// validateQuiet returns a description of what is wrong with a "HH:MM-HH:MM"
-// window, or "" when it is valid or empty.
-func validateQuiet(q string) string {
-	if q == "" {
-		return ""
-	}
-	m := quietSpan.FindStringSubmatch(q)
-	if m == nil {
-		return fmt.Sprintf("%q: want HH:MM-HH:MM", q)
-	}
-	for i := 1; i <= 4; i += 2 {
-		h, _ := strconv.Atoi(m[i])
-		mins, _ := strconv.Atoi(m[i+1])
-		if h > 23 || mins > 59 {
-			return fmt.Sprintf("%q: %s:%s is not a valid time", q, m[i], m[i+1])
-		}
-	}
-	return ""
 }

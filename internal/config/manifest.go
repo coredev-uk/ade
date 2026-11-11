@@ -3,9 +3,31 @@ package config
 import (
 	"fmt"
 	"sort"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 )
+
+// ParseSprintLength parses a sprint length such as "2w" or "14d".
+func ParseSprintLength(s string) (time.Duration, error) {
+	bad := fmt.Errorf("invalid sprint length %q: want e.g. 2w or 14d", s)
+	if len(s) < 2 {
+		return 0, bad
+	}
+	n, err := strconv.Atoi(s[:len(s)-1])
+	if err != nil || n < 1 {
+		return 0, bad
+	}
+	switch strings.ToLower(s[len(s)-1:]) {
+	case "w":
+		return time.Duration(n) * 7 * 24 * time.Hour, nil
+	case "d":
+		return time.Duration(n) * 24 * time.Hour, nil
+	}
+	return 0, bad
+}
 
 // Manifest is a shareable project definition (*.ade.toml). It never holds secrets.
 type Manifest struct {
@@ -42,6 +64,9 @@ type IterationsSource struct {
 	Source  string `toml:"source"`  // auto | gitlab-iterations | milestones | labels | github-project | cadence
 	Cadence string `toml:"cadence"` // GitLab cadence title filter
 	Pattern string `toml:"pattern"` // labels source, e.g. "Sprint::{n}"
+	Start   string `toml:"start"`   // labels source: first day of sprint 1, "YYYY-MM-DD"
+	Length  string `toml:"length"`  // labels source: sprint length, "2w" or "14d"
+	Overlap int    `toml:"overlap"` // working days around a boundary that show the adjacent sprint (default 1)
 }
 
 type Labels struct {
@@ -58,6 +83,9 @@ type WorkflowFacet struct {
 	Pattern string            `toml:"pattern"`
 	Stage   map[string]string `toml:"stage"` // derived stage -> workflow value
 	Sync    string            `toml:"sync"`  // auto | ask | off
+	// Done is the workflow value that marks a tracker issue finished while it
+	// stays open (teams that close sprint work only at sprint end).
+	Done string `toml:"done"`
 }
 
 // Repo is one repository in a project.
