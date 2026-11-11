@@ -29,3 +29,5 @@ ADE reads spend and budget from each provider's own billing endpoint where one e
 ## Local testing
 
 `nix develop .#gateway` provides `litellm` and `postgresql`. A local proxy with a DB-backed virtual key and a small `max_budget` exercises the cost headers, `/key/info`, and the budget-exceeded path, without touching any real gateway.
+
+`scripts/gateway/gateway.sh up [STATE_DIR] [MAX_BUDGET_USD]` starts that proxy (Postgres, a master key, a mock model so nothing is billed, and a virtual key with the given `max_budget`) and writes `STATE_DIR/env` with `ADE_GATEWAY_URL` and `ADE_GATEWAY_KEY` for an `openai-compat` profile with `billing = { source = "litellm" }`; `down STATE_DIR` stops it. Observed against LiteLLM 1.108: an over-budget key gets HTTP 422 with `error.type = "budget_exceeded"` and `Budget has been exceeded! Key=… Current cost: …, Max budget: …`. `scripts/verify/phase4.sh` drives it end to end.
