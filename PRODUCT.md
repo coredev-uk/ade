@@ -42,6 +42,8 @@ Forge TUIs (`glab`, `gh-dash`, lazygit) each cover one slice. ADE models the *wo
 - Every terminal action must also work when ADE runs inside VS Code's integrated terminal (key conflicts, `code` CLI as editor) and without zellij (plain host, VS Code tasks).
 - Every non-TUI command offers machine-readable output (`--json`) so scripts and VS Code tasks can drive it.
 - Everything ADE does is recorded locally: an append-only audit log of every forge write, AI call (with model, tokens, and cost), and agent run, plus a per-work-item record (forge snapshot, AI outputs, plans, run records, personal notes) kept as plain Markdown. AI output is durable, so paid work is never lost or bought twice. These records hold real work data and never live inside a repository.
+- Some projects are commercially sensitive. Every project has a sensitivity level (`public` / `internal` / `confidential`; unclassified = confidential). The level decides which fields may leave the machine, which AI profiles are cleared to receive them, and whether agents may run. Team manifests set the ceiling, and personal config can only tighten it. Every egress is previewed, redacted, and audited. ADE has no telemetry.
+- GitLab support is built from the official API docs; no paid instance is available for development. Paid-tier features are capability-probed at runtime and degrade cleanly on Free.
 - Privacy: committed code, fixtures, and docs contain no real organisation, host, project, or person data. Test data is synthetic.
 - Undecided: authoritative remaining-quota reporting for subscription-based AI (only usage is observable today); GitHub parity timing.
 
