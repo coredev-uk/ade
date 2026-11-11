@@ -14,6 +14,7 @@ result-*
 # local-only ADE state and overrides (may contain real hosts/projects)
 *.local.toml
 .ade/
+/.sandbox/
 
 # impeccable runtime dirs ignore themselves; keep config.local.json private
 .impeccable/config.local.json

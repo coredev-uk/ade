@@ -1,0 +1,19 @@
+# Manifest for the synthetic GitHub sandbox seeded by scripts/sandbox/github-seed.sh.
+name  = "demo-gh"
+forge = "sandbox-github"
+
+[tracker]
+project    = "coredev-uk/ade-sandbox-tracker"
+iterations = { source = "milestones" }
+
+[labels.type]
+pattern = "type:{value}"
+
+[repos.api]
+path = "coredev-uk/ade-sandbox-api"
+app  = ["api"]
+
+[repos.web]
+path     = "coredev-uk/ade-sandbox-web"
+app      = ["web"]
+requires = ["api"]

@@ -1,0 +1,191 @@
+package project
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"time"
+
+	"github.com/coredev-uk/ade/internal/git"
+)
+
+// Info is one registered project as `ade project list` shows it.
+type Info struct {
+	Source     string    `json:"source"`
+	Name       string    `json:"name,omitempty"` // empty until first cloned
+	Dir        string    `json:"dir,omitempty"`
+	Repos      int       `json:"repos"`
+	LastUpdate time.Time `json:"last_update,omitzero"`
+}
+
+// TreeStatus is the state of one worktree.
+type TreeStatus struct {
+	Name        string `json:"name"` // directory name
+	Path        string `json:"path"`
+	Branch      string `json:"branch"`
+	Dirty       bool   `json:"dirty"`
+	HasUpstream bool   `json:"has_upstream"`
+	Ahead       int    `json:"ahead"`
+	Behind      int    `json:"behind"`
+}
+
+// RepoStatus is the state of one repo directory.
+type RepoStatus struct {
+	Name          string       `json:"name"`
+	Present       bool         `json:"present"`
+	InManifest    bool         `json:"in_manifest"` // false: on disk, dropped from the manifest
+	DefaultBranch string       `json:"default_branch,omitempty"`
+	Baseline      *TreeStatus  `json:"baseline,omitempty"`
+	Worktrees     []TreeStatus `json:"worktrees,omitempty"`
+	Error         string       `json:"error,omitempty"`
+}
+
+// ProjectStatus is the state of one project on disk.
+type ProjectStatus struct {
+	Name       string       `json:"name"`
+	Source     string       `json:"source"`
+	Dir        string       `json:"dir"`
+	LastUpdate time.Time    `json:"last_update,omitzero"`
+	Repos      []RepoStatus `json:"repos"`
+}
+
+// List returns every project registered in the user config.
+func (s *Service) List() ([]Info, error) {
+	all, err := snapshots(s.App.Root)
+	if err != nil {
+		return nil, err
+	}
+	bySource := map[string]string{}
+	for name, sn := range all {
+		bySource[sn.Source] = name
+	}
+	var out []Info
+	for _, p := range s.App.Config.Projects {
+		canon, err := s.canonical(p.Source)
+		if err != nil {
+			return nil, err
+		}
+		info := Info{Source: canon}
+		if name, ok := bySource[canon]; ok {
+			sn := all[name]
+			info.Name, info.Dir, info.LastUpdate = name, filepath.Join(s.App.Root, name), sn.LastUpdate
+			if m, err := sn.parse(); err == nil {
+				info.Repos = len(m.Repos)
+			}
+		}
+		out = append(out, info)
+	}
+	return out, nil
+}
+
+// Status inspects projects on disk without touching the network. An empty
+// name means all of them.
+func (s *Service) Status(ctx context.Context, name string) ([]ProjectStatus, error) {
+	all, err := snapshots(s.App.Root)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for n := range all {
+		if name == "" || n == name {
+			names = append(names, n)
+		}
+	}
+	if name != "" && len(names) == 0 {
+		return nil, fmt.Errorf("project %q is not cloned (see `ade project list`)", name)
+	}
+	sort.Strings(names)
+	out := make([]ProjectStatus, 0, len(names))
+	for _, n := range names {
+		ps, err := s.projectStatus(ctx, n, all[n])
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, ps)
+	}
+	return out, nil
+}
+
+func (s *Service) projectStatus(ctx context.Context, name string, sn *snapshot) (ProjectStatus, error) {
+	m, err := sn.parse()
+	if err != nil {
+		return ProjectStatus{}, fmt.Errorf("project %s: %w", name, err)
+	}
+	dir := filepath.Join(s.App.Root, name)
+	names, err := repoDirs(dir, m.RepoNames())
+	if err != nil {
+		return ProjectStatus{}, err
+	}
+	repos := make([]RepoStatus, len(names))
+	forEach(s.concurrency(), len(names), func(i int) {
+		_, inManifest := m.Repos[names[i]]
+		repos[i] = repoStatus(ctx, filepath.Join(dir, names[i]), names[i], inManifest)
+	})
+	return ProjectStatus{Name: name, Source: sn.Source, Dir: dir, LastUpdate: sn.LastUpdate, Repos: repos}, nil
+}
+
+// repoDirs is the manifest's repos plus any other directory holding a bare clone.
+func repoDirs(projectDir string, manifest []string) ([]string, error) {
+	seen := map[string]bool{}
+	names := append([]string(nil), manifest...)
+	for _, n := range manifest {
+		seen[n] = true
+	}
+	entries, err := os.ReadDir(projectDir)
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range entries {
+		if e.IsDir() && !seen[e.Name()] && exists(filepath.Join(projectDir, e.Name(), ".bare")) {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+func repoStatus(ctx context.Context, dir, name string, inManifest bool) RepoStatus {
+	rs := RepoStatus{Name: name, InManifest: inManifest}
+	bare := filepath.Join(dir, ".bare")
+	if !exists(bare) {
+		return rs
+	}
+	rs.Present = true
+	var c git.Client
+	def, err := c.DefaultBranch(ctx, bare)
+	if err != nil {
+		rs.Error = err.Error()
+		return rs
+	}
+	rs.DefaultBranch = def
+	trees, err := c.Worktrees(ctx, bare)
+	if err != nil {
+		rs.Error = err.Error()
+		return rs
+	}
+	baseDir := filepath.Join(dir, git.BranchDir(def))
+	for _, t := range trees {
+		ts := treeStatus(ctx, c, t)
+		if filepath.Clean(t.Path) == filepath.Clean(baseDir) {
+			rs.Baseline = &ts
+		} else {
+			rs.Worktrees = append(rs.Worktrees, ts)
+		}
+	}
+	sort.Slice(rs.Worktrees, func(i, j int) bool { return rs.Worktrees[i].Name < rs.Worktrees[j].Name })
+	return rs
+}
+
+func treeStatus(ctx context.Context, c git.Client, t git.Worktree) TreeStatus {
+	ts := TreeStatus{Name: filepath.Base(t.Path), Path: t.Path, Branch: t.Branch}
+	if clean, err := c.IsClean(ctx, t.Path); err == nil {
+		ts.Dirty = !clean
+	}
+	ahead, behind, err := c.AheadBehind(ctx, t.Path)
+	if err == nil {
+		ts.HasUpstream, ts.Ahead, ts.Behind = true, ahead, behind
+	}
+	return ts
+}

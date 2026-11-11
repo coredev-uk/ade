@@ -1,0 +1,79 @@
+# acme.ade.toml (shareable)
+name  = "acme"
+forge = "work"
+
+[tracker]
+project    = "acme/tracker"
+board      = "Delivery"
+iterations = { source = "gitlab-iterations", cadence = "Delivery" }   # cadence optional: pick one when the group has several
+# other sources: auto | milestones | labels (pattern + cadence dates) | github-project | cadence
+
+# Labels carry three independent facets. Patterns are per team; values come from the forge.
+[labels.type]
+pattern = "type::{value}"              # story | bug | … (display, filters)
+
+[labels.app]
+pattern = "app::{value}"               # value routes the issue to repos whose `app` lists it
+
+[labels.workflow]
+pattern = "workflow::{value}"          # the board column
+stage   = { started = "in progress", draft = "in progress", review = "in review", merged = "done" }
+sync    = "auto"                       # auto | ask | off: move the label when the derived stage changes
+
+[repos.api]
+path  = "acme/api"
+app   = ["api"]                         # matches `app::api`
+
+[repos.api.tasks.migrate]
+cmd      = "make migrate"
+kind     = "oneshot"                     # must exit 0 before dependents start
+requires = ["services.db"]
+env      = { DATABASE_URL = "postgres://localhost:{services.db.port}/acme" }
+
+[repos.api.tasks.dev]
+cmd      = "make run"
+port     = "auto"                        # allocated per instance; or a fixed number
+env      = { PORT = "{port}", DATABASE_URL = "postgres://localhost:{services.db.port}/acme" }
+requires = ["api.migrate"]
+ready    = { http = "http://localhost:{port}/healthz", timeout = "60s" }
+
+[repos.api.tasks.test]
+cmd      = "make test"
+kind     = "oneshot"
+requires = ["services.db"]
+
+[repos.web]
+path     = "acme/web"
+app      = ["web"]
+requires = ["api"]                       # checkout dependency: web work also gets an api tree
+
+[repos.web.hooks]                        # run inside the tree; failures raise notifications
+post_clone    = ["npm ci"]               # once, in main/ after `ade project add`
+post_worktree = ["npm ci"]               # every new worktree (node_modules are per tree)
+
+[repos.web.tasks.dev]
+cmd      = "npm run dev -- --port {port}"
+port     = "auto"
+requires = ["api.dev"]                   # runtime dependency: api must be ready first
+env      = { API_URL = "http://localhost:{api.dev.port}" }
+ready    = { log = 'ready in \d+ ms', timeout = "90s" }
+
+[services.db]                             # not a repo: shared infrastructure
+cmd   = "postgres -D {state}/pg -p {port} -k {state}"
+port  = "auto"
+ready = { tcp = "localhost:{port}" }
+keep  = true                             # survives when its last dependent stops
+
+[conventions]
+branch      = "{child_iid}-{slug}"
+child_title = "{parent_title}"
+child_body  = "templates/child.md"     # relative to manifest
+link        = ["relates_to", "description"]   # always both: fixes today's inconsistency
+mr          = { draft = true, closes = "child", mention = "parent" }
+
+[groups]
+dev = ["web.dev"]                       # pulls in api.dev → api.migrate → services.db
+
+[workspaces]
+default = { layout = "code",  run = "dev" }
+agentic = { layout = "agent", run = "dev" }

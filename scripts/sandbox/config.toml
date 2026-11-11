@@ -1,0 +1,23 @@
+# User config for exercising ADE against the sandboxes without touching your real
+# ~/.config/ade. Use with scripts/sandbox/env.sh, which points XDG dirs at .sandbox/.
+[user]
+handle = "sandbox"
+
+[forges.sandbox-gitlab]
+kind         = "gitlab"
+token_env    = "GITLAB_PAT"          # from .env
+git_protocol = "https"               # token sent as a per-command HTTP header, never stored in .git/config
+
+[forges.sandbox-github]
+kind         = "github"
+token_cmd    = "gh auth token"
+git_protocol = "ssh"
+
+[paths]
+root = "../../.sandbox/projects"     # relative paths resolve against this file's directory
+
+[[projects]]
+source = "manifests/gitlab.ade.toml"
+
+[[projects]]
+source = "manifests/github.ade.toml"

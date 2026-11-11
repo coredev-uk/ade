@@ -1,0 +1,33 @@
+# Manifest for the synthetic GitLab sandbox seeded by scripts/sandbox/gitlab-seed.sh.
+name  = "demo-gl"
+forge = "sandbox-gitlab"
+
+[tracker]
+project    = "ade-demo-env/tracker"
+board      = "Delivery"
+iterations = { source = "milestones" }   # the sandbox is Free tier: no iterations
+
+[labels.type]
+pattern = "type::{value}"
+
+[labels.app]
+pattern = "app::{value}"
+
+[labels.workflow]
+pattern = "workflow::{value}"
+stage   = { started = "in progress", draft = "in progress", review = "in review", merged = "done" }
+sync    = "auto"
+
+[repos.api]
+path = "ade-demo-env/api"
+app  = ["api"]
+
+[repos.web]
+path     = "ade-demo-env/web"
+app      = ["web"]
+requires = ["api"]
+
+[conventions]
+branch = "{child_iid}-{slug}"
+link   = ["relates_to", "description"]
+mr     = { draft = true, closes = "child", mention = "parent" }
