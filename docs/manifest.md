@@ -243,7 +243,7 @@ validated together. Hooks run inside the tree and failures raise notifications. 
 `workspaces.<name>.layout` is the main pane of the tab ADE opens for a worktree: `code` (your editor), `agent` (omp
 started with an ADE-generated implement skill that carries the ticket, MR, conventions and your notes, and stops for
 review without pushing) or `manual` (a shell). Every layout also shows the item's live overview, lazygit, a shell and
-one pane per service of the `run` group (they start with the tab; Ctrl-C in a pane stops it, Enter starts it again).
+one pane per service of the `run` group (none starts on its own: a pane waits for Enter; Ctrl-C in a running pane stops it, Enter starts it again; the `services` pane starts the whole group).
 Each person can override the default with `host.layout` in their own config; `ade start --layout` and `W` on Home
 choose per tab. A service runs from the work item's own worktree when it has one in that repo, else from the shared
 baseline `main/`, so `{api.dev.port}` in web's `API_URL` follows the item's api when it has one. See

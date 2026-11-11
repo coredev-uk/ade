@@ -15,6 +15,7 @@ var fullTools = Tools{Ade: "/opt/ade/bin/ade", Editor: "nvim -u NONE", Lazygit: 
 func baseSpec(layout string) LayoutSpec {
 	return LayoutSpec{
 		Layout: layout, Tab: "web/418-paginate", Dir: "/projects/acme/web/418-paginate", BaseRef: "origin/main", Tools: fullTools,
+		Up:       Pane{Name: "services", Args: []string{"ws", "up", "/projects/acme/web/418-paginate", "--no-zellij"}},
 		Services: []Pane{{Name: "api.dev", Args: []string{"task", "run", "api.dev", "--worktree", "/projects/acme/web/418-paginate"}}},
 		Tasks:    []Pane{{Name: "web.dev", Args: []string{"task", "run", "web.dev", "--worktree", "/projects/acme/web/418-paginate"}}},
 	}
@@ -28,6 +29,15 @@ func TestBuildLayoutCode(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := `layout {
+    default_tab_template {
+        pane size=1 borderless=true {
+            plugin location="zellij:tab-bar"
+        }
+        children
+        pane size=2 borderless=true {
+            plugin location="zellij:status-bar"
+        }
+    }
     tab name="web/418-paginate" cwd="/projects/acme/web/418-paginate" focus=true {
         pane size="70%" split_direction="vertical" {
             pane name="editor" size="60%" focus=true command="nvim" {
@@ -44,10 +54,13 @@ func TestBuildLayoutCode(t *testing.T) {
             }
         }
         pane size="30%" split_direction="vertical" {
-            pane name="api.dev" command="/opt/ade/bin/ade" {
+            pane name="services" start_suspended=true command="/opt/ade/bin/ade" {
+                args "ws" "up" "/projects/acme/web/418-paginate" "--no-zellij"
+            }
+            pane name="api.dev" start_suspended=true command="/opt/ade/bin/ade" {
                 args "task" "run" "api.dev" "--worktree" "/projects/acme/web/418-paginate"
             }
-            pane name="web.dev" command="/opt/ade/bin/ade" {
+            pane name="web.dev" start_suspended=true command="/opt/ade/bin/ade" {
                 args "task" "run" "web.dev" "--worktree" "/projects/acme/web/418-paginate"
             }
         }
@@ -171,10 +184,40 @@ func TestBuildLayoutEscapesPaths(t *testing.T) {
 
 func TestBuildLayoutWithoutTasksHasNoStrip(t *testing.T) {
 	s := baseSpec(LayoutCode)
-	s.Services, s.Tasks = nil, nil
+	s.Up, s.Services, s.Tasks = Pane{}, nil, nil
 	got, _ := BuildLayout(s)
-	if strings.Contains(got, `30%`) || strings.Contains(got, `70%`) {
+	if strings.Contains(got, `30%`) || strings.Contains(got, `70%`) || strings.Contains(got, "start_suspended") {
 		t.Fatalf("a workspace without tasks is just the top row:\n%s", got)
+	}
+}
+
+func TestBuildLayoutServicePanesWaitForEnter(t *testing.T) {
+	got, err := BuildLayout(baseSpec(LayoutCode))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(got, "\n") {
+		if strings.Contains(line, `"/opt/ade/bin/ade"`) && !strings.Contains(line, "start_suspended=true") {
+			if strings.Contains(line, `name="overview"`) {
+				continue // the overview is not a service
+			}
+			t.Errorf("a service pane would start on open: %s", line)
+		}
+	}
+	if strings.Count(got, "start_suspended=true") != 3 {
+		t.Fatalf("want the services pane and both service panes suspended:\n%s", got)
+	}
+}
+
+func TestBuildLayoutEveryTabHasTheStandardChrome(t *testing.T) {
+	for _, l := range []string{LayoutCode, LayoutAgent, LayoutReview, LayoutManual} {
+		got, err := BuildLayout(baseSpec(l))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(got, `plugin location="zellij:tab-bar"`) || !strings.Contains(got, `plugin location="zellij:status-bar"`) {
+			t.Errorf("%s: the new tab has no tab bar or status bar:\n%s", l, got)
+		}
 	}
 }
 

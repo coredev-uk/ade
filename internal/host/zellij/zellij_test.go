@@ -31,6 +31,8 @@ func TestLayout(t *testing.T) {
 		`tab name="home" focus=true`,
 		`pane borderless=true focus=true command="/opt/my \"ade\"/ade"`,
 		`args "dash"`,
+		`plugin location="zellij:tab-bar"`,
+		`plugin location="zellij:status-bar"`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("layout missing %q:\n%s", want, got)

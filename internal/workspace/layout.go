@@ -59,10 +59,13 @@ type LayoutSpec struct {
 	// Agent holds the arguments of omp in the agent layout: the config overlay
 	// that loads the ADE implement skill and the opening prompt.
 	Agent []string
+	// Up is `ade ws up --no-zellij` for the whole run graph: the strip's first
+	// pane, the one-step way to start everything in order.
+	Up Pane
 	// Services are requirements running elsewhere (other trees, services.*), Tasks
-	// the workspace's own. Every one gets a pane of the strip along the bottom:
-	// they start when the tab opens, Ctrl-C in a pane stops that one and Enter
-	// starts it again once it has exited.
+	// the workspace's own. Every one gets a pane of the strip along the bottom.
+	// None starts when the tab opens (zellij start_suspended): the pane shows its
+	// command and waits for Enter; Ctrl-C stops it and Enter starts it again.
 	Services []Pane
 	Tasks    []Pane
 }
@@ -80,7 +83,7 @@ const (
 //
 //	main (editor | omp | shell)  | overview   <- ade item --watch
 //	                             | lazygit / shell (stacked)
-//	services and tasks, one pane each (when the workspace runs any)
+//	services and tasks, one pane each (when the workspace runs any), all waiting for Enter
 func BuildLayout(s LayoutSpec) (string, error) {
 	if !ValidLayout(s.Layout) {
 		return "", fmt.Errorf("unknown layout %q (want code, agent, review or manual)", s.Layout)
@@ -90,6 +93,7 @@ func BuildLayout(s LayoutSpec) (string, error) {
 	}
 	var b kdl
 	b.line(0, "layout {")
+	b.WriteString(zellij.TabTemplate)
 	b.line(1, "tab name=%s cwd=%s focus=true {", zellij.Quote(s.Tab), zellij.Quote(s.Dir))
 	hasStrip := len(s.Services)+len(s.Tasks) > 0
 
@@ -117,8 +121,15 @@ func BuildLayout(s LayoutSpec) (string, error) {
 	b.line(2, "}")
 	if hasStrip {
 		b.line(2, `pane size="%d%%" split_direction="vertical" {`, stripPct)
+		if len(s.Up.Args) > 0 {
+			c := s.adeCmd(s.Up)
+			c.suspended = true
+			b.pane(3, fmt.Sprintf("name=%s", zellij.Quote(s.Up.Name)), c)
+		}
 		for _, p := range append(append([]Pane(nil), s.Services...), s.Tasks...) {
-			b.pane(3, fmt.Sprintf("name=%s", zellij.Quote(p.Name)), s.adeCmd(p))
+			c := s.adeCmd(p)
+			c.suspended = true
+			b.pane(3, fmt.Sprintf("name=%s", zellij.Quote(p.Name)), c)
 		}
 		b.line(2, "}")
 	}
@@ -188,6 +199,8 @@ type command struct {
 	prog string
 	args []string
 	name string
+	// suspended shows the command in the pane and runs it on Enter, not at once.
+	suspended bool
 }
 
 // kdl accumulates indented lines.
@@ -209,6 +222,9 @@ func (b *kdl) pane(depth int, attrs string, c command) {
 	if c.prog == "" {
 		b.line(depth, "pane %s", attrs)
 		return
+	}
+	if c.suspended {
+		attrs += " start_suspended=true"
 	}
 	if len(c.args) == 0 {
 		b.line(depth, "pane %s command=%s", attrs, zellij.Quote(c.prog))

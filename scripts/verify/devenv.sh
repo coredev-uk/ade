@@ -3,7 +3,9 @@
 # worktree, end to end, offline.
 #
 #   start work -> a tab with  [omp briefed by the ADE implement skill | overview | lazygit + shell]
-#                 and a strip with one pane per service; the multi-root VS Code workspace;
+#                 and a strip with one pane per service, all waiting for Enter (nothing starts on open);
+#                 the session's other tabs stay and the new tab has the tab bar and status bar;
+#                 the multi-root VS Code workspace;
 #                 the commit prefix on agent commits, merge messages and the worktree's git config.
 #
 # The demo setup: the fake GitLab (Premium tier) serving real file:// git remotes with the sandbox
@@ -56,6 +58,13 @@ dump() {
   id=$(pane_id "$1" "$2")
   [[ -n $id ]] || return 1
   ZS action dump-screen --pane-id "$id" >"$3"
+}
+# press_enter TAB TITLE: send the Enter key to the pane, which starts a waiting service pane. (Raw
+# `zellij action write 13` is not seen by a suspended command pane; a key event is, like a keypress.)
+press_enter() {
+  local id
+  id=$(pane_id "$1" "$2") || return 1
+  ZS action send-keys --pane-id "$id" Enter
 }
 # screen_has TAB TITLE REGEXP: the pane's screen matches.
 screen_has() {
@@ -144,10 +153,18 @@ step "a throwaway zellij session with a pty client ($SESSION)"
 command -v script >/dev/null || fail "script (util-linux) is needed to attach a pty client"
 Z delete-session --force "$SESSION" >/dev/null 2>&1 || true
 Z attach --create-background "$SESSION" >/dev/null 2>&1
-setsid -f sh -c "sleep 900 | env -u ZELLIJ -u ZELLIJ_SESSION_NAME script -qfc 'stty rows 52 cols 200; zellij attach $SESSION' /dev/null >/dev/null 2>&1"
+setsid -f sh -c "sleep 900 | env -u ZELLIJ -u ZELLIJ_SESSION_NAME script -qfc 'stty rows 52 cols 200; zellij attach $SESSION' '$T/client.log' >/dev/null 2>&1"
 wait_for 20 ZS action list-panes || fail "the zellij session did not start"
 sleep 2
 pass "session $SESSION is running with an attached client"
+# Tabs that exist before any workspace opens: they must all survive it.
+ZS action new-tab --name scratch-1
+ZS action new-tab --name scratch-2
+ZS action go-to-tab 1
+sleep 1
+mapfile -t PRE < <(ZS action query-tab-names)
+[[ ${#PRE[@]} -ge 3 ]] && pass "the session has ${#PRE[@]} tabs before: ${PRE[*]}" || fail "tabs before: ${PRE[*]}"
+CLIENT_OFF=$(stat -c %s "$T/client.log")
 
 step "start work (child issues, branches, draft MRs, worktrees) opens the tab with the omp main pane"
 "$ADE" start "$REF" --repo api --repo web --layout agent --session "$SESSION" --json >"$T/start.json" || {
@@ -178,8 +195,8 @@ expect_json "the tab has the main (omp), overview, lazygit and shell panes and o
 jq -r --arg t "$TAB" '.[] | select(.tab_name == $t and .is_plugin == false) | "\(.title)\t\(.pane_columns)x\(.pane_rows) at \(.pane_x),\(.pane_y)"' "$T/panes.json" >"$OUT/devenv-panes.txt"
 expect_json "the overview pane has room to read (at least 60 columns x 12 rows in a 200x52 terminal)" "$T/panes.json" \
   ".[] | select(.tab_name == \"$TAB\" and .title == \"overview\") | .pane_columns >= 60 and .pane_rows >= 12"
-expect_json "every pane starts in the worktree" "$T/panes.json" \
-  "[.[] | select(.tab_name == \"$TAB\" and .is_plugin == false and .exited == false) | .pane_cwd] | length >= 7 and all(. == \"$API_WT\")"
+expect_json "every running pane starts in the worktree (waiting service panes have no process yet)" "$T/panes.json" \
+  "[.[] | select(.tab_name == \"$TAB\" and .is_plugin == false and .exited == false and .pane_cwd != null) | .pane_cwd] | length >= 4 and all(. == \"$API_WT\")"
 expect_json "the overview pane runs ade item <tracker ref> --watch" "$T/panes.json" \
   ".[] | select(.tab_name == \"$TAB\" and .title == \"overview\") | .terminal_command | endswith(\"item $REF --watch\")"
 expect_json "lazygit runs in its pane" "$T/panes.json" \
@@ -188,6 +205,25 @@ expect_json "the services run 'ade task run' for api.db, api.dev and web.dev" "$
   "[.[] | select(.tab_name == \"$TAB\") | .terminal_command // \"\"] | (any(contains(\"task run api.db\")) and any(contains(\"task run api.dev\")) and any(contains(\"task run web.dev\")))"
 ZS action dump-layout >"$OUT/devenv-layout.txt"
 grep -q 'name="overview"\|name "overview"\|overview' "$OUT/devenv-layout.txt" && pass "zellij dump-layout saved to .impeccable/review/devenv-layout.txt" || fail "dump-layout lacks the overview pane"
+"$ADE" ws status --json >"$T/status-open.json"
+expect_json "no service started when the tab opened (ws status is empty)" "$T/status-open.json" 'length == 0'
+expect_json "every service pane waits for Enter (start_suspended)" "$T/panes.json" \
+  "[.[] | select(.tab_name == \"$TAB\" and (.title | test(\"^(services|api\\\\.|web\\\\.)\"))) | .exited] | length >= 4 and all(. == false)"
+grep -c 'start_suspended' "$OUT/devenv-layout.txt" | grep -Eqx '[4-9]|[1-9][0-9]' && pass "the live layout marks the services and task panes start_suspended" || fail "dump-layout lacks start_suspended panes"
+
+step "existing tabs stay and the new tab has the normal chrome"
+POST=$(ZS action query-tab-names)
+for t in "${PRE[@]}"; do grep -qxF "$t" <<<"$POST" && pass "tab '$t' is still there" || fail "tab '$t' disappeared: $POST"; done
+[[ $(wc -l <<<"$POST") == $((${#PRE[@]} + 1)) ]] && pass "the new tab was added to the session's tabs, nothing replaced" || fail "tabs: $POST"
+expect_json "the tab's panes sit below the tab bar (first row is not a pane)" "$T/panes.json" \
+  "[.[] | select(.tab_name == \"$TAB\" and .is_plugin == false) | .pane_y] | min >= 1"
+ZS action dump-layout | grep -c 'zellij:tab-bar' | grep -qx '[1-9][0-9]*' && pass "the layout has the tab-bar plugin" || fail "no tab bar in the session"
+ZS action dump-layout | grep -c 'zellij:status-bar' | grep -qx '[1-9][0-9]*' && pass "and the status-bar plugin" || fail "no status bar in the session"
+ZS action go-to-tab-name "${PRE[0]}"
+ZS action go-to-tab-name "$TAB"
+sleep 1
+tail -c +"$((CLIENT_OFF + 1))" "$T/client.log" >"$T/client-since-open.log"
+for t in scratch-1 scratch-2; do grep -aqF "$t" "$T/client-since-open.log" && pass "the client drew tab '$t' in the tab bar" || fail "tab bar never showed '$t'"; done
 
 step "main pane: omp started with the ADE implement skill (stub omp records its args, env and the skill)"
 wait_for 20 test -s "$T/omp/SKILL.md" || { cat "$T/omp/args" >&2; fail "the stub omp never saw the skill"; }
@@ -238,16 +274,36 @@ grep -Eq 'Description' "$OUT/devenv-overview-description.txt" && grep -q 'Expone
 grep -q 'exponential backoff helper' "$OUT/devenv-overview-description.txt" && pass "and your notes (live: written to the record a moment ago)" || fail "no notes in the overview"
 ZS action send-keys --pane-id "$(pane_id "$TAB" overview)" "g"
 
-step "services: start with the tab, one pane each, stop and start from the pane"
+step "services: nothing starts with the tab; Enter in a pane starts that service and what it requires"
+dump "$TAB" api.dev "$OUT/devenv-services-idle.txt"
+grep -qi 'waiting to run' "$OUT/devenv-services-idle.txt" && grep -q 'task run api.dev' "$OUT/devenv-services-idle.txt" \
+  && pass "the api.dev pane shows its command and waits (start_suspended)" || { cat "$OUT/devenv-services-idle.txt" >&2; fail "api.dev pane is not waiting"; }
+"$ADE" ws status --json >"$T/status-idle.json"
+expect_json "still no instance (the previous steps opened and re-opened the tab)" "$T/status-idle.json" 'length == 0'
+press_enter "$TAB" api.dev
+wait_for 120 screen_has "$TAB" api.dev 'ade: ready api.dev' || { dump "$TAB" api.dev /dev/stderr; fail "api.dev never became ready after Enter"; }
+"$ADE" ws status --json >"$T/status-a.json"
+expect_json "Enter in api.dev started api.dev (with its requirements) from the item's api worktree, and not web.dev" "$T/status-a.json" \
+  "([.[] | select(.alive) | .node] | index(\"web.dev\") == null) and (.[] | select(.node == \"api.dev\") | .tree == \"$API_WT\" and .alive)"
+screen_has "$TAB" web.dev 'Waiting to run' && pass "web.dev is still waiting" || fail "web.dev started by itself"
+ZS action send-keys --pane-id "$(pane_id "$TAB" api.dev)" "Ctrl c"
+wait_for 20 bash -c "[[ \$('$ADE' ws status --json | jq length) == 0 ]]" && pass "Ctrl-C in api.dev stops it" || fail "api.dev still alive after Ctrl-C"
+# web needs api: Enter in web.dev brings api up first, in this pane
+press_enter "$TAB" web.dev
 wait_for 240 screen_has "$TAB" web.dev 'ade: ready web.dev' || { dump "$TAB" web.dev /dev/stderr; fail "web.dev never became ready in its pane"; }
-dump "$TAB" api.dev "$OUT/devenv-services-api.txt"
 dump "$TAB" web.dev "$OUT/devenv-services-web.txt"
-grep -q 'ade: ready api.dev' "$OUT/devenv-services-api.txt" && pass "api.dev is ready in its pane" || fail "api.dev pane"
+grep -Eq 'api.dev :[0-9]+ +ready' "$OUT/devenv-services-web.txt" && pass "Enter in web.dev started its requirement api.dev first (the pane shows both)" || fail "web.dev pane does not show api.dev"
+"$ADE" ws status --json >"$T/status.json"
+expect_json "api.dev is up although its own pane was not started" "$T/status.json" ".[] | select(.node == \"api.dev\") | .tree == \"$API_WT\" and .alive"
+press_enter "$TAB" api.dev
+wait_for 60 screen_has "$TAB" api.dev 'ade: ready api.dev' || { dump "$TAB" api.dev /dev/stderr; fail "api.dev pane did not start"; }
+dump "$TAB" api.dev "$OUT/devenv-services-api.txt"
+"$ADE" ws status --json >"$T/status.json"
+expect_json "its own pane then shares that instance (api.dev held twice)" "$T/status.json" \
+  "[.[] | select(.node == \"api.dev\" and .alive)] | length == 1 and (.[0].holders | length) >= 2"
 grep -q 'Ctrl-C stops it' "$OUT/devenv-services-web.txt" && grep -q 'Enter starts it again' "$OUT/devenv-services-web.txt" \
   && pass "the pane says how to stop (Ctrl-C) and start again (Enter)" || fail "no hint in the web.dev pane"
-"$ADE" ws status --json >"$T/status.json"
 API_PORT=$(jq -r '.[] | select(.node == "api.dev") | .port' "$T/status.json")
-expect_json "api.dev runs from the item's own api worktree" "$T/status.json" ".[] | select(.node == \"api.dev\") | .tree == \"$API_WT\" and .alive"
 expect_json "web.dev runs from the item's own web worktree (the tab opened after both worktrees existed)" "$T/status.json" \
   ".[] | select(.node == \"web.dev\") | .tree == \"$WEB_WT\" and .alive"
 WEB_PORT=$(jq -r '.[] | select(.node == "web.dev" and .alive) | .port' "$T/status.json" | head -1)
@@ -271,7 +327,10 @@ expect_json "the code layout has editor, overview, lazygit and shell panes" "$T/
   "[.[] | select(.tab_name == \"$WEB_TAB\" and .is_plugin == false) | .title] | (index(\"editor\") != null and index(\"overview\") != null and index(\"lazygit\") != null and index(\"shell\") != null)"
 expect_json "web.dev's pane carries --item-tree api=<the item's api worktree> (found from the cache)" "$T/panes2.json" \
   ".[] | select(.tab_name == \"$WEB_TAB\" and .title == \"web.dev\") | .terminal_command | contains(\"--item-tree api=$API_WT\")"
-wait_for 120 screen_has "$WEB_TAB" web.dev 'ade: ready web.dev' || { dump "$WEB_TAB" web.dev /dev/stderr; fail "web.dev (web worktree) not ready"; }
+# One step for the whole graph: Enter in the tab's services pane runs `ade ws up --no-zellij` for this tree.
+press_enter "$WEB_TAB" services
+wait_for 120 screen_has "$WEB_TAB" services 'ready; Ctrl-C stops' || { dump "$WEB_TAB" services /dev/stderr; fail "the services pane did not bring the graph up"; }
+pass "Enter in the services pane brought the whole run graph up in order"
 dump "$WEB_TAB" overview "$OUT/devenv-web-tab-overview.txt"
 "$ADE" ws status --json >"$T/status2.json"
 expect_json "web.dev of the item's web worktree is one instance, held by both tabs" "$T/status2.json" \

@@ -96,7 +96,8 @@ type OpenResult struct {
 // Open opens the workspace of a worktree in the user's host: a tab in the
 // `ade` zellij session (reused when it exists), a VS Code window with
 // generated tasks, or a `cd` hint on a plain terminal. It starts no
-// processes itself: tab panes run `ade task run`, which brings up the run
+// processes itself, and neither do the tab's service panes until the user
+// presses Enter in them: they run `ade task run`, which brings up the run
 // graph and shares instances with other workspaces.
 func Open(ctx context.Context, a *app.App, project, repo, worktree string, opts ...OpenOption) (OpenResult, error) {
 	p, err := prepare(ctx, a, project, repo, worktree, opts)
@@ -415,6 +416,9 @@ func layoutSpec(ctx context.Context, p *prepared) LayoutSpec {
 		} else {
 			spec.Tasks = append(spec.Tasks, pane)
 		}
+	}
+	if len(spec.Services)+len(spec.Tasks) > 0 {
+		spec.Up = Pane{Name: "services", Args: append([]string{"ws", "up", p.loc.Tree, "--no-zellij"}, p.runArgs...)}
 	}
 	return spec
 }

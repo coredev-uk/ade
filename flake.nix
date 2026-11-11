@@ -62,6 +62,7 @@
             ./cmd
             ./internal
             ./scripts/sandbox/manifests
+            ./docs/schema # TestCommittedSchemasAreCurrent compares against them
           ];
         };
 

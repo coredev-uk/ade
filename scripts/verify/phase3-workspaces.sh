@@ -416,6 +416,9 @@ EOF
   setsid -f sh -c "sleep 300 | env -u ZELLIJ -u ZELLIJ_SESSION_NAME script -qfc 'stty rows 50 cols 160; zellij attach $SESSION' /dev/null >/dev/null 2>&1"
   wait_for 20 bash -c "env -u ZELLIJ -u ZELLIJ_SESSION_NAME -u ZELLIJ_PANE_ID zellij --session $SESSION action list-panes >/dev/null" || fail "zellij session did not start"
   sleep 2
+  Z --session "$SESSION" action new-tab --name scratch-1
+  Z --session "$SESSION" action new-tab --name scratch-2
+  mapfile -t TABS_BEFORE < <(Z --session "$SESSION" action query-tab-names)
   "$ADE" ws up "$WEB/main" --session "$SESSION" --json >"$WS/open1.json"
   expect_json "ws up opens a new tab web/main in $SESSION" "$WS/open1.json" '.host == "zellij" and .created == true and .tab == "web/main" and .session == "ade-test-ws"'
   Z --session "$SESSION" action query-tab-names | grep -qx 'web/main' && pass "zellij lists the tab" || fail "tab missing from zellij"
@@ -424,14 +427,27 @@ EOF
   Z --session "$SESSION" action list-panes --json >"$WS/panes.json"
   expect_json "panes run 'ade task run' for api.db, api.dev and web.dev in the worktree" "$WS/panes.json" \
     '[.[] | select(.tab_name == "web/main") | .terminal_command // ""] | (any(contains("task run api.db")) and any(contains("task run api.dev")) and any(contains("task run web.dev")))'
-  expect_json "every pane's cwd is the worktree" "$WS/panes.json" \
-    "[.[] | select(.tab_name == \"web/main\" and .is_plugin == false and .exited == false) | .pane_cwd] | (length >= 3) and all(. == \"$WEB/main\")"
+  expect_json "every running pane's cwd is the worktree (service panes wait for Enter, so they have no process yet)" "$WS/panes.json" \
+    "[.[] | select(.tab_name == \"web/main\" and .is_plugin == false and .exited == false and .pane_cwd != null) | .pane_cwd] | (length >= 1) and all(. == \"$WEB/main\")"
+  expect_json "the tab's panes sit below the tab bar (the new tab has the standard chrome)" "$WS/panes.json" \
+    '[.[] | select(.tab_name == "web/main" and .is_plugin == false) | .pane_y] | min >= 1'
+  mapfile -t TABS_NOW < <(Z --session "$SESSION" action query-tab-names)
+  for t in "${TABS_BEFORE[@]}"; do printf '%s\n' "${TABS_NOW[@]}" | grep -qxF "$t" && pass "tab '$t' survived the open" || fail "tab '$t' disappeared"; done
+  sleep 3
+  [[ $("$ADE" ws status --json | jq length) == 0 ]] && pass "nothing started when the tab opened: the service panes wait for Enter" || fail "an instance started on open"
+  pane_of() { Z --session "$SESSION" action list-panes --json | jq -r --arg n "$1" '[.[] | select(.tab_name == "web/main" and .title == $n and .is_plugin == false) | "terminal_\(.id)"] | first // empty'; }
+  Z --session "$SESSION" action dump-screen --pane-id "$(pane_of web.dev)" | grep -q 'Waiting to run' && pass "the web.dev pane shows its command and waits" || fail "web.dev pane is not waiting"
+  Z --session "$SESSION" action send-keys --pane-id "$(pane_of web.dev)" Enter
   wait_for 240 bash -c "[[ \$('$ADE' ws status --json | jq '[.[] | select(.node == \"web.dev\" and .alive)] | length') == 1 ]]" \
-    || fail "the tab's panes did not bring up web.dev"
+    || fail "Enter in the web.dev pane did not bring up web.dev"
   WEB_Z=$(jq -r --arg d "$WEB/main" '.[] | select(.tree == $d and .node == "web.dev") | .port' <("$ADE" ws status --json))
   wait_for 30 bash -c "curl -fsS --max-time 5 http://127.0.0.1:$WEB_Z/healthz | jq -e .api.reachable >/dev/null" \
-    && pass "web started by the tab's pane reaches the api started by the services pane" || fail "web in the tab cannot reach api"
-  [[ $("$ADE" ws status --json | jq '[.[] | select(.node == "api.dev")] | length') == 1 ]] && pass "one api instance behind both panes" || fail "api started twice"
+    && pass "web started from its pane brought up its requirement api and reaches it" || fail "web in the tab cannot reach api"
+  [[ $("$ADE" ws status --json | jq '[.[] | select(.node == "api.dev" and .alive)] | length') == 1 ]] && pass "one api instance, started by web's pane" || fail "api not started once"
+  Z --session "$SESSION" action send-keys --pane-id "$(pane_of api.dev)" Enter
+  wait_for 60 bash -c "env -u ZELLIJ -u ZELLIJ_SESSION_NAME -u ZELLIJ_PANE_ID zellij --session $SESSION action dump-screen --pane-id $(pane_of api.dev) | grep -q 'ade: ready api.dev'" \
+    && pass "Enter in the api.dev pane then shares the running instance" || fail "api.dev pane did not start"
+  [[ $("$ADE" ws status --json | jq '[.[] | select(.node == "api.dev")] | length') == 1 ]] && pass "still one api instance behind both panes" || fail "api started twice"
   "$ADE" ws up "$WEB/main" --session "$SESSION" --json >"$WS/open2.json"
   expect_json "opening again focuses the existing tab (idempotent)" "$WS/open2.json" '.created == false'
   [[ $(Z --session "$SESSION" action query-tab-names | grep -cx 'web/main') == 1 ]] && pass "still exactly one web/main tab" || fail "duplicate tab"

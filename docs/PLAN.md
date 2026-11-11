@@ -1,6 +1,6 @@
 # ADE plan
 
-Status: draft v1 · Owner: repo maintainer · Product truth: [PRODUCT.md](../PRODUCT.md)
+Status: spec v1, implemented through Phase 7 (§8) · Owner: repo maintainer · Product truth: [PRODUCT.md](../PRODUCT.md) · Setup: [setup.md](setup.md)
 
 All names in this document (`acme`, `tracker`, `api`, `web`, `jdoe`, `example.com`) are synthetic.
 
@@ -522,7 +522,7 @@ type Forge interface {
 
 ## 6. Surfaces (TUI) — mode: Operate
 
-Design is settled per the impeccable flow. Before any screen is built, Phase 0 runs the visual‑world round (new‑work, Operate mode) and writes `DESIGN.md`: ANSI colour roles, glyph set and fallbacks, density, focus treatment, light/dark behaviour. The wireframes below fix **structure and behaviour only**.
+Design is settled per the impeccable flow. The visual‑world round (new‑work, Operate mode) produced `DESIGN.md`: ANSI colour roles, glyph set and fallbacks, density, focus treatment, light/dark behaviour. The wireframes below fix **structure and behaviour only**.
 
 Global conventions: `j/k` move, `enter` open, `esc` back, `tab` switch pane, `/` filter, `:` command palette, `?` keymap overlay, `r` refresh, `o` open in browser, `y` copy (OSC 52, so it works in VS Code and browser terminals). Breakpoints: ≥140 cols three regions, 100–139 two, <100 one with a toggled preview. Never colour‑only state.
 
@@ -673,11 +673,12 @@ One confirm screen shows every write before it happens. It is idempotent: re‑r
   - `manual`: a shell 60% | the same column
   - `review`: diff/threads + delta (no overview, no services)
   - The **overview** pane runs `ade item <tracker ref> --watch`: the item live from the cache (stations and stage, court · reason, weight and sprint, each child issue with its MR state, pipeline and unresolved threads, description and acceptance with task checkboxes, your notes), refreshed when the cache changes (polled every 2 s). It is left out for a worktree that belongs to no item.
-  - The **services strip** along the bottom has one pane per service or task of the workspace's run group (`ade task run <node>`), side by side: they start when the tab opens, Ctrl‑C in a pane stops that service (and what only it needed), Enter in the pane starts it again, and every pane prints that hint. A repo's service runs from the item's own worktree when the item has one there, otherwise from the shared baseline `main/` (so web gets `API_URL` of the item's api, else of the shared baseline api).
+  - The **services strip** along the bottom has a `services` pane and one pane per service or task of the workspace's run group (`ade task run <node>`), side by side. **Nothing starts when the tab opens or when you switch to it:** each pane is a zellij command pane with `start_suspended` that shows its command and waits for Enter. Enter in a pane starts that node and, as `ade task run` always does, what it requires in dependency order (Enter in web starts api first); Enter in `services` runs `ade ws up --no-zellij` and brings up the whole run group. Once running, Ctrl‑C in a pane stops that service (and what only it needed), Enter starts it again, and the pane prints that hint. A repo's service runs from the item's own worktree when the item has one there, otherwise from the shared baseline `main/` (so web gets `API_URL` of the item's api, else of the shared baseline api).
+  - Every generated tab (workspace, review) carries zellij's standard chrome through `default_tab_template` (tab bar on top, status bar below), as does the launcher's `home` tab; opening a workspace adds its tab to the session without touching the others, and opening it again focuses the existing tab.
   - The layout is chosen by, in order: `--layout` / the dialog's main‑pane row / `W`, the user's `host.layout`, the manifest workspace's `layout`, then `code`.
 - **Implement skill:** the `agent` layout starts `omp --config <cache>/ws/agent/<tree>/omp.yml "<opening message>"`. The overlay only adds a skill directory (`skills.customDirectories`) for that run; `~/.omp` and the worktree are never touched (nothing is written into a git tree). `SKILL.md` is regenerated on every open, also when the tab exists, and carries the parent and child titles, descriptions and acceptance criteria, the MR link and branch, the item's worktrees in the other repos, the repo's `AGENTS.md` (or `CLAUDE.md`), the manifest conventions, your notes, the commit prefix rule, and the instruction to implement, run the checks, commit locally and **stop for review without pushing**.
 - **Commit prefix** (`conventions.commit_prefix`): applied to ADE's agent commits, the GitHub start commit and the merge/squash messages ADE sends (`ade mr merge`, `m` on the MR page: GitLab's default merge shape with the prefix before the MR title, then `See merge request <ref>`); written per worktree as `ade.parent` / `ade.commitPrefix` (`git config --worktree`, `extensions.worktreeConfig`) for the user's own commit‑msg hook (docs/manifest.md).
-- **Tasks** come from the run graph (2.1). `w` opens a workspace, and its `run` group starts in dependency order.
+- **Tasks** come from the run graph (2.1). `w` opens a workspace; its `run` group starts in dependency order when you press Enter in the `services` pane (or in an individual service pane).
 - **Plan:** ADE gathers the parent issue, child issue, comments, notes, and repo `AGENTS.md`, then starts omp in plan mode in the worktree with a seeded prompt file. The plan is saved to the item record (`plans/`, 4.2), never into the worktree, and reviewed in the TUI.
 - **Run:** omp executes the approved plan with `--max-cost` and the implement‑role model. `runs/<id>/run.md` tracks state, spend, exit, and resulting commits, and every run brackets with `agent.run.start/end` audit events. lazygit opens beside the run for review. "Address comments" uses the same path, seeded with unresolved threads.
 - **Agent CLI drivers:** `omp`, `claude`, and `codex` are discovered on PATH and chosen per profile.
@@ -790,27 +791,46 @@ One review surface serves both modes: reviewing yourself and triaging an agent's
 ## 7. Code layout
 
 ```
-cmd/ade/                 cobra root; `ade` → host launch, subcommands
-internal/config/         schema, load/merge/override, manifest fetch, JSON Schema gen
-internal/store/          cache.db (modernc SQLite), migrations, queries, reindex from records
+cmd/ade/                 main: calls internal/cli
+internal/cli/            cobra command tree, one file per command; `ade` → host launch
+internal/app/            wiring: paths, config, audit, cache, event bus
+internal/config/         user config + manifest schema, load/merge/overlays, JSON Schema generation
+internal/paths/          XDG locations
+internal/store/          cache.db (modernc SQLite), migrations, queries
 internal/audit/          append-only JSONL writer (flock), redactor, query
 internal/records/        item dirs, item.md snapshot/notes merge, AI artifacts, plans, runs
-internal/forge/          interface, Caps; gitlab/ (REST + GraphQL, fake/ with tier switch, testdata/{free,premium}, schema.graphql), github/
+internal/itemdoc/        structure in issue descriptions (tasks, acceptance)
+internal/forge/          interface, Caps; gitlab/ (REST + GraphQL, fake/ with tier switch, schema.graphql), github/
+internal/forgesync/      incremental forge sync into the cache, item records, events
 internal/domain/         WorkItem, stage + court derivation, iteration window
+internal/weight/         explicit, audited re-weighting
 internal/project/        project registry, manifest fetch/validate/snapshot, `project add|list|status|remove`
-internal/bootstrap/      `ade project bootstrap`: facet/workflow/tracker heuristics, task detection from root files, manifest rendering, idempotent publish MR
-internal/git/            bare clone + refspec fix, worktrees (add/track/remove/gc), fetch, ff-only, ahead/behind, hooks
-internal/sync/           update loop (2.3), incremental forge sync, forge diff → events
+internal/bootstrap/      `ade project bootstrap`: facet/workflow/tracker heuristics, task detection, manifest rendering, publish
+internal/onboard/        pure parts of `ade init`
+internal/git/            bare clone + refspec fix, worktrees, fetch, ff-only, ahead/behind
+internal/startwork/      start-work flow (6.3)
 internal/events/         typed event bus; run-record/audit watchers for cross-process events
-internal/notify/         rules, inbox store, toast/terminal/desktop channels
-internal/ai/             drivers (omp, anthropic, openaicompat), prompts/ (versioned), result cache
-internal/budget/         ledger view over audit, prices, caps, estimates, gateway spend
+internal/notify/         inbox store and in-dashboard toasts
+internal/ai/             drivers (omp, anthropic, openai-compat), prompts/ (versioned), result cache
+internal/agent/          agent runs (omp, claude, codex) on work items
+internal/billing/        provider spend sources (litellm, omp, anthropic, openai, ...)
+internal/ledger/         spend ledger over the audit log
+internal/budget/         caps, estimates, figures for the budget page
+internal/review/         manual review drafts and single submit
 internal/agile/          standup, sprint review
-internal/workspace/      worktrees + tree resolution, run graph (validate, toposort, readiness, instances, ports), layouts (KDL), vscode export
-internal/host/           zellij, vscode, plain
-internal/tui/            app shell, router, keymap, theme (from DESIGN.md); pages/, components/
-nix/                     ade-nvim, zellij config
-docs/                    PLAN.md, config reference
+internal/commitmsg/, internal/commitprefix/   commit prefix convention
+internal/workspace/      worktree resolution, run graph (validate, toposort, instances), layouts (KDL), VS Code export
+internal/ports/, internal/readiness/   port allocation, service readiness probes
+internal/overview/       live issue overview pane
+internal/host/           zellij, vscode, plain launch decision
+internal/editor/         editor resolution
+internal/clipboard/      OSC 52 copy
+internal/httpdebug/      `--debug-http`
+internal/doctor/         `ade doctor`
+internal/tui/            dashboard: shell, pages, theme (from DESIGN.md)
+editors/ade-nvim/        Neovim config wrapped by the flake (`nix run .#ade-nvim`)
+scripts/                 sandbox seeds, verify/ phase scripts, demo.sh
+docs/                    setup.md, reference.md, manifest.md, PLAN.md, schema/, billing/, gitlab-api/
 ```
 
 Verification:
@@ -818,7 +838,7 @@ Verification:
 - Unit tests on domain derivation (stage, court, iteration window edge cases around weekends and overlap).
 - `teatest` golden tests for pages at 80×24, 120×40, and 200×50, in dark, light, and NO_COLOR.
 - VHS tapes produce screenshots for design review.
-- `nix flake check` runs lint and tests.
+- `nix flake check` runs the offline test suite.
 
 ---
 
@@ -847,4 +867,4 @@ Verification:
 - **Writes are irreversible‑ish.** Every forge write goes through a preview/confirm, and `--dry-run` is available on every write command.
 - **Notifications exist only inside the dashboard.** While the dashboard is closed, events accumulate in the inbox (`ade inbox`), and they show in the unread count and row markers when it next opens. Only events that arrive while it is open pop up.
 - **Disk use:** a bare clone per repo per project, plus per‑worktree dependencies (`node_modules`). `ade gc` and merged‑worktree prompts keep it bounded.
-- Open: diff rendering inside the TUI vs always delegating to delta (decide after the Phase 2 spike); whether run tracking needs a socket once agents run in parallel; whether services should optionally run via `docker compose` / `process-compose` instead of plain commands (the run graph stays the same either way).
+- Open: whether run tracking needs a socket once agents run in parallel; whether services should optionally run via `docker compose` / `process-compose` instead of plain commands (the run graph stays the same either way).
