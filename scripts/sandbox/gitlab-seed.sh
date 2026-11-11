@@ -22,12 +22,22 @@ S_NEXT=("Sprint 43" 2026-11-16 2026-11-27)
 log() { printf '  %s\n' "$*" >&2; }
 
 # gl METHOD PATH [JSON]: prints body; fails on HTTP >= 400 unless ALLOW_404=1 and status is 404.
+# Retries 429s, honouring Retry-After (GitLab.com rate-limits some endpoints well below the global limit).
 gl() {
-  local method=$1 path=$2 body=${3:-} out status
+  local method=$1 path=$2 body=${3:-} out hdr status attempt wait
   out=$(mktemp)
-  local args=(-sS -o "$out" -w '%{http_code}' -X "$method" -H "PRIVATE-TOKEN: $GITLAB_PAT")
+  hdr=$(mktemp)
+  local args=(-sS -o "$out" -D "$hdr" -w '%{http_code}' -X "$method" -H "PRIVATE-TOKEN: $GITLAB_PAT")
   [[ -n $body ]] && args+=(-H 'Content-Type: application/json' --data "$body")
-  status=$(curl "${args[@]}" "$API$path")
+  for attempt in 1 2 3 4 5 6; do
+    status=$(curl "${args[@]}" "$API$path")
+    [[ $status != 429 ]] && break
+    wait=$(awk 'tolower($1)=="retry-after:" {print $2+0}' "$hdr")
+    wait=${wait:-30}
+    log "429 on $method $path; retry $attempt in ${wait}s"
+    sleep "$wait"
+  done
+  rm -f "$hdr"
   if [[ $status == 404 && ${ALLOW_404:-0} == 1 ]]; then
     rm -f "$out"
     return 1
@@ -78,24 +88,34 @@ WEB_P=$(project web "Acme export service frontend (fictional).")
 
 # --- labels -----------------------------------------------------------------
 EXISTING_LABELS=$(gl GET "/groups/$GID/labels?per_page=100" | jq -r '.[].name')
+DECLARED_LABELS=()
 label() { # name color description
+  DECLARED_LABELS+=("$1")
   grep -qxF "$1" <<<"$EXISTING_LABELS" && return 0
   gl POST "/groups/$GID/labels" "$(jq -n --arg n "$1" --arg c "$2" --arg d "$3" '{name:$n,color:$c,description:$d}')" >/dev/null
   log "label $1"
 }
-label "svc::api" "#1f75cb" "Work lands in the api project"
-label "svc::web" "#6699cc" "Work lands in the web project"
-label "type::feature" "#009966" "New behaviour"
+# Three facets: type, app (routes to a repo), workflow (board column). Sprints are milestones here;
+# iterations are a paid feature and are exercised through the fake server instead.
+label "type::story" "#009966" "User-facing change"
 label "type::bug" "#dc143c" "Defect"
-label "priority::1" "#ed9121" "Highest"
-label "priority::2" "#c39953" "Normal"
-label "priority::3" "#a8d695" "Low"
-label "workflow::ready" "#8fbc8f" "Ready to pick up"
+label "type::epic" "#6a5acd" "Groups related stories via issue links"
+label "app::api" "#1f75cb" "Routes work to the api project"
+label "app::web" "#6699cc" "Routes work to the web project"
 label "workflow::in progress" "#428bca" "Being worked on"
-label "workflow::review" "#9400d3" "In review"
-label "blocked" "#36454f" "Waiting on something outside the team"
-label "Sprint::42" "#5843ad" "Label-based sprint marker (tests the labels iteration source)"
-label "Sprint::43" "#5843ad" "Label-based sprint marker (tests the labels iteration source)"
+label "workflow::in review" "#9400d3" "MR open for review"
+label "workflow::blocked" "#36454f" "Waiting on something outside the team"
+label "workflow::done" "#2e8b57" "Merged and verified"
+
+# Optional cleanup of labels from earlier seed versions. Deletes group labels the script does not
+# declare, so it only runs when explicitly asked for, against a sandbox group.
+if [[ ${ADE_SANDBOX_PRUNE:-0} == 1 ]]; then
+  while IFS=$'\t' read -r lid lname; do
+    printf '%s\n' "${DECLARED_LABELS[@]}" | grep -qxF "$lname" && continue
+    gl DELETE "/groups/$GID/labels/$lid" >/dev/null
+    log "pruned label $lname"
+  done < <(gl GET "/groups/$GID/labels?per_page=100&include_ancestor_groups=false" | jq -r '.[] | "\(.id)\t\(.name)"')
+fi
 
 # --- milestones as sprints --------------------------------------------------
 milestone() { # title start due -> id
@@ -118,6 +138,14 @@ issue() {
   found=$(gl GET "/projects/$pid/issues?state=all&in=title&search=$(enc "$title")&per_page=100" |
     jq -r --arg t "$title" 'map(select(.title==$t))[0].iid // empty')
   if [[ -n $found ]]; then
+    # Converge labels so re-runs track the declared taxonomy.
+    local have want
+    have=$(gl GET "/projects/$pid/issues/$found" | jq -r '.labels | sort | join(",")')
+    want=$(jq -rn --arg l "$labels" '$l | split(",") | map(select(. != "")) | sort | join(",")')
+    if [[ $have != "$want" ]]; then
+      gl PUT "/projects/$pid/issues/$found" "$(jq -n --arg l "$labels" '{labels:$l}')" >/dev/null
+      log "labels: $title"
+    fi
     echo "$found"
     return
   fi
@@ -132,34 +160,40 @@ close_issue() { gl PUT "/projects/$1/issues/$2" '{"state_event":"close"}' >/dev/
 
 T_RATE=$(issue "$TRACKER" "Rate-limit the export endpoint" \
   $'Tenants can trigger unbounded CSV exports and starve the worker pool.\n\n## Acceptance\n- [x] Agree limits with support (50 req/min per tenant)\n- [ ] Token-bucket limiter in api\n- [ ] 429 response with Retry-After\n- [ ] Dashboard shows remaining quota' \
-  "svc::api,type::feature,priority::1,workflow::review" "$M_CUR" yes)
+  "type::story,app::api,workflow::in review" "$M_CUR" yes)
 T_AUDIT=$(issue "$TRACKER" "Paginate the audit log view" \
   $'The audit log page renders every row and freezes for large tenants.\n\n## Acceptance\n- [ ] Cursor pagination in the UI\n- [ ] Keep current filters when paging' \
-  "svc::web,type::bug,priority::2,workflow::in progress" "$M_CUR" yes)
+  "type::bug,app::web,workflow::in progress" "$M_CUR" yes)
 T_WEBHOOK=$(issue "$TRACKER" "Retry failed webhook deliveries" \
   $'Webhook deliveries that fail are dropped.\n\n## Acceptance\n- [ ] Exponential backoff, max 6 attempts\n- [ ] Dead-letter list visible to admins' \
-  "svc::api,type::feature,priority::2,workflow::ready,Sprint::42" "$M_CUR" yes)
+  "type::story,app::api" "$M_CUR" yes)
 T_CSV=$(issue "$TRACKER" "Remove the legacy CSV export path" \
   "The v1 CSV path is unused since the new exporter shipped. Remove it and its feature flag." \
-  "svc::api,type::feature,priority::3,workflow::ready" "$M_CUR" yes)
+  "type::story,app::api" "$M_CUR" yes)
 T_TZ=$(issue "$TRACKER" "Export timestamps ignore tenant timezone" \
   "Exports always use UTC. Tenants with a configured timezone expect local time with offset." \
-  "svc::api,type::bug,priority::2,blocked" "$M_CUR" yes)
+  "type::bug,app::api,workflow::blocked" "$M_CUR" yes)
 T_BILL=$(issue "$TRACKER" "Billing export times out for large tenants" \
   "Exports over 200k rows hit the 30s gateway timeout." \
-  "svc::api,type::bug,priority::1,workflow::ready" "$M_CUR" no)
+  "type::bug,app::api" "$M_CUR" no)
 T_DARK=$(issue "$TRACKER" "Dark mode for the export dashboard" \
   "Follow the design tokens already used by the settings pages." \
-  "svc::web,type::feature,priority::3,Sprint::43" "$M_NEXT" no)
+  "type::story,app::web" "$M_NEXT" no)
 T_SCHED=$(issue "$TRACKER" "Scheduled exports" \
-  "Let tenants schedule a daily or weekly export delivered by email." \
-  "svc::api,svc::web,type::feature,priority::2" "$M_NEXT" yes)
+  "Let tenants schedule a daily or weekly export delivered by email. Needs an api scheduler and a web settings form." \
+  "type::story,app::api,app::web" "$M_NEXT" yes)
 T_FONT=$(issue "$TRACKER" "Fix truncated column headers in export preview" \
   "Long column names are cut off without a tooltip." \
-  "svc::web,type::bug,priority::3" "$M_PREV" yes)
+  "type::bug,app::web,workflow::done" "$M_PREV" yes)
 T_DEPS=$(issue "$TRACKER" "Upgrade export worker dependencies" \
   "Routine upgrade of the worker's HTTP and CSV libraries." \
-  "svc::api,type::feature,priority::3" "$M_CUR" yes)
+  "type::story,app::api,workflow::done" "$M_CUR" yes)
+T_STALE=$(issue "$TRACKER" "Exports page sometimes shows stale totals" \
+  "Reported by support: totals lag behind the table after a filter change. No labels yet (needs triage)." \
+  "" "$M_CUR" yes)
+T_EPIC=$(issue "$TRACKER" "Export reliability" \
+  "Umbrella for work that keeps large exports fast and predictable." \
+  "type::epic,app::api" "$M_CUR" no)
 
 # --- child issues + links (tracker-project pattern) -------------------------
 child() { # code_pid parent_iid title labels -> child iid
@@ -176,14 +210,17 @@ link() { # tracker_iid code_pid code_iid
   log "link tracker#$1 -> $2#$3"
 }
 
-C_RATE=$(child "$API_P" "$T_RATE" "Rate-limit the export endpoint" "type::feature")
+C_RATE=$(child "$API_P" "$T_RATE" "Rate-limit the export endpoint" "type::story")
 link "$T_RATE" "$API_P" "$C_RATE"
 C_AUDIT=$(child "$WEB_P" "$T_AUDIT" "Paginate the audit log view" "type::bug")
 link "$T_AUDIT" "$WEB_P" "$C_AUDIT"
 C_FONT=$(child "$WEB_P" "$T_FONT" "Fix truncated column headers in export preview" "type::bug")
 link "$T_FONT" "$WEB_P" "$C_FONT"
-C_DEPS=$(child "$API_P" "$T_DEPS" "Upgrade export worker dependencies" "type::feature")
+C_DEPS=$(child "$API_P" "$T_DEPS" "Upgrade export worker dependencies" "type::story")
 link "$T_DEPS" "$API_P" "$C_DEPS"
+
+# Epic-typed tracker issue groups its stories through same-project links.
+for t in "$T_RATE" "$T_BILL" "$T_WEBHOOK"; do link "$T_EPIC" "$TRACKER" "$t"; done
 
 # --- branches, commits, MRs -------------------------------------------------
 slug() { tr '[:upper:]' '[:lower:]' <<<"$1" | sed -E 's/[^a-z0-9]+/-/g; s/^-|-$//g'; }
@@ -272,6 +309,7 @@ cat <<EOF
 Done.
   group     $GITLAB_URL/$GROUP
   tracker   #$T_RATE #$T_AUDIT #$T_WEBHOOK #$T_CSV #$T_TZ #$T_BILL #$T_DARK #$T_SCHED #$T_FONT #$T_DEPS
+            epic #$T_EPIC (links #$T_RATE #$T_BILL #$T_WEBHOOK)   needs triage #$T_STALE   multi-app #$T_SCHED
   api       child #$C_RATE  MR !$MR_RATE (ready, 2 open threads)   child #$C_DEPS (closed)
   web       child #$C_AUDIT MR !$MR_AUDIT (draft)                  child #$C_FONT  MR !$MR_FONT (merged)
 EOF

@@ -61,7 +61,7 @@ ADE's GitLab driver is built from the official docs, not from a paid test instan
   - writes: `api`
   - `ade doctor` checks scopes via `GET /personal_access_tokens/self` for personal tokens. For other token types it falls back to probing.
 - **Pagination:** use keyset where supported (project issues ≥ 18.3), offset elsewhere, and never depend on `X-Total` (it can be omitted).
-- **Rate limits:** GitLab.com allows 2,000 req/min per user. On self-managed the limit is off by default. ADE honours `RateLimit-*` headers when present and `Retry-After` on 429, and runs at most 4 concurrent requests per host.
+- **Rate limits:** GitLab.com documents 2,000 req/min per user, but individual endpoints are limited much lower: re‑seeding the sandbox hit a `429` on `GET /groups/:id/labels` after a burst of about 150 requests, well under that figure. On self‑managed the limit is off by default. ADE honours `RateLimit-*` headers when present and `Retry-After` on 429 (the seed script does too), and runs at most 4 concurrent requests per host.
 - **Caching:** ETag is not documented for `/api/v4`. Incremental sync uses `updated_after` / `after` and local cache rows.
 - **GraphQL limits:** complexity 250, query size 10,000 chars, 30 s timeout, 100 per page. ADE keeps queries small and paginates connections.
 
