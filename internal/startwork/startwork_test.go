@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/coredev-uk/ade/internal/commitprefix"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/forge/gitlab/fake"
 	"github.com/coredev-uk/ade/internal/git"
@@ -107,6 +108,12 @@ func TestStartDraftCreatesLinkedChildMRAndWorktree(t *testing.T) {
 			}
 			if _, err := os.Stat(filepath.Join(api.Worktree, ".hook-ran")); err != nil {
 				t.Errorf("post_worktree hook did not run: %v", err)
+			}
+			if got := commitprefix.Read(ctx, api.Worktree); got != "GL-3" {
+				t.Errorf("worktree ade.commitPrefix = %q, want GL-3", got)
+			}
+			if out, err := (git.Client{}).Run(ctx, api.Worktree, "config", "--get", commitprefix.KeyParent); err != nil || strings.TrimSpace(out) != "3" {
+				t.Errorf("worktree ade.parent = %q, %v", out, err)
 			}
 
 			// Every forge write is audited.
@@ -601,6 +608,16 @@ func TestWorkspaceHookRunsAfterWorktree(t *testing.T) {
 	if len(got) != 1 || got[0].Repo != "api" || got[0].Project != "demo-gl" || got[0].Worktree != target(t, res, "api").Worktree ||
 		got[0].Title != "3-retry-failed-webhook-deliveries" || got[0].ItemTrees["api"] != got[0].Worktree {
 		t.Errorf("workspace requests = %+v", got)
+	}
+	// The cache has not seen the new child issue and MR yet: the request adds
+	// them, so the overview and the agent skill know the work they are about.
+	it := got[0].Item
+	api := target(t, res, "api")
+	if it.Ref.IID != 3 || got[0].Forge != "sandbox-gitlab" || got[0].Layout != "" {
+		t.Errorf("request item/forge/layout = %v %q %q", it.Ref, got[0].Forge, got[0].Layout)
+	}
+	if len(it.Children) != 1 || it.Children[0].Ref != *api.Child || len(it.MRs) != 1 || it.MRs[0].Ref != *api.MR || it.MRs[0].SourceBranch != "3-retry-failed-webhook-deliveries" {
+		t.Errorf("item after start: children %+v mrs %+v", it.Children, it.MRs)
 	}
 
 	// A host that cannot open the tab does not fail the start.

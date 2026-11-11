@@ -60,6 +60,7 @@ requires = ["api"]
 branch = "{child_iid}-{slug}"
 link   = ["relates_to", "description"]
 mr     = { draft = true, closes = "child", mention = "parent" }
+commit_prefix = "GL-{parent}"
 `
 
 const defaultTemplate = "## What\n\n## Testing\n\n/label ~\"type::story\"\n/assign_reviewer @reviewer-rae\n"

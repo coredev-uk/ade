@@ -368,7 +368,7 @@ func TestMerge(t *testing.T) {
 		if err := c.Approve(ctx, ref, mr.HeadSHA); err != nil {
 			t.Fatal(err)
 		}
-		opts := forge.MergeOpts{SHA: mr.HeadSHA, Squash: true, RemoveSourceBranch: true, Message: "Rate-limit exports"}
+		opts := forge.MergeOpts{SHA: mr.HeadSHA, Squash: true, RemoveSourceBranch: true, Message: "Merge branch x\n\nRate-limit exports", SquashMessage: "Rate-limit exports"}
 		if err := c.Merge(ctx, ref, opts); err != nil {
 			t.Fatal(err)
 		}
@@ -377,7 +377,7 @@ func TestMerge(t *testing.T) {
 			t.Fatalf("merged %v auto %v", merged, auto)
 		}
 		if params["sha"] != mr.HeadSHA || params["squash"] != true || params["should_remove_source_branch"] != true ||
-			params["merge_commit_message"] != "Rate-limit exports" || params["squash_commit_message"] != "Rate-limit exports" {
+			params["merge_commit_message"] != "Merge branch x\n\nRate-limit exports" || params["squash_commit_message"] != "Rate-limit exports" {
 			t.Errorf("merge parameters = %v", params)
 		}
 		if after, _ := c.MR(ctx, ref); after.State != "merged" || after.MergedAt == nil {

@@ -20,7 +20,13 @@ func WorkspaceOpener(a *app.App) func(context.Context, WorkspaceRequest) error {
 // (empty: the default). Only tests use it, with throwaway `ade-test-*` sessions.
 func WorkspaceOpenerIn(a *app.App, session string) func(context.Context, WorkspaceRequest) error {
 	return func(ctx context.Context, req WorkspaceRequest) error {
-		opts := []workspace.OpenOption{workspace.WithItemTrees(req.ItemTrees), workspace.WithTitle(req.Title)}
+		opts := []workspace.OpenOption{
+			workspace.WithItemTrees(req.ItemTrees), workspace.WithTitle(req.Title),
+			workspace.WithItem(workspace.ItemRef{Project: req.Project, Forge: req.Forge, Item: req.Item}),
+		}
+		if req.Layout != "" {
+			opts = append(opts, workspace.WithLayout(req.Layout))
+		}
 		if session != "" {
 			opts = append(opts, workspace.WithSession(session))
 		}

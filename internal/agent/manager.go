@@ -14,10 +14,13 @@ import (
 
 	"github.com/coredev-uk/ade/internal/ai"
 	"github.com/coredev-uk/ade/internal/audit"
+	"github.com/coredev-uk/ade/internal/commitmsg"
+	"github.com/coredev-uk/ade/internal/commitprefix"
 	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/events"
 	"github.com/coredev-uk/ade/internal/git"
 	"github.com/coredev-uk/ade/internal/ledger"
+	"github.com/coredev-uk/ade/internal/project"
 	"github.com/coredev-uk/ade/internal/review"
 )
 
@@ -489,6 +492,7 @@ func (m *Manager) Push(ctx context.Context, id string, o PushOpts) (Run, error) 
 	if msg == "" {
 		msg = m.commitMessage(r)
 	}
+	msg = commitmsg.Apply(m.commitPrefix(ctx, r), msg)
 	author := AuthorFromGit(ctx, r.Worktree)
 	sha, err := commitAll(ctx, r.Worktree, author, msg)
 	if err != nil {
@@ -524,6 +528,27 @@ func (m *Manager) Push(ctx context.Context, id string, o PushOpts) (Run, error) 
 		return r, err
 	}
 	return r, nil
+}
+
+// commitPrefix is the commit prefix of the run's item: the worktree's git
+// config first (written at start work and workspace open), else the project
+// manifest's template expanded for the run's tracker issue. "" when none.
+func (m *Manager) commitPrefix(ctx context.Context, r Run) string {
+	if p := commitprefix.Read(ctx, r.Worktree); p != "" {
+		return p
+	}
+	if m.Cfg == nil || r.Project == "" {
+		return ""
+	}
+	root, err := m.Cfg.RootDir()
+	if err != nil {
+		return ""
+	}
+	mf, err := project.LoadManifest(filepath.Join(root, r.Project))
+	if err != nil {
+		return ""
+	}
+	return commitprefix.ForIssues(mf, r.Tracker.IID, 0)
 }
 
 func (m *Manager) commitMessage(r Run) string {

@@ -102,6 +102,12 @@ func (a *AuditedWriter) Merge(ctx context.Context, mr forge.Ref, o forge.MergeOp
 	params := map[string]any{
 		"sha": o.SHA, "squash": o.Squash, "remove_source_branch": o.RemoveSourceBranch, "auto_merge": o.AutoMerge,
 	}
+	if o.Message != "" {
+		params["message"] = o.Message
+	}
+	if o.SquashMessage != "" {
+		params["squash_message"] = o.SquashMessage
+	}
 	return a.do("forge.mr.merge", mr.String(), "", params, func() error { return a.MRWriter.Merge(ctx, mr, o) })
 }
 

@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/coredev-uk/ade/internal/commitmsg"
 	"github.com/coredev-uk/ade/internal/forge"
 )
 
@@ -263,7 +264,7 @@ func (c *Client) CreateMR(ctx context.Context, d forge.MRDraft) (forge.MR, error
 	path := repoPath(d.Project) + "/pulls"
 	err := c.send(ctx, http.MethodPost, path, body, &w)
 	if isStatus(err, http.StatusUnprocessableEntity) && strings.Contains(err.Error(), "No commits between") {
-		if cerr := c.emptyCommit(ctx, d.Project, d.Source, "Start work: "+d.Title); cerr != nil {
+		if cerr := c.emptyCommit(ctx, d.Project, d.Source, commitmsg.Apply(d.CommitPrefix, "Start work: "+d.Title)); cerr != nil {
 			return forge.MR{}, fmt.Errorf("github: %s has no commits yet and an empty start commit failed: %w", d.Source, cerr)
 		}
 		err = c.send(ctx, http.MethodPost, path, body, &w)

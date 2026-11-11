@@ -97,6 +97,10 @@ type Choices struct {
 	// OnlyMR plans just the MR (`M` after Branch only): every earlier step
 	// must already be done.
 	OnlyMR bool `json:"only_mr,omitempty"`
+	// Layout is the workspace tab's layout (code, agent or manual: editor, omp
+	// with the ADE skill, or a shell as the main pane). Empty: the default of
+	// host.layout, the manifest's workspace, then code.
+	Layout string `json:"layout,omitempty"`
 }
 
 // DefaultChoices preselects what the manifest and the issue say: the repos the
@@ -579,9 +583,6 @@ func planSteps(p *Plan) []Step {
 		repo := t.Name
 		if ch.Mode == ModeBrowse {
 			add(worktreeStep(in, tp, f.Worktree != ""))
-			if i == 0 {
-				add(Step{Kind: StepWorkspace, Repo: repo, Text: "open workspace for " + repo})
-			}
 			continue
 		}
 		if tp.UseChild {
@@ -615,9 +616,12 @@ func planSteps(p *Plan) []Step {
 			add(mrStep(tp))
 		}
 		add(worktreeStep(in, tp, f.Worktree != ""))
-		if i == 0 {
-			add(Step{Kind: StepWorkspace, Repo: repo, Text: "open workspace for " + repo})
-		}
+	}
+	// The tab opens last, on the first repo's worktree, so it knows the item's
+	// worktrees in every repo (the services of one repo run from the item's tree of another).
+	if len(p.Targets) > 0 {
+		repo := p.Targets[0].Target.Name
+		add(Step{Kind: StepWorkspace, Repo: repo, Text: "open workspace for " + repo})
 	}
 	return steps
 }

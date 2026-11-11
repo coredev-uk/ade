@@ -17,6 +17,7 @@ import (
 	hostedit "github.com/coredev-uk/ade/internal/editor"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/startwork"
+	"github.com/coredev-uk/ade/internal/workspace"
 )
 
 // The Start work dialog (PLAN 6.3). `s` on a Home item opens it; `M` creates
@@ -89,6 +90,17 @@ var swChildren = []struct {
 	{startwork.ChildAuto, "a child when the repo is not the tracker's"},
 	{startwork.ChildAlways, "always a child issue"},
 	{startwork.ChildNever, "none: branch and MR reference the tracker issue"},
+}
+
+// swLayouts are the choices for the workspace tab's main pane.
+var swLayouts = []struct {
+	layout string
+	label  string
+	what   string
+}{
+	{workspace.LayoutCode, "editor", "your editor beside lazygit, the overview and the services"},
+	{workspace.LayoutAgent, "omp", "an agent briefed on the ticket (ADE implement skill); stops for review"},
+	{workspace.LayoutManual, "shell", "a plain shell"},
 }
 
 // --- messages ----------------------------------------------------------------
@@ -211,6 +223,7 @@ func (m model) swResolved(msg swResolvedMsg) (model, tea.Cmd, bool) {
 	d.res, d.env = msg.res, m.swEnv()
 	d.env.Forge = d.res.Forge
 	d.ch = startwork.DefaultChoices(d.res.Manifest, d.res.Item)
+	d.ch.Layout = swDefaultLayout(m.app.Config.Host.Layout, d.res.Manifest)
 	d.buildRepos()
 	if d.mrOnly {
 		d.ch.Mode, d.ch.OnlyMR = startwork.ModeDraft, true
@@ -224,6 +237,17 @@ func (m model) swResolved(msg swResolvedMsg) (model, tea.Cmd, bool) {
 	}
 	d.stage = swChoose
 	return m, nil, true
+}
+
+// swDefaultLayout is the main-pane choice the dialog starts on: host.layout,
+// else the manifest's workspace, else the editor. Layouts the dialog does not
+// offer (review) fall back to the editor.
+func swDefaultLayout(user string, m *config.Manifest) string {
+	l := workspace.DefaultLayout(user, m.Workspaces[workspace.DefaultWorkspace].Layout)
+	if slices.ContainsFunc(swLayouts, func(x struct{ layout, label, what string }) bool { return x.layout == l }) {
+		return l
+	}
+	return workspace.LayoutCode
 }
 
 // buildRepos lists the manifest repos plus the tracker project, preselecting
@@ -357,6 +381,8 @@ func (m model) swChooseKey(d *startDialog, ks string) (model, tea.Cmd) {
 		d.ch.Mode = swModes[(swModeIndex(d.ch.Mode)+1)%nm].mode
 	case "c":
 		d.ch.Child = swChildren[(swChildIndex(d.ch.Child)+1)%len(swChildren)].policy
+	case "a":
+		d.ch.Layout = swLayouts[(swLayoutIndex(d.ch.Layout)+1)%len(swLayouts)].layout
 	case "space", " ", "x":
 		switch {
 		case d.cur < nr:
@@ -391,6 +417,20 @@ func (d *startDialog) chosen() []string {
 func swModeIndex(m startwork.Mode) int {
 	for i, x := range swModes {
 		if x.mode == m {
+			return i
+		}
+	}
+	return 0
+}
+
+// swLayoutWhat says what the chosen main pane is.
+func swLayoutWhat(layout string) string {
+	return swLayouts[swLayoutIndex(layout)].what
+}
+
+func swLayoutIndex(l string) int {
+	for i, x := range swLayouts {
+		if x.layout == l {
 			return i
 		}
 	}
@@ -574,7 +614,7 @@ func (m model) startOverlay(w, h int) string {
 		hint = keys("esc", "cancel")
 	case swChoose:
 		l = append(l, m.swChooseView(d, inner)...)
-		hint = keys("space", "select", "m", "mode", "c", "child", "enter", "continue", "esc", "cancel")
+		hint = keys("space", "select", "m", "mode", "c", "child", "a", "main pane", "enter", "continue", "esc", "cancel")
 	case swPlanning:
 		l = append(l, m.swBusy("looking for an existing child, branch, MR and template"))
 		hint = keys("esc", "cancel")
@@ -681,6 +721,16 @@ func (m model) swChooseView(d *startDialog, inner int) []string {
 		}
 		l = append(l, ansi.Truncate(cur+" "+dot+" "+pad(label, 7)+" "+stFaint.Render(c.what), inner, "…"))
 	}
+	// The main pane is one row, toggled with a: its three choices fit the line.
+	main := stFaint.Render("Main pane  ")
+	for _, x := range swLayouts {
+		dot, label := g.Ahead, x.label
+		if d.ch.Layout == x.layout {
+			dot, label = g.Done, stBold.Render(x.label)
+		}
+		main += dot + " " + label + "  "
+	}
+	l = append(l, "", ansi.Truncate(" "+main+stFaint.Render("a toggles · "+swLayoutWhat(d.ch.Layout)), inner, "…"))
 	return l
 }
 

@@ -533,7 +533,8 @@ func helpGroups(full bool) []helpGroup {
 				{"s M", "start work; create the MR for started work"},
 				{"c", "classify: suggest missing type/app labels"},
 				{"a A", "agent runs for the item; all runs"},
-				{"w y o", "open workspace (zellij); copy link or path; browser"},
+				{"w v", "open workspace (zellij); VS Code workspace of all repos"},
+				{"y o", "copy link or path; browser"},
 				{"n = r", "notes; set weight; restart blocked services"},
 			}},
 			{"Pages", [][2]string{
@@ -566,6 +567,8 @@ func helpGroups(full bool) []helpGroup {
 			{"a", "agents: plan or address review for this item"},
 			{"A", "agents: every run"},
 			{"w", "open the workspace (needs the ade zellij session)"},
+			{"v", "VS Code workspace: every repo of the project in one window, the item's worktrees first; written to the item's records dir, opened when code is on PATH"},
+			{"W", "open it with the other main pane: omp (ADE implement skill) or the editor"},
 			{"y", "copy the item's link (Home) or the tree's path (Worktrees)"},
 			{"o", "open the item in the browser (plain host: shows the URL)"},
 			{"n", "notes (yours; fed to agents and AI)"},

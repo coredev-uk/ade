@@ -13,9 +13,11 @@ import (
 
 	"github.com/coredev-uk/ade/internal/app"
 	"github.com/coredev-uk/ade/internal/audit"
+	"github.com/coredev-uk/ade/internal/commitprefix"
 	"github.com/coredev-uk/ade/internal/editor"
 	"github.com/coredev-uk/ade/internal/host"
 	"github.com/coredev-uk/ade/internal/host/zellij"
+	"github.com/coredev-uk/ade/internal/records"
 )
 
 // Host names for OpenResult.Host.
@@ -31,13 +33,16 @@ var ErrNoSession = errors.New("zellij session is not running")
 type openConfig struct {
 	layout, workspace, title, session, baseRef string
 	trees                                      TreeOptions
+	item                                       *ItemRef
+	items                                      []ItemRef
 }
 
 // OpenOption tunes Open.
 type OpenOption func(*openConfig)
 
 // WithLayout picks the layout (code, agent, review, manual); the default is
-// the workspace's `layout` in the manifest, else code.
+// host.layout of the user config, else the workspace's `layout` in the
+// manifest, else code.
 func WithLayout(name string) OpenOption { return func(c *openConfig) { c.layout = name } }
 
 // WithWorkspace picks the manifest [workspaces] entry; default "default".
@@ -63,6 +68,15 @@ func WithSession(name string) OpenOption { return func(c *openConfig) { c.sessio
 // WithBaseRef sets what the review layout diffs against; default origin/<default branch>.
 func WithBaseRef(ref string) OpenOption { return func(c *openConfig) { c.baseRef = ref } }
 
+// WithItem names the work item the worktree belongs to: its tab then shows the
+// item's overview, the agent layout briefs omp on it, and the item's worktrees in
+// the other repos feed the run graph.
+func WithItem(it ItemRef) OpenOption { return func(c *openConfig) { c.item = &it } }
+
+// WithItems offers the cached work items; Open finds the one that owns the
+// worktree's branch (WithItem wins when both are given).
+func WithItems(items []ItemRef) OpenOption { return func(c *openConfig) { c.items = items } }
+
 // OpenResult says what Open did.
 type OpenResult struct {
 	Host       string `json:"host"`
@@ -74,6 +88,9 @@ type OpenResult struct {
 	TasksFile  string `json:"tasks_file,omitempty"`
 	// Hint is what to do by hand when the host cannot open it (plain, or code missing).
 	Hint string `json:"hint,omitempty"`
+	// Warnings are problems that did not stop the workspace opening (e.g. the
+	// worktree's git config could not be written).
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // Open opens the workspace of a worktree in the user's host: a tab in the
@@ -92,6 +109,13 @@ func Open(ctx context.Context, a *app.App, project, repo, worktree string, opts 
 		return OpenResult{}, err
 	}
 	res.Host = hostKind
+	if p.item != nil {
+		// The worktree tells commit-msg hooks and the user's own git what the ticket is.
+		cfgErr := commitprefix.WriteWorktreeConfig(ctx, loc.Tree, p.item.Item.Ref.IID, commitprefix.ExpandPrefix(loc.Manifest, p.item.Item, loc.Repo))
+		if cfgErr != nil {
+			res.Warnings = append(res.Warnings, "worktree git config: "+cfgErr.Error())
+		}
+	}
 	switch hostKind {
 	case HostZellij:
 		err = openZellij(ctx, a, p, &res)
@@ -132,7 +156,17 @@ type prepared struct {
 	ade     string
 	editor  editor.Editor // host.editor resolved against the environment
 	runArgs []string      // extra arguments of every generated `ade task run`
+	item    *ItemRef      // the work item owning the worktree's branch, when there is one
+	agent   *agentFiles   // the omp skill; set only for the agent layout of an item
 }
+
+// agentFiles is the skill and overlay the agent layout's omp loads.
+type agentFiles struct {
+	dir   string // where WriteAgentFiles puts them
+	input SkillInput
+}
+
+func (f agentFiles) overlay() string { return filepath.Join(f.dir, "omp.yml") }
 
 func prepare(ctx context.Context, a *app.App, project, repo, worktree string, opts []OpenOption) (*prepared, error) {
 	var cfg openConfig
@@ -153,15 +187,22 @@ func prepare(ctx context.Context, a *app.App, project, repo, worktree string, op
 	wsDef, hasWorkspace := loc.Manifest.Workspaces[ws]
 	layout := cfg.layout
 	if layout == "" {
-		layout = wsDef.Layout
-	}
-	if layout == "" {
-		layout = LayoutCode
+		layout = DefaultLayout(a.Config.Host.Layout, wsDef.Layout)
 	}
 	if !ValidLayout(layout) {
 		return nil, fmt.Errorf("unknown layout %q (want code, agent, review or manual)", layout)
 	}
-	p := &prepared{loc: loc, cfg: cfg, editor: editor.Resolve(a.Config.Host.Editor, editor.FromOS())}
+	p := &prepared{loc: loc, editor: editor.Resolve(a.Config.Host.Editor, editor.FromOS())}
+	if cfg.item != nil {
+		p.item = cfg.item
+	} else if it, ok := ItemFor(ctx, cfg.items, loc); ok {
+		p.item = &it
+	}
+	if p.item != nil && len(cfg.trees.ItemTrees) == 0 {
+		// The item's own worktrees feed the run graph (web calls the item's api, not the baseline's).
+		cfg.trees.ItemTrees, _ = ItemTrees(ctx, a.Root, loc.Manifest, p.item.Item)
+	}
+	p.cfg = cfg
 	// A review tab shows a diff: it must not bring up the run graph (services,
 	// ports, required repos) for code that is only being read.
 	if hasWorkspace && layout != LayoutReview {
@@ -182,7 +223,42 @@ func prepare(ctx context.Context, a *app.App, project, repo, worktree string, op
 		return nil, fmt.Errorf("locate ade executable: %w", err)
 	}
 	p.runArgs = appendTreeArgs(nil, cfg.trees)
+	if p.item != nil && layout == LayoutAgent {
+		p.agent = agentFor(ctx, a, p)
+	}
 	return p, nil
+}
+
+// agentFor gathers what the implement skill says about the item.
+func agentFor(ctx context.Context, a *app.App, p *prepared) *agentFiles {
+	loc, it := p.loc, *p.item
+	in := SkillInput{
+		Item: it, Manifest: loc.Manifest, Repo: loc.Repo, Branch: BranchOf(ctx, loc), Worktree: loc.Tree,
+		OtherTrees:   map[string]string{},
+		CommitPrefix: commitprefix.ExpandPrefix(loc.Manifest, it.Item, loc.Repo),
+	}
+	for repo, tree := range p.cfg.trees.ItemTrees {
+		if repo != loc.Repo {
+			in.OtherTrees[repo] = tree
+		}
+	}
+	in.AgentsMD, in.AgentsPath = agentsDoc(loc.Tree)
+	if rec, err := records.New(a.RecordsDir).Read(it.Forge, it.Item.Ref); err == nil {
+		in.Notes = rec.Notes
+	}
+	return &agentFiles{dir: filepath.Join(a.Paths.CacheDir, "ws", "agent", slugOf(loc.Tree)), input: in}
+}
+
+// DefaultLayout is the layout a tab gets when nothing asks for one: your own
+// host.layout beats the manifest workspace's layout, and code is the fallback.
+func DefaultLayout(userLayout, manifestLayout string) string {
+	switch {
+	case userLayout != "":
+		return userLayout
+	case manifestLayout != "":
+		return manifestLayout
+	}
+	return LayoutCode
 }
 
 // chooseHost maps config [host].mode and the environment to a host.
@@ -250,6 +326,12 @@ func openZellij(ctx context.Context, a *app.App, p *prepared, res *OpenResult) e
 		session = currentSession(os.Getenv)
 	}
 	res.Session = session
+	if p.agent != nil {
+		// Regenerated on every open, also when the tab exists: the skill stays current.
+		if _, err := WriteAgentFiles(p.agent.dir, p.agent.input); err != nil {
+			return fmt.Errorf("write the omp skill: %w", err)
+		}
+	}
 	kdl, err := BuildLayout(layoutSpec(ctx, p))
 	if err != nil {
 		return err
@@ -304,6 +386,12 @@ func openTab(ctx context.Context, run zellijRunner, session, tab, layoutFile str
 // run-graph node.
 func layoutSpec(ctx context.Context, p *prepared) LayoutSpec {
 	spec := LayoutSpec{Layout: p.res.Layout, Tab: p.res.Tab, Dir: p.loc.Tree, Tools: DetectTools(p.ade, p.editor, p.loc.Tree), BaseRef: p.cfg.baseRef}
+	if p.item != nil {
+		spec.Overview = []string{"item", p.item.Item.Ref.String(), "--watch"}
+	}
+	if p.agent != nil {
+		spec.Agent = AgentArgs(p.agent.overlay(), *p.item)
+	}
 	if spec.BaseRef == "" && spec.Layout == LayoutReview {
 		tr := newTreeResolver(p.loc, TreeOptions{})
 		if base, err := tr.git.DefaultBranch(ctx, filepath.Join(p.loc.RepoDir, ".bare")); err == nil {

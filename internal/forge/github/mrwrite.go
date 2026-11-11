@@ -353,8 +353,12 @@ func (c *Client) Merge(ctx context.Context, mr forge.Ref, o forge.MergeOpts) err
 	if o.Squash {
 		in["merge_method"] = "squash"
 	}
-	if o.Message != "" {
-		title, rest, _ := strings.Cut(o.Message, "\n")
+	msg := o.Message
+	if o.Squash && o.SquashMessage != "" {
+		msg = o.SquashMessage
+	}
+	if msg != "" {
+		title, rest, _ := strings.Cut(msg, "\n")
 		in["commit_title"] = title
 		if rest = strings.TrimSpace(rest); rest != "" {
 			in["commit_message"] = rest

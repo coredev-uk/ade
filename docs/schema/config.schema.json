@@ -214,6 +214,15 @@
           ],
           "type": "string"
         },
+        "layout": {
+          "description": "Default tab layout: code (editor main pane), agent (omp with the ADE implement skill) or manual (shell). Overrides the manifest workspace's layout; empty keeps it.",
+          "enum": [
+            "code",
+            "agent",
+            "manual"
+          ],
+          "type": "string"
+        },
         "mode": {
           "description": "Where workspaces open: zellij tabs, VS Code, or plain terminal supervision (auto detects).",
           "enum": [

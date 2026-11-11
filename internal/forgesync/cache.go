@@ -8,6 +8,7 @@ import (
 
 	"github.com/coredev-uk/ade/internal/domain"
 	"github.com/coredev-uk/ade/internal/store"
+	"github.com/coredev-uk/ade/internal/workspace"
 )
 
 func init() {
@@ -168,4 +169,20 @@ func loadItems(st *store.Store, project string) ([]domain.WorkItem, error) {
 		items = append(items, wi)
 	}
 	return items, rows.Err()
+}
+
+// ItemRefs flattens the cached results into the work items workspaces look up
+// worktrees against.
+func ItemRefs(st *store.Store) ([]workspace.ItemRef, error) {
+	results, err := Load(st)
+	if err != nil {
+		return nil, err
+	}
+	var refs []workspace.ItemRef
+	for _, r := range results {
+		for _, it := range r.Items {
+			refs = append(refs, workspace.ItemRef{Project: r.Project, Forge: r.Forge, Item: it})
+		}
+	}
+	return refs, nil
 }

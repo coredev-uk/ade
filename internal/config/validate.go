@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/coredev-uk/ade/internal/commitmsg"
 )
 
 // Severity ranks an Issue. Errors make a config unusable; warnings are advice.
@@ -535,6 +537,9 @@ func (v *manifestValidator) checkConventions() {
 	if s := m.Conventions.ChildIssue; !oneOf(s, "", "auto", "always", "never") {
 		v.errorf("conventions.child_issue", "unknown value %q: want auto, always or never", s)
 	}
+	if err := commitmsg.Validate(m.Conventions.CommitPrefix); err != nil {
+		v.errorf("conventions.commit_prefix", "%v", err)
+	}
 	if s := m.Conventions.MR.Create; !oneOf(s, "", "ask", "always", "never") {
 		v.errorf("conventions.mr.create", "unknown value %q: want ask, always or never", s)
 	}
@@ -629,6 +634,9 @@ func (c *Config) Validate() []Issue {
 	}
 	if !oneOf(c.Host.Glyphs, "unicode", "nerd", "ascii") {
 		s.errorf("host.glyphs", "unknown value %q: want unicode, nerd or ascii", c.Host.Glyphs)
+	}
+	if !oneOf(c.Host.Layout, "", "code", "agent", "manual") {
+		s.errorf("host.layout", "unknown value %q: want code, agent or manual", c.Host.Layout)
 	}
 	validateAI(&s, c)
 	for _, k := range c.Undecoded {

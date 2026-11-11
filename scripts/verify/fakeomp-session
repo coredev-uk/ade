@@ -1,0 +1,55 @@
+#!/bin/sh
+# A stand-in for omp in the dev-environment proof (scripts/verify/devenv.sh); costs nothing.
+#
+# Interactive (what the tab's main pane runs): records how it was started
+# ($FAKEOMP_RECORD/{args,env,cwd}), keeps a copy of the skill the --config overlay
+# points at ($FAKEOMP_RECORD/SKILL.md), shows the top of it, and stays alive like a
+# session would.
+#
+# `omp -p --mode json ...` (what `ade agent plan|run` starts): reads the prompt on
+# stdin and answers with the events omp prints. A run with --auto-approve edits the
+# worktree (--cwd), so there is something to commit.
+d=${FAKEOMP_RECORD:-/tmp/fakeomp-session}
+mkdir -p "$d"
+mode=interactive
+cwd=$(pwd)
+auto=
+prev=
+cfg=
+for a in "$@"; do
+  case "$a" in
+  -p | --print) mode=print ;;
+  --auto-approve) auto=1 ;;
+  esac
+  [ "$prev" = --cwd ] && cwd=$a
+  [ "$prev" = --config ] && cfg=$a
+  prev=$a
+done
+
+if [ "$mode" = print ]; then
+  prompt=$(cat)
+  printf '%s\n' "$prompt" >"$d/print-prompt"
+  if [ -n "$auto" ]; then
+    printf 'Retry failed deliveries with exponential backoff.\n' >"$cwd/AGENT_CHANGE.md"
+    text='Implemented the retry loop in AGENT_CHANGE.md.'
+  else
+    text='1. Add a retry loop with exponential backoff.
+2. Cover it with a test.'
+  fi
+  jq -nc --arg t "$text" '{type:"turn_end",message:{role:"assistant",model:"claude-haiku-4-5",provider:"anthropic",stopReason:"stop",content:[{type:"text",text:$t}],usage:{input:900,output:80,cost:{total:0.0012}}}}'
+  jq -nc '{type:"agent_end"}'
+  exit 0
+fi
+
+printf '%s\n' "$@" >"$d/args"
+env | sort >"$d/env"
+printf '%s\n' "$cwd" >"$d/cwd"
+echo "fakeomp: interactive session in $cwd"
+echo "fakeomp: overlay: $cfg"
+if [ -n "$cfg" ]; then
+  dir=$(sed -n 's/^ *- "\(.*\)"$/\1/p' "$cfg")
+  cp "$dir/ade-implement/SKILL.md" "$d/SKILL.md"
+  echo "fakeomp: skill ade-implement:"
+  sed -n '1,14p' "$d/SKILL.md"
+fi
+exec sleep 3600

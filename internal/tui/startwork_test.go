@@ -28,6 +28,7 @@ import (
 	"github.com/coredev-uk/ade/internal/paths"
 	"github.com/coredev-uk/ade/internal/startwork"
 	"github.com/coredev-uk/ade/internal/startwork/swtest"
+	"github.com/coredev-uk/ade/internal/workspace"
 )
 
 // The Start work dialog is driven the way the user drives it: key presses into
@@ -715,7 +716,7 @@ func TestConfirmGuideCountsEveryLocalRow(t *testing.T) {
 // section rules apart.
 func TestNarrowChooseKeepsGapsAboveRules(t *testing.T) {
 	e := newSWEnv(t)
-	e.m.w, e.m.h = 84, 24
+	e.m.w, e.m.h = 84, 26 // the Main pane row made the dialog two rows taller
 	e.selectRow(trk(3).String())
 	e.press("s", " ", "enter") // deselect api, continue: the warning appears
 	e.want("choose at least one repo")
@@ -735,5 +736,47 @@ func TestNarrowChooseKeepsGapsAboveRules(t *testing.T) {
 	}
 	if rules != 3 {
 		t.Errorf("found %d section rules, want 3:\n%s", rules, strings.Join(lines, "\n"))
+	}
+}
+
+// The main pane starts on the configured default, `a` cycles editor → omp →
+// shell, and the choice reaches the workspace request.
+func TestStartDialogMainPaneToggleReachesTheWorkspace(t *testing.T) {
+	e := newSWEnv(t)
+	e.m.app.Config.Host.Layout = workspace.LayoutAgent // the user's default: omp
+	var got []startwork.WorkspaceRequest
+	swWorkspace = func(*app.App) func(context.Context, startwork.WorkspaceRequest) error {
+		return func(_ context.Context, r startwork.WorkspaceRequest) error {
+			got = append(got, r)
+			return nil
+		}
+	}
+	e.m.w, e.m.h = 140, 60
+	e.selectRow(trk(3).String())
+	e.press("s")
+	e.want("Main pane")
+	if e.m.sw.ch.Layout != workspace.LayoutAgent {
+		t.Fatalf("host.layout is the default, got %q", e.m.sw.ch.Layout)
+	}
+	e.press("a") // omp → shell
+	if e.m.sw.ch.Layout != workspace.LayoutManual {
+		t.Fatalf("a cycles to the shell, got %q", e.m.sw.ch.Layout)
+	}
+	e.press("a", "a") // shell → editor → omp
+	e.press("a")      // omp → shell
+	e.press("a")      // shell → editor
+	if e.m.sw.ch.Layout != workspace.LayoutCode {
+		t.Fatalf("got %q", e.m.sw.ch.Layout)
+	}
+	out := e.screen()
+	if !strings.Contains(out, "● editor") || !strings.Contains(out, "○ omp") {
+		t.Errorf("the chosen pane is marked:\n%s", out)
+	}
+	e.press("enter", "enter") // plan, then create
+	if len(got) != 1 || got[0].Layout != workspace.LayoutCode {
+		t.Fatalf("workspace request = %+v", got)
+	}
+	if got[0].Item.Ref.IID != 3 || got[0].Forge == "" {
+		t.Errorf("the request carries the item for the overview and skill: %+v", got[0])
 	}
 }

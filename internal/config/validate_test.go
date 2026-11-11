@@ -59,6 +59,9 @@ func TestManifestValidate(t *testing.T) {
 		want []string
 	}{
 		{"minimal clean", header + "[repos.a]\npath = \"g/a\"\n", nil},
+		{"commit prefix", header + "[conventions]\ncommit_prefix = \"GL-{parent}\"\n", nil},
+		{"commit prefix unknown placeholder", header + "[conventions]\ncommit_prefix = \"GL-{parnt}\"\n", []string{"error: conventions.commit_prefix: unknown placeholder {parnt}"}},
+		{"commit prefix with whitespace", header + "[conventions]\ncommit_prefix = \"GL-{parent} \"\n", []string{"error: conventions.commit_prefix:", "whitespace"}},
 		{"missing name", "forge = \"work\"\n", []string{"error: name: required"}},
 		{"unsafe name", "name = \"../x\"\nforge = \"work\"\n", []string{"error: name:", "not path-safe"}},
 		{"missing forge with forge-path repo", "name = \"p\"\n[repos.a]\npath = \"g/a\"\n", []string{"error: forge: required"}},

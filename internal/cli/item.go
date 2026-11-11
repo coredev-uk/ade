@@ -10,7 +10,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/coredev-uk/ade/internal/editor"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/project"
 	"github.com/coredev-uk/ade/internal/records"
@@ -22,6 +21,7 @@ func init() { register(newItemCmd) }
 func newItemCmd() *cobra.Command {
 	var edit bool
 	var forgeFlag string
+	var watch bool
 	cmd := &cobra.Command{
 		Use:   "item <ref>",
 		Short: "Show an item's record: the synced snapshot and your notes (--edit opens the notes)",
@@ -31,14 +31,23 @@ func newItemCmd() *cobra.Command {
 			"prints the notes again afterwards. Your notes are added to agent plan/run/address prompts and to\n" +
 			"AI summaries, draft replies and reviews (`--no-notes` leaves them out). No network is used.\n" +
 			"<ref> is group/project#N (issue) or group/project!N (merge request), or N when one project is\n" +
-			"registered.",
-		Example: "  ade item acme/tracker#15\n  ade item 15 --edit\n  ade item acme/api!3 --json",
+			"registered. --watch shows the whole work item instead (stage, child issues and their MRs,\n" +
+			"description, acceptance, your notes) as a live read-only pane that follows the cache; <ref> may\n" +
+			"be the tracker issue, a child issue or an MR. `q` quits, `r` reloads, `e` edits the notes, `j/k`\n" +
+			"scroll. Off a terminal it prints the view once, in plain text.",
+		Example: "  ade item acme/tracker#15\n  ade item 15 --edit\n  ade item acme/api!3 --json\n  ade item acme/tracker#15 --watch",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a := appFrom(cmd)
 			ref, err := itemRef(cmd, args[0])
 			if err != nil {
 				return err
+			}
+			if watch {
+				if edit || jsonOut {
+					return errors.New("--watch cannot be combined with --edit or --json")
+				}
+				return watchItem(cmd, a, ref)
 			}
 			name, err := review.ForgeFor(cmd.Context(), a, ref, forgeFlag)
 			if err != nil {
@@ -50,17 +59,10 @@ func newItemCmd() *cobra.Command {
 				return fmt.Errorf("%s: %w", ref, err)
 			}
 			if edit {
-				if rec.NotesLine == 0 {
-					// Give a record without the heading one, so the editor lands there.
-					if err := st.WriteNotes(name, ref, rec.Notes); err != nil {
-						return err
-					}
-					if rec, err = st.Read(name, ref); err != nil {
-						return err
-					}
+				ed, c, err := notesEditorCmd(a, st, name, ref, rec)
+				if err != nil {
+					return err
 				}
-				ed := editor.Resolve(a.Config.Host.Editor, editor.FromOS())
-				c := ed.Command(rec.Path, rec.NotesLine, true)
 				c.Stdin, c.Stdout, c.Stderr = os.Stdin, cmd.OutOrStdout(), os.Stderr
 				if jsonOut {
 					c.Stdout = os.Stderr
@@ -76,6 +78,7 @@ func newItemCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&edit, "edit", false, "open the record in your editor at the notes")
+	cmd.Flags().BoolVar(&watch, "watch", false, "live read-only overview of the item's work item from the cache (a zellij pane); off a terminal, print it once")
 	cmd.Flags().StringVar(&forgeFlag, "forge", "", "forge (from the user config) serving the ref; default: found from registered projects")
 	return cmd
 }

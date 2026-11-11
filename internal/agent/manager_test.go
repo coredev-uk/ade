@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/coredev-uk/ade/internal/ai"
 	"github.com/coredev-uk/ade/internal/audit"
+	"github.com/coredev-uk/ade/internal/commitmsg"
+	"github.com/coredev-uk/ade/internal/commitprefix"
 	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/events"
 	"github.com/coredev-uk/ade/internal/forge"
@@ -610,5 +613,37 @@ func TestStoreRebuildsFromRunDirs(t *testing.T) {
 	}
 	if got, err := e.st.Get(r.ID[len(r.ID)-3:]); err != nil || got.ID != r.ID {
 		t.Errorf("get by suffix: %v %v", got.ID, err)
+	}
+}
+
+func TestCommitPrefixFromWorktreeConfig(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	r := e.newRun(KindPlan, e.ctx())
+	r.Worktree = e.wt
+	if got := e.m.commitPrefix(ctx, r); got != "" {
+		t.Fatalf("no prefix configured, got %q", got)
+	}
+	if err := commitprefix.WriteWorktreeConfig(ctx, e.wt, 42, "GL-42"); err != nil {
+		t.Fatal(err)
+	}
+	prefix := e.m.commitPrefix(ctx, r)
+	if prefix != "GL-42" {
+		t.Fatalf("prefix = %q", prefix)
+	}
+	author := Author{Name: "Test User (ade agent)", Email: "test@example.com"}
+	for i, tc := range []struct{ in, want string }{
+		{"Add endpoint", "GL-42 Add endpoint"},
+		{"GL-42 Add endpoint", "GL-42 Add endpoint"}, // never doubled
+	} {
+		if err := os.WriteFile(filepath.Join(e.wt, fmt.Sprintf("f%d.txt", i)), []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := commitAll(ctx, e.wt, author, commitmsg.Apply(prefix, tc.in)); err != nil {
+			t.Fatal(err)
+		}
+		if got := sh(t, e.wt, "log", "-1", "--format=%s"); got != tc.want {
+			t.Errorf("commit subject = %q, want %q", got, tc.want)
+		}
 	}
 }

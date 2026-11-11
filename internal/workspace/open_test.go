@@ -100,16 +100,16 @@ func TestOpenWithoutWorkspaceStillLayoutsTheTab(t *testing.T) {
 	}
 }
 
-func TestRenderLayoutPutsRequirementsInTheServicesStack(t *testing.T) {
+func TestRenderLayoutGivesEveryServiceItsOwnPane(t *testing.T) {
 	f := newFixture(t, appManifest, "api/main", "web/main")
 	a := newApp(t, f, "plain")
 	kdl, err := RenderLayout(context.Background(), a, "demo", "web", filepath.Join(f.root, "demo", "web", "main"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, services, ok := strings.Cut(kdl, `name="services"`)
-	if !ok || !strings.Contains(services, `"task" "run" "api.dev"`) {
-		t.Fatalf("api.dev belongs in the services stack:\n%s", kdl)
+	_, strip, ok := strings.Cut(kdl, `size="30%" split_direction="vertical"`)
+	if !ok || !strings.Contains(strip, `name="api.dev"`) || !strings.Contains(strip, `"task" "run" "api.dev"`) {
+		t.Fatalf("api.dev belongs in the services strip:\n%s", kdl)
 	}
 	if strings.Index(kdl, `"task" "run" "web.dev"`) < strings.Index(kdl, `"task" "run" "api.dev"`) {
 		t.Fatalf("web.dev is the workspace's own task, listed after the services:\n%s", kdl)
@@ -129,7 +129,7 @@ func TestRenderLayoutOfAReviewTabRunsNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(kdl, `"task"`) || strings.Contains(kdl, "services") || !strings.Contains(kdl, `name="diff"`) || !strings.Contains(kdl, `tab name="web/review-7"`) {
+	if strings.Contains(kdl, `"task"`) || strings.Contains(kdl, "overview") || !strings.Contains(kdl, `name="diff"`) || !strings.Contains(kdl, `tab name="web/review-7"`) {
 		t.Fatalf("a review tab shows the diff and starts nothing:\n%s", kdl)
 	}
 }

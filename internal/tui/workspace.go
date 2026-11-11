@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/coredev-uk/ade/internal/app"
 	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/events"
 	"github.com/coredev-uk/ade/internal/host"
@@ -47,12 +48,20 @@ type (
 	wsChipsMsg struct{ chips map[string][]svcChip }
 )
 
-// openWorkspace handles `w`.
-func (m model) openWorkspace() (model, tea.Cmd) {
+// openWorkspace handles `w`; other is `W`, which opens the tab with the other
+// main pane: omp with the ADE implement skill when the default is not omp, the
+// editor when it is.
+func (m model) openWorkspace(other bool) (model, tea.Cmd) {
 	if m.mr != nil || m.isAgilePage() || m.isToolPage() {
 		return m, nil
 	}
 	ctx, a := m.ctx, m.app
+	var items []workspace.ItemRef
+	for _, res := range m.results {
+		for _, it := range res.Items {
+			items = append(items, workspace.ItemRef{Project: res.Project, Forge: res.Forge, Item: it})
+		}
+	}
 	var target func() (workspace.Target, error)
 	switch {
 	case m.page == pageHome && m.homeSel < len(m.homeRows):
@@ -84,10 +93,25 @@ func (m model) openWorkspace() (model, tea.Cmd) {
 			return wsOpenedMsg{err: err}
 		}
 		label := t.Repo + "/" + t.Title
-		res, err := wsOpen(ctx, a, t.Project, t.Repo, t.Worktree,
-			workspace.WithItemTrees(t.ItemTrees), workspace.WithTitle(t.Title))
+		opts := []workspace.OpenOption{workspace.WithItemTrees(t.ItemTrees), workspace.WithTitle(t.Title), workspace.WithItems(items)}
+		if other {
+			opts = append(opts, workspace.WithLayout(otherMainPane(a, t.Project)))
+		}
+		res, err := wsOpen(ctx, a, t.Project, t.Repo, t.Worktree, opts...)
 		return wsOpenedMsg{label: label, res: res, err: err}
 	}
+}
+
+// otherMainPane is the layout `W` asks for: omp unless that is the default, then the editor.
+func otherMainPane(a *app.App, proj string) string {
+	manifestLayout := ""
+	if mf, err := project.LoadManifest(filepath.Join(a.Root, proj)); err == nil {
+		manifestLayout = mf.Workspaces[workspace.DefaultWorkspace].Layout
+	}
+	if workspace.DefaultLayout(a.Config.Host.Layout, manifestLayout) == workspace.LayoutAgent {
+		return workspace.LayoutCode
+	}
+	return workspace.LayoutAgent
 }
 
 // onWsOpened turns the outcome into a pop-up. A session that is not running

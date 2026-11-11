@@ -293,6 +293,7 @@ func (d *Draft) renderConventions(w *writer) {
 		"Start-work conventions you may set (docs/manifest.md): branch, child_title, child_body, link and mr, e.g.",
 		`branch = "{child_iid}-{slug}"`,
 		`mr     = { create = "ask", draft = true, closes = "child", mention = "parent" }`,
+		`commit_prefix = "GL-{parent}"   # prefix commit and merge messages with the tracker issue`,
 	)
 	for _, n := range d.templateNotes() {
 		w.comment(n)

@@ -24,6 +24,10 @@
         "child_title": {
           "type": "string"
         },
+        "commit_prefix": {
+          "description": "Prefix for commit messages ADE makes and for the merge commit, e.g. \"GL-{parent}\". Placeholders: {parent} (tracker issue iid), {child} (child issue iid, the parent's if none), {project}.",
+          "type": "string"
+        },
         "link": {
           "items": {
             "type": "string"

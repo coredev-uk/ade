@@ -152,6 +152,10 @@ type Host struct {
 	Mode   string `toml:"mode"`   // auto | zellij | vscode | plain
 	Editor string `toml:"editor"` // auto | nvim | ade-nvim | code | $EDITOR
 	Glyphs string `toml:"glyphs"` // unicode | nerd | ascii
+	// Layout is your default workspace tab layout: code (editor main pane) or agent
+	// (omp with the ADE implement skill) or manual (a shell). Empty: the manifest's
+	// workspace layout, else code.
+	Layout string `toml:"layout"`
 }
 
 // Duration decodes TOML strings like "10m".

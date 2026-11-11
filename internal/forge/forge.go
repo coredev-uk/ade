@@ -385,13 +385,16 @@ type DraftNote struct {
 }
 
 // MergeOpts controls a merge. SHA is the head the caller reviewed: the forge
-// refuses the merge when the branch has moved.
+// refuses the merge when the branch has moved. Message is the merge commit's
+// message and SquashMessage the squash commit's (used with Squash); each is
+// empty for the forge's own default.
 type MergeOpts struct {
 	SHA                string `json:"sha"`
 	Squash             bool   `json:"squash,omitempty"`
 	RemoveSourceBranch bool   `json:"remove_source_branch,omitempty"`
 	AutoMerge          bool   `json:"auto_merge,omitempty"`
 	Message            string `json:"message,omitempty"`
+	SquashMessage      string `json:"squash_message,omitempty"`
 }
 
 // MRWriter is the Phase 2 write side of a forge: the diff and CI reads the MR

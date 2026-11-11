@@ -2,6 +2,7 @@ package github_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"slices"
@@ -256,7 +257,7 @@ func TestCreateMR(t *testing.T) {
 		}
 		mr, err := c.CreateMR(ctx, forge.MRDraft{
 			Project: apiProj, Source: b.Name, Target: "main", Title: "Retry failed webhook deliveries",
-			Description: "Closes #3", Draft: true, Labels: []string{"type:story"},
+			Description: "Closes #3", Draft: true, Labels: []string{"type:story"}, CommitPrefix: "GL-3",
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -266,6 +267,9 @@ func TestCreateMR(t *testing.T) {
 		}
 		if mr.HeadSHA == b.SHA {
 			t.Errorf("head %s is still the branch's start: no empty commit was made", mr.HeadSHA)
+		}
+		if got := headCommitMessage(t, srv, apiProj, mr.HeadSHA); got != "GL-3 Start work: Retry failed webhook deliveries" {
+			t.Errorf("start commit message = %q, want the prefix applied", got)
 		}
 		if got, _ := srv.Labels(mr.Ref); !slices.Equal(got, []string{"type:story"}) {
 			t.Errorf("labels = %v", got)
@@ -301,4 +305,24 @@ func TestCreateMR(t *testing.T) {
 			t.Error("an incomplete draft was accepted")
 		}
 	})
+}
+
+// headCommitMessage reads a commit's message from the fake over REST.
+func headCommitMessage(t *testing.T, srv *fake.Server, project, sha string) string {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/api/v3/repos/"+project+"/git/commits/"+sha, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+fake.Token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out struct{ Message string }
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	return out.Message
 }

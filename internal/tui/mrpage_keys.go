@@ -78,7 +78,7 @@ func (m *model) mrKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 			m.notice(events.Warn, "Wait for "+d.busy+" to finish")
 			return nil, true
 		}
-		p.modal = &mrModal{kind: modalMerge}
+		p.modal = &mrModal{kind: modalMerge, prefix: review.PrefixForMR(m.app, m.cache, d.ref)}
 		return nil, true
 	case "S":
 		m.beginSubmit()

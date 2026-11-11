@@ -8,6 +8,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/coredev-uk/ade/internal/commitmsg"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/review"
 )
@@ -82,7 +83,8 @@ type mrModal struct {
 
 	approve bool // submit: also approve
 
-	squash, remove, auto bool // merge options
+	squash, remove, auto bool   // merge options
+	prefix               string // merge: the commit prefix that applies to the item, "" for none
 
 	job        forge.Job // log viewer
 	log        []string
@@ -205,7 +207,7 @@ func (m *model) mergeKey(md *mrModal, ks string) tea.Cmd {
 			md.warn = v.why + ": turn on merge when the pipeline succeeds (w) or wait"
 		default:
 			m.mr.modal = nil
-			return m.actMerge(forge.MergeOpts{Squash: md.squash, RemoveSourceBranch: md.remove, AutoMerge: md.auto})
+			return m.actMerge(forge.MergeOpts{Squash: md.squash, RemoveSourceBranch: md.remove, AutoMerge: md.auto}, md.prefix)
 		}
 	}
 	return nil
@@ -396,6 +398,9 @@ func (m model) mergeDialog(md *mrModal, inner int) (string, []string) {
 			checkbox(m.g, md.squash, "s  squash commits"),
 			checkbox(m.g, md.remove, "d  delete the source branch"),
 			checkbox(m.g, md.auto, "w  merge when the pipeline succeeds"))
+		if md.prefix != "" {
+			l = append(l, "", vl+stFaint.Render(ansi.Truncate("commit: "+commitmsg.Apply(md.prefix, mr.Title), max(10, inner-2), "…")))
+		}
 	}
 	return "Merge · " + d.ref.String() + " · " + ansi.Truncate(mr.Title, max(10, inner-20), "…"), l
 }

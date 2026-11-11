@@ -134,10 +134,11 @@ func (m *model) actRetry() tea.Cmd {
 }
 
 // actMerge merges the head the page showed: the forge refuses when the branch
-// has moved since.
-func (m *model) actMerge(o forge.MergeOpts) tea.Cmd {
+// has moved since. With a commit prefix the merge and squash messages carry it.
+func (m *model) actMerge(o forge.MergeOpts, prefix string) tea.Cmd {
 	d := m.mr.data
 	o.SHA = d.mr.HeadSHA
+	o = review.MergeOptsFor(o, prefix, d.mr)
 	verb, done := "merging", "Merged %s into %s"
 	if o.AutoMerge {
 		verb, done = "setting auto-merge", "%s will merge into %s when its pipeline succeeds"

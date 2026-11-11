@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/coredev-uk/ade/internal/app"
+	"github.com/coredev-uk/ade/internal/forgesync"
 	"github.com/coredev-uk/ade/internal/workspace"
 )
 
@@ -132,6 +133,7 @@ func openWorkspace(cmd *cobra.Command, a *app.App, worktree string, tf treeFlags
 	}
 	opts := []workspace.OpenOption{
 		workspace.WithWorkspace(tf.workspace), workspace.WithPins(trees.Pins), workspace.WithItemTrees(trees.ItemTrees),
+		cachedItems(a),
 	}
 	if layout != "" {
 		opts = append(opts, workspace.WithLayout(layout))
@@ -150,6 +152,9 @@ func openWorkspace(cmd *cobra.Command, a *app.App, worktree string, tf treeFlags
 	if err != nil {
 		return err
 	}
+	for _, msg := range res.Warnings {
+		fmt.Fprintln(cmd.ErrOrStderr(), "warning: "+msg)
+	}
 	switch {
 	case res.Hint != "":
 		fmt.Fprintln(w, res.Hint)
@@ -161,6 +166,17 @@ func openWorkspace(cmd *cobra.Command, a *app.App, worktree string, tf treeFlags
 		fmt.Fprintf(w, "opened %s in %s\n", loc.Tree, res.Host)
 	}
 	return nil
+}
+
+// cachedItems offers the synced work items to workspace.Open, which finds the
+// one owning the worktree's branch; without a cache there is simply no item.
+func cachedItems(a *app.App) workspace.OpenOption {
+	st, err := a.Cache()
+	if err != nil {
+		return workspace.WithItems(nil)
+	}
+	items, _ := forgesync.ItemRefs(st)
+	return workspace.WithItems(items)
 }
 
 // runWorkspace is `ade ws up --no-zellij`.
@@ -438,7 +454,7 @@ func newWsLayoutCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			opts := []workspace.OpenOption{workspace.WithWorkspace(tf.workspace), workspace.WithPins(trees.Pins), workspace.WithItemTrees(trees.ItemTrees)}
+			opts := []workspace.OpenOption{workspace.WithWorkspace(tf.workspace), workspace.WithPins(trees.Pins), workspace.WithItemTrees(trees.ItemTrees), cachedItems(a)}
 			if layout != "" {
 				opts = append(opts, workspace.WithLayout(layout))
 			}
@@ -543,6 +559,7 @@ func taskRun(cmd *cobra.Command, a *app.App, node, worktree string, tf treeFlags
 		return nil
 	}
 	tel.record(workspace.RunRunning, results)
+	fmt.Fprintf(w, "ade: %s runs in this pane · Ctrl-C stops it · Enter starts it again once it has exited\n", node)
 	exited := func() bool { return !mgr.Running(self.ID) }
 	watchCtx, stopWatch := context.WithCancel(ctx)
 	defer stopWatch()

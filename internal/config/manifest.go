@@ -150,12 +150,13 @@ type Ready struct {
 }
 
 type Conventions struct {
-	Branch     string   `toml:"branch"`
-	ChildTitle string   `toml:"child_title"`
-	ChildBody  string   `toml:"child_body"`
-	Link       []string `toml:"link"`
-	ChildIssue string   `toml:"child_issue"` // auto | always | never
-	MR         MRConv   `toml:"mr"`
+	Branch       string   `toml:"branch"`
+	ChildTitle   string   `toml:"child_title"`
+	ChildBody    string   `toml:"child_body"`
+	Link         []string `toml:"link"`
+	ChildIssue   string   `toml:"child_issue"`   // auto | always | never
+	CommitPrefix string   `toml:"commit_prefix"` // e.g. "GL-{parent}"; see commitmsg
+	MR           MRConv   `toml:"mr"`
 }
 
 type MRConv struct {

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/coredev-uk/ade/internal/app"
 	"github.com/coredev-uk/ade/internal/audit"
 	"github.com/coredev-uk/ade/internal/config"
+	"github.com/coredev-uk/ade/internal/domain"
 	"github.com/coredev-uk/ade/internal/events"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/forge/gitlab"
@@ -447,5 +450,80 @@ func TestReviewRemove(t *testing.T) {
 	var ds []review.Draft
 	if err := json.Unmarshal([]byte(e.mustReview("list", renameMR)), &ds); err != nil || len(ds) != 0 {
 		t.Errorf("after rm: %+v, %v", ds, err)
+	}
+}
+
+// seedPrefixedItem caches a work item owning rateMR and writes the project's
+// manifest snapshot with commit_prefix = "GL-{parent}".
+func (e *cliEnv) seedPrefixedItem(t *testing.T, tmpl string) {
+	t.Helper()
+	root := t.TempDir()
+	e.app.Root = root
+	dir := filepath.Join(root, "acme")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	man := "name = \"acme\"\nforge = \"sandbox\"\n[tracker]\nproject = \"" + fake.GroupPath + "/tracker\"\n" +
+		"[repos.api]\npath = \"" + apiPath + "\"\n[conventions]\ncommit_prefix = \"" + tmpl + "\"\n"
+	snap := "source = \"test\"\nmanifest = '''\n" + man + "'''\n"
+	if err := os.WriteFile(filepath.Join(dir, ".project.toml"), []byte(snap), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wi := domain.WorkItem{
+		Ref: forge.Ref{Project: fake.GroupPath + "/tracker", IID: 7, Kind: forge.KindIssue},
+		MRs: []forge.MR{{Ref: ref(rateMR)}},
+	}
+	raw, err := json.Marshal(wi)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := e.app.Cache()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, _ := json.Marshal(map[string]any{"project": "acme", "forge": "sandbox"})
+	if _, err := st.DB.Exec(`INSERT INTO sync_state (project, json) VALUES ('acme', ?)`, string(state)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB.Exec(`INSERT INTO work_items (project, ref, json) VALUES ('acme', ?, ?)`, wi.Ref.String(), string(raw)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMRMergeCommitPrefix(t *testing.T) {
+	e := newCLIEnv(t)
+	e.seedPrefixedItem(t, "GL-{parent}")
+	title := "GL-7 Rate-limit the export endpoint"
+
+	out := e.mustMR("merge", rateMR, "--dry-run", "--squash")
+	for _, want := range []string{"commit message:", "See merge request " + rateMR, title, "squash message:"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("dry-run output lacks %q:\n%s", want, out)
+		}
+	}
+	if merged, _, _, _ := e.srv.MergeState(ref(rateMR)); merged {
+		t.Fatal("dry run merged")
+	}
+
+	e.mustMR("merge", rateMR, "--yes", "--squash")
+	_, _, params, _ := e.srv.MergeState(ref(rateMR))
+	msg, _ := params["merge_commit_message"].(string)
+	if !strings.HasPrefix(msg, "Merge branch '") || !strings.Contains(msg, "\n\n"+title+"\n") || !strings.HasSuffix(msg, "See merge request "+rateMR) {
+		t.Errorf("merge_commit_message = %q", msg)
+	}
+	if params["squash_commit_message"] != title {
+		t.Errorf("squash_commit_message = %v, want %q", params["squash_commit_message"], title)
+	}
+}
+
+func TestMRMergeWithoutPrefixSendsNoMessages(t *testing.T) {
+	e := newCLIEnv(t)
+	e.seedPrefixedItem(t, "")
+	e.mustMR("merge", rateMR, "--yes", "--squash")
+	_, _, params, _ := e.srv.MergeState(ref(rateMR))
+	for _, k := range []string{"merge_commit_message", "squash_commit_message"} {
+		if _, ok := params[k]; ok {
+			t.Errorf("%s sent without a commit prefix: %v", k, params)
+		}
 	}
 }

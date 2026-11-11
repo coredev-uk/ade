@@ -9,10 +9,10 @@ import (
 
 // Layout names a workspace layout (PLAN 6.6).
 const (
-	LayoutCode   = "code"   // editor 60% | lazygit + shell stacked
-	LayoutAgent  = "agent"  // omp 60% | lazygit + tasks stacked
+	LayoutCode   = "code"   // editor 60% | overview, lazygit + shell stacked
+	LayoutAgent  = "agent"  // omp with the ADE implement skill 60% | overview, lazygit + shell stacked
 	LayoutReview = "review" // diff through delta 60% | lazygit + shell stacked
-	LayoutManual = "manual" // shell 60% | lazygit + tasks stacked: no agent, no editor pane
+	LayoutManual = "manual" // shell 60% | overview, lazygit + shell stacked: no agent, no editor pane
 )
 
 // ValidLayout reports whether name is a known layout.
@@ -52,14 +52,35 @@ type LayoutSpec struct {
 	// BaseRef is what the review layout diffs against (e.g. origin/main).
 	BaseRef string
 	Tools   Tools
-	// Services are requirements running elsewhere (other trees, services.*):
-	// they go in one stacked pane. Tasks are the workspace's own and each get a pane.
+	// Overview holds the arguments of `ade` that show the work item live
+	// (`item <ref> --watch`); empty when the worktree belongs to no item, which
+	// leaves the pane out.
+	Overview []string
+	// Agent holds the arguments of omp in the agent layout: the config overlay
+	// that loads the ADE implement skill and the opening prompt.
+	Agent []string
+	// Services are requirements running elsewhere (other trees, services.*), Tasks
+	// the workspace's own. Every one gets a pane of the strip along the bottom:
+	// they start when the tab opens, Ctrl-C in a pane stops that one and Enter
+	// starts it again once it has exited.
 	Services []Pane
 	Tasks    []Pane
 }
 
+// Pane sizes, in percent: the main pane's share of the top row, the overview's
+// share of the right-hand column (the stack below takes the rest), and the strip's share of the tab.
+const (
+	mainPct     = 60
+	overviewPct = 40
+	stripPct    = 30
+)
+
 // BuildLayout renders the zellij KDL for one workspace tab. Every string comes
 // from the file system or user config, so all of them are escaped.
+//
+//	main (editor | omp | shell)  | overview   <- ade item --watch
+//	                             | lazygit / shell (stacked)
+//	services and tasks, one pane each (when the workspace runs any)
 func BuildLayout(s LayoutSpec) (string, error) {
 	if !ValidLayout(s.Layout) {
 		return "", fmt.Errorf("unknown layout %q (want code, agent, review or manual)", s.Layout)
@@ -70,44 +91,33 @@ func BuildLayout(s LayoutSpec) (string, error) {
 	var b kdl
 	b.line(0, "layout {")
 	b.line(1, "tab name=%s cwd=%s focus=true {", zellij.Quote(s.Tab), zellij.Quote(s.Dir))
-	hasTasks := len(s.Services)+len(s.Tasks) > 0
-	// The agent and manual layouts keep tasks beside lazygit; the others get a bottom strip.
-	taskColumn := s.Layout == LayoutAgent || s.Layout == LayoutManual
+	hasStrip := len(s.Services)+len(s.Tasks) > 0
 
 	topAttr := ""
-	if hasTasks && !taskColumn {
-		topAttr = ` size="70%"`
+	if hasStrip {
+		topAttr = fmt.Sprintf(` size="%d%%"`, 100-stripPct)
 	}
 	b.line(2, `pane%s split_direction="vertical" {`, topAttr)
-	b.pane(3, `size="60%" focus=true`, s.primary())
-	b.line(3, `pane size="%d%%" stacked=true {`, 40)
-	if cmd, ok := s.lazygit(); ok {
-		b.pane(4, `name="lazygit" expanded=true`, cmd)
+	b.pane(3, fmt.Sprintf(`size="%d%%" focus=true`, mainPct), s.primary())
+	right := 100 - mainPct
+	if len(s.Overview) > 0 {
+		b.line(3, `pane size="%d%%" split_direction="horizontal" {`, right)
+		b.pane(4, fmt.Sprintf(`name="overview" size="%d%%"`, overviewPct), s.adeCmd(Pane{Args: s.Overview}))
+		// The stack takes the rest: giving both children a percentage makes
+		// zellij size them differently from one run to the next.
+		b.line(4, "pane stacked=true {")
+		s.stackPanes(&b, 5)
+		b.line(4, "}")
+		b.line(3, "}")
 	} else {
-		b.pane(4, `name="shell" expanded=true`, command{})
+		b.line(3, `pane size="%d%%" stacked=true {`, right)
+		s.stackPanes(&b, 4)
+		b.line(3, "}")
 	}
-	switch {
-	case taskColumn:
-		s.stackTasks(&b, 4)
-	default:
-		b.pane(4, `name="shell"`, command{})
-	}
-	b.line(3, "}")
 	b.line(2, "}")
-	if hasTasks && !taskColumn {
-		b.line(2, `pane size="%d%%" split_direction="vertical" {`, 30)
-		if len(s.Services) > 0 {
-			b.line(3, `pane name="services" stacked=true {`)
-			for i, p := range s.Services {
-				attr := fmt.Sprintf("name=%s", zellij.Quote(p.Name))
-				if i == 0 {
-					attr += " expanded=true"
-				}
-				b.pane(4, attr, s.adeCmd(p))
-			}
-			b.line(3, "}")
-		}
-		for _, p := range s.Tasks {
+	if hasStrip {
+		b.line(2, `pane size="%d%%" split_direction="vertical" {`, stripPct)
+		for _, p := range append(append([]Pane(nil), s.Services...), s.Tasks...) {
 			b.pane(3, fmt.Sprintf("name=%s", zellij.Quote(p.Name)), s.adeCmd(p))
 		}
 		b.line(2, "}")
@@ -117,11 +127,14 @@ func BuildLayout(s LayoutSpec) (string, error) {
 	return b.String(), nil
 }
 
-// stackTasks adds services and tasks as extra panes of the right-hand stack.
-func (s LayoutSpec) stackTasks(b *kdl, depth int) {
-	for _, p := range append(append([]Pane(nil), s.Services...), s.Tasks...) {
-		b.pane(depth, fmt.Sprintf("name=%s", zellij.Quote(p.Name)), s.adeCmd(p))
+// stackPanes writes the stack beside the main pane: lazygit when installed, and a shell.
+func (s LayoutSpec) stackPanes(b *kdl, depth int) {
+	if cmd, ok := s.lazygit(); ok {
+		b.pane(depth, `name="lazygit" expanded=true`, cmd)
+		b.pane(depth, `name="shell"`, command{})
+		return
 	}
+	b.pane(depth, `name="shell" expanded=true`, command{})
 }
 
 func (s LayoutSpec) adeCmd(p Pane) command {
@@ -151,7 +164,7 @@ func (s LayoutSpec) primary() command {
 		return command{name: "editor"}
 	case LayoutAgent:
 		if s.Tools.Omp != "" {
-			return command{prog: s.Tools.Omp, name: "agent"}
+			return command{prog: s.Tools.Omp, args: s.Agent, name: "agent"}
 		}
 		return command{name: "agent"}
 	case LayoutReview:

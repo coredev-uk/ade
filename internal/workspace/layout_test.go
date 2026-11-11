@@ -21,7 +21,9 @@ func baseSpec(layout string) LayoutSpec {
 }
 
 func TestBuildLayoutCode(t *testing.T) {
-	got, err := BuildLayout(baseSpec(LayoutCode))
+	s := baseSpec(LayoutCode)
+	s.Overview = []string{"item", "acme/tracker#418", "--watch"}
+	got, err := BuildLayout(s)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,16 +33,19 @@ func TestBuildLayoutCode(t *testing.T) {
             pane name="editor" size="60%" focus=true command="nvim" {
                 args "-u" "NONE"
             }
-            pane size="40%" stacked=true {
-                pane name="lazygit" expanded=true command="/bin/lazygit"
-                pane name="shell"
+            pane size="40%" split_direction="horizontal" {
+                pane name="overview" size="40%" command="/opt/ade/bin/ade" {
+                    args "item" "acme/tracker#418" "--watch"
+                }
+                pane stacked=true {
+                    pane name="lazygit" expanded=true command="/bin/lazygit"
+                    pane name="shell"
+                }
             }
         }
         pane size="30%" split_direction="vertical" {
-            pane name="services" stacked=true {
-                pane name="api.dev" expanded=true command="/opt/ade/bin/ade" {
-                    args "task" "run" "api.dev" "--worktree" "/projects/acme/web/418-paginate"
-                }
+            pane name="api.dev" command="/opt/ade/bin/ade" {
+                args "task" "run" "api.dev" "--worktree" "/projects/acme/web/418-paginate"
             }
             pane name="web.dev" command="/opt/ade/bin/ade" {
                 args "task" "run" "web.dev" "--worktree" "/projects/acme/web/418-paginate"
@@ -54,13 +59,63 @@ func TestBuildLayoutCode(t *testing.T) {
 	}
 }
 
+func TestBuildLayoutWithoutAnItemHasNoOverviewPane(t *testing.T) {
+	for _, l := range []string{LayoutCode, LayoutAgent, LayoutManual} {
+		got, err := BuildLayout(baseSpec(l))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(got, "overview") || strings.Contains(got, `"--watch"`) {
+			t.Errorf("%s: no item, no overview:\n%s", l, got)
+		}
+		if !strings.Contains(got, `pane size="40%" stacked=true {`) {
+			t.Errorf("%s: the stack takes the whole right column:\n%s", l, got)
+		}
+	}
+}
+
+func TestBuildLayoutEveryDevLayoutShowsTheOverview(t *testing.T) {
+	for _, l := range []string{LayoutCode, LayoutAgent, LayoutManual} {
+		s := baseSpec(l)
+		s.Overview = []string{"item", "acme/tracker#418", "--watch"}
+		got, err := BuildLayout(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(got, `pane name="overview"`) || !strings.Contains(got, `args "item" "acme/tracker#418" "--watch"`) {
+			t.Errorf("%s lacks the overview pane:\n%s", l, got)
+		}
+	}
+}
+
+func TestBuildLayoutAgentPaneStartsOmpWithTheSkillOverlay(t *testing.T) {
+	s := baseSpec(LayoutAgent)
+	s.Agent = []string{"--config", "/cache/ws/agent/x/omp.yml", `Read skill://ade-implement and implement "it"`}
+	got, err := BuildLayout(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `pane name="agent" size="60%" focus=true command="/bin/omp" {
+                args "--config" "/cache/ws/agent/x/omp.yml" "Read skill://ade-implement and implement \"it\""
+            }`
+	if !strings.Contains(got, want) {
+		t.Fatalf("agent pane:\n%s", got)
+	}
+	// Without omp installed the pane is a plain shell, with no dangling args.
+	s.Tools.Omp = ""
+	got, _ = BuildLayout(s)
+	if strings.Contains(got, "omp.yml") || !strings.Contains(got, `pane name="agent"`) {
+		t.Fatalf("fallback:\n%s", got)
+	}
+}
+
 func TestBuildLayoutVariants(t *testing.T) {
 	tests := []struct {
 		layout string
 		want   []string
 		not    []string
 	}{
-		{LayoutAgent, []string{`name="agent"`, `command="/bin/omp"`, `name="lazygit"`, `name="api.dev"`, `name="web.dev"`}, []string{`name="editor"`, `size="30%"`}},
+		{LayoutAgent, []string{`name="agent"`, `command="/bin/omp"`, `name="lazygit"`, `name="api.dev"`, `name="web.dev"`}, []string{`name="editor"`}},
 		{LayoutReview, []string{`name="diff"`, `command="sh"`, `args "-c" "git diff 'origin/main'...HEAD | '/bin/delta'"`}, []string{`name="editor"`, `command="/bin/omp"`}},
 		{LayoutManual, []string{`name="shell" size="60%"`, `name="lazygit"`, `name="web.dev"`}, []string{`command="/bin/omp"`, `name="editor"`}},
 	}
@@ -78,6 +133,10 @@ func TestBuildLayoutVariants(t *testing.T) {
 			if strings.Contains(got, n) {
 				t.Errorf("%s layout must not contain %s\n%s", tc.layout, n, got)
 			}
+		}
+		// Services and tasks form one strip in every layout, so all of them are visible at once.
+		if tc.layout != LayoutReview && !strings.Contains(got, `size="30%" split_direction="vertical"`) {
+			t.Errorf("%s: no services strip\n%s", tc.layout, got)
 		}
 	}
 }

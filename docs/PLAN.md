@@ -618,7 +618,9 @@ One confirm screen shows every write before it happens. It is idempotent: re‑r
    - ADE reads the repo's template from the default branch through the forge API (so a repo that is not cloned yet works too): `.gitlab/merge_request_templates/Default.md` (the name comes from `conventions.mr.template`; with several templates and no match, the dialog offers a chooser), and on GitHub `.github/pull_request_template.md`.
    - It fills the `Closes`/parent references and shows the rendered body for editing before anything is sent.
    - Quick actions in the template (`/assign`, `/assign_reviewer`, `/label`, …) run on the forge the moment the MR is created, which is how templates end up auto‑assigning everyone. The dialog lists them explicitly ("this template will request review from @a @b @c"), and each can be kept or stripped. Stripping them only affects this MR.
-5. **Confirm:** the station list of writes (as in the preview), then `enter`.
+5. **Main pane:** what the workspace tab's big pane runs: the editor (layout `code`), omp briefed by the ADE implement skill (`agent`), or a plain shell (`manual`). It starts on `host.layout` of the user config, else the manifest workspace's `layout`, else the editor; `a` cycles it in the dialog (`ade start --layout`), and `W` on Home opens an existing worktree with the other choice (§6.6).
+6. **Commit prefix:** `conventions.commit_prefix` (e.g. `"GL-{parent}"`) is written into every start‑work worktree as `git config --worktree ade.parent <iid>` and `ade.commitPrefix <expanded>` so the developer's own commit‑msg hook can use it. ADE applies it to its own commits (agent pushes, the GitHub start commit) and to the merge and squash messages it sends (§6.6); a message that already starts with it is never prefixed twice.
+7. **Confirm:** the station list of writes (as in the preview), then `enter`.
 
 ### 6.4 Agile (core function 5)
 
@@ -665,12 +667,17 @@ One confirm screen shows every write before it happens. It is idempotent: re‑r
 
 ### 6.6 Agents and workspaces (core function 7)
 
-- **Layouts** are generated zellij KDL (`--layout-string`), one tab per work item:
-  - `code`: editor 60% | lazygit + shell stacked
-  - `agent`: omp 60% | lazygit + tasks
-  - `review`: diff/threads + delta
-  - `manual`: no agent pane
-- **Tasks** come from the run graph (2.1). `w` opens a workspace, and its `run` group starts in dependency order. Requirements land in a stacked services pane, and the workspace's own tasks get regular panes.
+- **Layouts** are generated zellij KDL (`--layout-string`), one tab per work item. Every dev layout has the same right‑hand column and bottom strip; only the big left pane differs:
+  - `code`: editor 60% | overview, lazygit + shell stacked
+  - `agent`: omp 60%, started with the ADE implement skill | the same column
+  - `manual`: a shell 60% | the same column
+  - `review`: diff/threads + delta (no overview, no services)
+  - The **overview** pane runs `ade item <tracker ref> --watch`: the item live from the cache (stations and stage, court · reason, weight and sprint, each child issue with its MR state, pipeline and unresolved threads, description and acceptance with task checkboxes, your notes), refreshed when the cache changes (polled every 2 s). It is left out for a worktree that belongs to no item.
+  - The **services strip** along the bottom has one pane per service or task of the workspace's run group (`ade task run <node>`), side by side: they start when the tab opens, Ctrl‑C in a pane stops that service (and what only it needed), Enter in the pane starts it again, and every pane prints that hint. A repo's service runs from the item's own worktree when the item has one there, otherwise from the shared baseline `main/` (so web gets `API_URL` of the item's api, else of the shared baseline api).
+  - The layout is chosen by, in order: `--layout` / the dialog's main‑pane row / `W`, the user's `host.layout`, the manifest workspace's `layout`, then `code`.
+- **Implement skill:** the `agent` layout starts `omp --config <cache>/ws/agent/<tree>/omp.yml "<opening message>"`. The overlay only adds a skill directory (`skills.customDirectories`) for that run; `~/.omp` and the worktree are never touched (nothing is written into a git tree). `SKILL.md` is regenerated on every open, also when the tab exists, and carries the parent and child titles, descriptions and acceptance criteria, the MR link and branch, the item's worktrees in the other repos, the repo's `AGENTS.md` (or `CLAUDE.md`), the manifest conventions, your notes, the commit prefix rule, and the instruction to implement, run the checks, commit locally and **stop for review without pushing**.
+- **Commit prefix** (`conventions.commit_prefix`): applied to ADE's agent commits, the GitHub start commit and the merge/squash messages ADE sends (`ade mr merge`, `m` on the MR page: GitLab's default merge shape with the prefix before the MR title, then `See merge request <ref>`); written per worktree as `ade.parent` / `ade.commitPrefix` (`git config --worktree`, `extensions.worktreeConfig`) for the user's own commit‑msg hook (docs/manifest.md).
+- **Tasks** come from the run graph (2.1). `w` opens a workspace, and its `run` group starts in dependency order.
 - **Plan:** ADE gathers the parent issue, child issue, comments, notes, and repo `AGENTS.md`, then starts omp in plan mode in the worktree with a seeded prompt file. The plan is saved to the item record (`plans/`, 4.2), never into the worktree, and reviewed in the TUI.
 - **Run:** omp executes the approved plan with `--max-cost` and the implement‑role model. `runs/<id>/run.md` tracks state, spend, exit, and resulting commits, and every run brackets with `agent.run.start/end` audit events. lazygit opens beside the run for review. "Address comments" uses the same path, seeded with unresolved threads.
 - **Agent CLI drivers:** `omp`, `claude`, and `codex` are discovered on PATH and chosen per profile.
@@ -693,6 +700,7 @@ VS Code specifics:
 - zellij inside the VS Code terminal uses ADE's shipped config with the non‑colliding "unlock‑first" keybinding preset.
   - **As built:** the preset (`internal/host/zellij/unlock-first.kdl`, embedded) starts every session locked, so Ctrl‑p, Ctrl‑t, Ctrl‑o, Ctrl‑s and everything neovim, lazygit and VS Code bind reach the focused program; Ctrl‑g unlocks zellij's own bindings. It is written to `zellij-unlock-first.kdl` in the ADE config directory and passed as `--config` when `ade` creates or attaches the session from a VS Code terminal (`TERM_PROGRAM=vscode` or `VSCODE_IPC_HOOK_CLI`); an explicit `$ZELLIJ_CONFIG_FILE` wins, and outside VS Code zellij keeps the user's own config.
 - ADE emits a recommended `terminal.integrated.commandsToSkipShell` snippet via `ade doctor --vscode`.
+- **Multi-root workspace:** `ade vscode workspace <item-ref|worktree> [--open] [--json]` (Home `v`, palette "VS Code workspace for <ref>") writes `<n>-<title-slug>.code-workspace` (a worktree without an item: `<project>-<branch>`) into the item's records directory, outside every git tree. Its folders are all repos of the project, the item's primary repo first: the item's own worktree where it has one (`api (1-rate-limit…)`), else the repo's baseline (`web (main)`), as absolute paths. `settings` hide `.bare` from the explorer, search and watcher, limit git to the folders themselves, and carry the `commandsToSkipShell` release list of `ade doctor --vscode`. `tasks` are the default workspace's run graph planned over the item's trees (`ade: <node>` with `dependsOn`, `ade: up`, absolute `cwd`, `API_URL` resolved to the item's api tree or the shared baseline). A regenerated file keeps other top-level keys (extensions, launch), the user's settings and tasks; `--open` runs `code <file>` when `code` is on PATH, otherwise prints a hint. The action is audited as `workspace.vscode`.
 - `editor=auto` opens files in the surrounding VS Code window even from a zellij pane.
 - Browser terminals get the same zellij session.
 

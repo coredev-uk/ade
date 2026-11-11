@@ -35,6 +35,13 @@ type WorkspaceRequest struct {
 	Worktree  string
 	Title     string
 	ItemTrees map[string]string // repo → worktree of this work item in every target
+	// Layout is the tab layout ("" for the default).
+	Layout string
+	// Item is the work item as it stands after start work: the cache has not
+	// seen the new child issue and MR yet, so they are added here. Forge is the
+	// config forge it lives on.
+	Item  domain.WorkItem
+	Forge string
 }
 
 // Env carries what start work acts through.

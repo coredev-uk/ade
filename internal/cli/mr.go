@@ -101,6 +101,15 @@ type action struct {
 	NoteID   int64     `json:"note_id,omitempty"`
 	Resolved *bool     `json:"resolved,omitempty"`
 	SHA      string    `json:"sha,omitempty"`
+	// Message and SquashMessage are the commit messages a merge sends when a
+	// commit prefix applies.
+	Message       string `json:"message,omitempty"`
+	SquashMessage string `json:"squash_message,omitempty"`
+}
+
+// indent puts two spaces before every line of s.
+func indent(s string) string {
+	return "  " + strings.ReplaceAll(s, "\n", "\n  ")
 }
 
 func verb(dry bool, did, would string) string {
@@ -422,6 +431,9 @@ func newMRMergeCmd() *cobra.Command {
 				return fmt.Errorf("%s is %s, not open", c.ref, mr.State)
 			}
 			o.SHA = mr.HeadSHA
+			if st, err := appFrom(cmd).Cache(); err == nil {
+				o = review.MergeOptsFor(o, review.PrefixForMR(appFrom(cmd), st, c.ref), mr)
+			}
 			if err := c.w.Merge(cmd.Context(), c.ref, o); err != nil {
 				return err
 			}
@@ -429,7 +441,14 @@ func newMRMergeCmd() *cobra.Command {
 			if o.AutoMerge {
 				did, would = "set to merge when checks pass:", "set to merge when checks pass:"
 			}
-			return out(cmd, action{Ref: c.ref, Action: "merge", DryRun: c.dry, SHA: o.SHA}, "%s %s at %.8s", verb(c.dry, did, would), c.ref, o.SHA)
+			msg := fmt.Sprintf("%s %s at %.8s", verb(c.dry, did, would), c.ref, o.SHA)
+			if c.dry && o.Message != "" {
+				msg += "\ncommit message:\n" + indent(o.Message)
+				if o.Squash && o.SquashMessage != "" {
+					msg += "\nsquash message:\n" + indent(o.SquashMessage)
+				}
+			}
+			return out(cmd, action{Ref: c.ref, Action: "merge", DryRun: c.dry, SHA: o.SHA, Message: o.Message, SquashMessage: o.SquashMessage}, "%s", msg)
 		},
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "confirm the merge")

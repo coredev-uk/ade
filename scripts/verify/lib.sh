@@ -28,7 +28,7 @@ check() {
 expect_json() {
   local desc=$1 file=$2 expr=$3
   if [[ $(jq -r "$expr" "$file") == true ]]; then pass "$desc"; else
-    jq -c . "$file" | head -c 2000 >&2
+    { jq -c . "$file" | head -c 2000 >&2; } || true
     fail "$desc ($expr)"
   fi
 }

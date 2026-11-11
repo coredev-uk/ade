@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -93,41 +92,40 @@ func BranchOf(ctx context.Context, loc Location) string {
 	return ""
 }
 
-// TargetForItem picks what `w` opens for a work item: the item's own worktree
-// in the first routed repo that has one, else the baseline of the first routed
-// repo. Every repo's item worktree is passed along as an item tree.
-func TargetForItem(ctx context.Context, root string, m *config.Manifest, wi domain.WorkItem) (Target, error) {
+// ItemTrees finds the work item's own worktree in every repo of the project
+// that has one (a worktree on a branch the item owns): repo → worktree path and
+// repo → branch. Repos that are not cloned have none.
+func ItemTrees(ctx context.Context, root string, m *config.Manifest, wi domain.WorkItem) (trees, branches map[string]string) {
 	projectDir := filepath.Join(root, m.Name)
-	repos := slices.Clone(wi.Repos)
-	for _, name := range m.RepoNames() { // repos the item has branches in, even when not routed
-		if !slices.Contains(repos, name) {
-			repos = append(repos, name)
-		}
-	}
-	trees := map[string]string{}
-	titles := map[string]string{}
-	for _, repo := range repos {
-		spec, ok := m.Repos[repo]
-		if !ok {
-			continue
-		}
+	trees, branches = map[string]string{}, map[string]string{}
+	for _, repo := range m.RepoNames() {
+		spec := m.Repos[repo]
 		wts, err := worktreesOf(ctx, projectDir, repo)
 		if err != nil {
 			continue // not cloned yet: no tree there
 		}
 		for _, w := range wts {
 			if OwnsBranch(wi, spec.Path, w.Branch) {
-				trees[repo], titles[repo] = w.Path, w.Branch
+				trees[repo], branches[repo] = w.Path, w.Branch
 				break
 			}
 		}
 	}
+	return trees, branches
+}
+
+// TargetForItem picks what `w` opens for a work item: the item's own worktree
+// in the first routed repo that has one, else the baseline of the first routed
+// repo. Every repo's item worktree is passed along as an item tree.
+func TargetForItem(ctx context.Context, root string, m *config.Manifest, wi domain.WorkItem) (Target, error) {
+	projectDir := filepath.Join(root, m.Name)
+	trees, titles := ItemTrees(ctx, root, m, wi)
 	for _, repo := range wi.Repos {
 		if p, ok := trees[repo]; ok {
 			return Target{Project: m.Name, Repo: repo, Worktree: p, Title: titles[repo], ItemTrees: trees}, nil
 		}
 	}
-	for _, repo := range repos { // an unrouted repo with a tree still beats the baseline
+	for _, repo := range m.RepoNames() { // an unrouted repo with a tree still beats the baseline
 		if p, ok := trees[repo]; ok {
 			return Target{Project: m.Name, Repo: repo, Worktree: p, Title: titles[repo], ItemTrees: trees}, nil
 		}
@@ -172,4 +170,21 @@ func baseline(ctx context.Context, projectDir string, m *config.Manifest, repo s
 		return "", err
 	}
 	return t.Path, nil
+}
+
+// ItemFor finds the cached work item whose child issue or MR owns the branch
+// checked out in loc's worktree. ok is false for baseline trees and branches
+// no item claims.
+func ItemFor(ctx context.Context, items []ItemRef, loc Location) (ItemRef, bool) {
+	branch := BranchOf(ctx, loc)
+	if branch == "" {
+		return ItemRef{}, false
+	}
+	repoPath := loc.Manifest.Repos[loc.Repo].Path
+	for _, it := range items {
+		if it.Project == loc.Project && OwnsBranch(it.Item, repoPath, branch) {
+			return it, true
+		}
+	}
+	return ItemRef{}, false
 }

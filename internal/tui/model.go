@@ -292,6 +292,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	case wsOpenedMsg:
 		return m, m.onWsOpened(msg)
+	case codeWsMsg:
+		m.onCodeWs(msg)
+		return m, nil
 	case wsChipsMsg:
 		m.ws.chips = msg.chips
 	case aiChipMsg:
@@ -427,7 +430,13 @@ func (m model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		next, cmd := m.openStart(false)
 		return next, cmd
 	case "w":
-		next, cmd := m.openWorkspace()
+		next, cmd := m.openWorkspace(false)
+		return next, cmd
+	case "v":
+		next, cmd := m.openCodeWorkspace()
+		return next, cmd
+	case "W":
+		next, cmd := m.openWorkspace(true)
 		return next, cmd
 	case "M":
 		next, cmd := m.openStart(true)

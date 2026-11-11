@@ -337,9 +337,9 @@ func (c *Client) Merge(ctx context.Context, mr forge.Ref, o forge.MergeOpts) err
 	}
 	if o.Message != "" {
 		in["merge_commit_message"] = o.Message
-		if o.Squash {
-			in["squash_commit_message"] = o.Message
-		}
+	}
+	if o.SquashMessage != "" && o.Squash {
+		in["squash_commit_message"] = o.SquashMessage
 	}
 	return c.send(ctx, http.MethodPut, mrPath(mr)+"/merge", in, nil)
 }

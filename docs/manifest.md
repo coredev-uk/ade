@@ -162,6 +162,53 @@ mr          = { create = "ask", template = "Default", draft = true, closes = "ch
   `.gitlab/merge_request_templates/<name>.md`, GitHub `.github/pull_request_template.md`). ADE shows the
   rendered body, and lists any quick actions in it (`/assign`, `/label`, ...) so they can be kept or stripped
   before anything is sent.
+- `commit_prefix`: a prefix for every commit message ADE makes and for the merge commit it sends, e.g.
+  `"GL-{parent}"`. See [Commit prefix](#commit-prefix).
+
+### Commit prefix
+
+```toml
+[conventions]
+commit_prefix = "GL-{parent}"   # GL-412 Rate-limit the export endpoint
+```
+
+Placeholders: `{parent}` is the tracker issue's iid, `{child}` the child issue's iid in the code repo (the
+parent's when the item has none) and `{project}` the ADE project name. Unknown placeholders, a multi-line value
+or leading/trailing whitespace are errors (`conventions.commit_prefix`); ADE adds the separating space itself.
+Without the key nothing changes.
+
+- **Agent commits** (`ade agent push`, the TUI push) get the prefix; a message that already starts with it is
+  never prefixed twice.
+- **Merges** (`ade mr merge`, the MR page `m`) send `merge_commit_message` as GitLab's usual
+  `Merge branch 'x' into 'y'` + the MR title with the prefix + `See merge request <ref>`, and, when squashing,
+  the prefixed title as `squash_commit_message`. `--dry-run` and the merge dialog show it. The owning work item is
+  found in the sync cache, so an MR ADE has not synced gets GitLab's defaults.
+- **GitHub** start work's empty first commit is `GL-412 Start work: <title>`.
+
+Your own commits are yours: start work and opening a workspace for an item's worktree record two per-worktree
+git settings (`extensions.worktreeConfig` is switched on for the repository; in a bare clone `core.bare` moves
+into the bare repository's own `config.worktree`, which git requires):
+
+```
+ade.parent        = 412          # the tracker issue's iid
+ade.commitPrefix  = GL-412       # absent when commit_prefix is not set (a stale value is removed)
+```
+
+A `commit-msg` hook (a global `core.hooksPath` one works for every worktree) can use them to prefix the commits
+you type:
+
+```sh
+#!/bin/sh
+# commit-msg: prepend the ADE commit prefix unless the message has it.
+prefix=$(git config --get ade.commitPrefix) || exit 0
+[ -n "$prefix" ] || exit 0
+first=$(head -n1 "$1")
+case "$first" in
+  "$prefix"|"$prefix "*|"$prefix:"*) exit 0 ;;                 # already prefixed
+  Merge\ *|fixup!\ *|squash!\ *|amend!\ *|Revert\ *) exit 0 ;;  # merges, autosquash, reverts
+esac
+printf '%s %s\n' "$prefix" "$(cat "$1")" > "$1.new" && mv "$1.new" "$1"
+```
 
 ## Repos, hooks and run graph
 
@@ -192,6 +239,15 @@ default = { layout = "code", run = "dev" }
 validated together. Hooks run inside the tree and failures raise notifications. The full reference, including
 `services`, `kind = "oneshot"`, ports and templates, is [PLAN.md §2](PLAN.md#2-configuration-core-function-4) and
 [§2.1](PLAN.md#21-repo-and-task-dependencies).
+
+`workspaces.<name>.layout` is the main pane of the tab ADE opens for a worktree: `code` (your editor), `agent` (omp
+started with an ADE-generated implement skill that carries the ticket, MR, conventions and your notes, and stops for
+review without pushing) or `manual` (a shell). Every layout also shows the item's live overview, lazygit, a shell and
+one pane per service of the `run` group (they start with the tab; Ctrl-C in a pane stops it, Enter starts it again).
+Each person can override the default with `host.layout` in their own config; `ade start --layout` and `W` on Home
+choose per tab. A service runs from the work item's own worktree when it has one in that repo, else from the shared
+baseline `main/`, so `{api.dev.port}` in web's `API_URL` follows the item's api when it has one. See
+[PLAN.md §6.6](PLAN.md#66-agents-and-workspaces-core-function-7).
 
 ## GitHub example
 

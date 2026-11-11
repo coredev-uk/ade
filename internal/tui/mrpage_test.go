@@ -2,6 +2,9 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -832,4 +835,51 @@ func TestHistoryOfItemWithoutMR(t *testing.T) {
 	e.open(grp + "/tracker#1")
 	e.press("6")
 	e.want("[History]", "No recorded actions")
+}
+
+// With a commit prefix the merge dialog shows the commit line and the merge
+// carries the prefixed merge and squash messages.
+func TestMergeCommitPrefix(t *testing.T) {
+	e := newMREnv(t, fake.Free)
+	ref := mrRef("api", 1)
+	title := "GL-1 Rate-limit the export endpoint"
+
+	root := t.TempDir()
+	e.m.app.Root = root
+	dir := filepath.Join(root, "demo")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	man := "name = \"demo\"\nforge = \"f\"\n[conventions]\ncommit_prefix = \"GL-{parent}\"\n"
+	if err := os.WriteFile(filepath.Join(dir, ".project.toml"), []byte("source = \"t\"\nmanifest = '''\n"+man+"'''\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wi := domain.WorkItem{Ref: forge.Ref{Project: grp + "/tracker", IID: 1, Kind: forge.KindIssue}, MRs: []forge.MR{{Ref: ref}}}
+	raw, _ := json.Marshal(wi)
+	state, _ := json.Marshal(map[string]any{"project": "demo", "forge": "f"})
+	for _, q := range [][2]string{
+		{`INSERT INTO sync_state (project, json) VALUES ('demo', ?)`, string(state)},
+		{`INSERT INTO work_items (project, ref, json) VALUES ('demo', '` + wi.Ref.String() + `', ?)`, string(raw)},
+	} {
+		if _, err := e.m.cache.DB.Exec(q[0], q[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	e.open(ref.String())
+	e.press("m")
+	e.want("commit: " + title)
+	e.press("s")
+	e.press("enter")
+	_, _, params, err := e.srv.MergeState(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg, _ := params["merge_commit_message"].(string)
+	if !strings.Contains(msg, "\n\n"+title+"\n") || !strings.HasSuffix(msg, "See merge request "+ref.String()) {
+		t.Errorf("merge_commit_message = %q", msg)
+	}
+	if params["squash_commit_message"] != title {
+		t.Errorf("squash_commit_message = %v", params["squash_commit_message"])
+	}
 }

@@ -116,6 +116,8 @@ func (m model) paletteEntries() []palEntry {
 		pressEntry("Agents for this item", "a", "ade agent", true),
 		pressEntry("Agents: every run", "A", "ade agent list", true),
 		pressEntry("Open workspace", "w", "ade ws up", true),
+		{name: "VS Code workspace for " + m.paletteSubject(), key: "v", cli: "ade vscode workspace <ref> --open", needHome: true, run: func(m model) (model, tea.Cmd) { return m.press("v") }},
+		pressEntry("Open workspace with the other main pane (omp or editor)", "W", "ade ws up --layout agent", true),
 		pressEntry("Restart blocked services", "r", "ade ws restart", true),
 		pressEntry("Copy link", "y", "", true),
 		pressEntry("Open in browser", "o", "", true),

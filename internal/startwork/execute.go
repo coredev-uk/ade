@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strings"
 
 	"github.com/coredev-uk/ade/internal/audit"
+	"github.com/coredev-uk/ade/internal/commitprefix"
 	"github.com/coredev-uk/ade/internal/config"
+	"github.com/coredev-uk/ade/internal/domain"
 	"github.com/coredev-uk/ade/internal/events"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/git"
@@ -225,7 +228,7 @@ func (e *Env) run(ctx context.Context, p Plan, m *config.Manifest, rt *runtime, 
 	case StepBranch:
 		err = e.createBranch(ctx, p, m, rt, sr)
 	case StepMR:
-		err = e.createMR(ctx, p, rt, sr)
+		err = e.createMR(ctx, p, m, rt, sr)
 	case StepWorktree:
 		err = e.addWorktree(ctx, p, m, rt, sr)
 	case StepWorkspace:
@@ -317,13 +320,14 @@ func (e *Env) createBranch(ctx context.Context, p Plan, m *config.Manifest, rt *
 	return err
 }
 
-func (e *Env) createMR(ctx context.Context, p Plan, rt *runtime, sr *StepResult) error {
+func (e *Env) createMR(ctx context.Context, p Plan, m *config.Manifest, rt *runtime, sr *StepResult) error {
 	if rt.branch == "" {
 		return errors.New("no branch to open the MR from")
 	}
 	d := forge.MRDraft{
 		Project: rt.tp.Target.Project, Source: rt.branch, Target: rt.tp.Base, Title: rt.tp.MR.Title,
 		Description: rt.tp.MRBody(rt.child, p.Item), Draft: rt.tp.MR.Draft,
+		CommitPrefix: commitprefix.ForIssues(m, p.Item.IID, rt.child.IID),
 	}
 	mr, err := e.Forge.CreateMR(ctx, d)
 	if errors.Is(err, forge.ErrExists) {
@@ -380,6 +384,7 @@ func (e *Env) addWorktree(ctx context.Context, p Plan, m *config.Manifest, rt *r
 	if trees, err := gc.Worktrees(ctx, bare); err == nil {
 		if i := slices.IndexFunc(trees, func(w git.Worktree) bool { return w.Branch == branch }); i >= 0 {
 			rt.worktree, rt.result.Worktree, sr.Ref, sr.Outcome = trees[i].Path, trees[i].Path, trees[i].Path, OutcomeExists
+			e.recordWorktree(ctx, p, m, rt, browse)
 			return nil
 		}
 	}
@@ -397,10 +402,24 @@ func (e *Env) addWorktree(ctx context.Context, p Plan, m *config.Manifest, rt *r
 		return err
 	}
 	rt.worktree, rt.result.Worktree, sr.Ref = dir, dir, dir
+	e.recordWorktree(ctx, p, m, rt, browse)
 	if !browse {
 		e.runHooks(ctx, p, m, t.Name, dir)
 	}
 	return nil
+}
+
+// recordWorktree writes the item's git config into the worktree (ade.parent,
+// ade.commitPrefix) so commit hooks and ADE's commits can read it. Baseline
+// (browse) trees belong to no item. A failure is a warning: the tree is usable.
+func (e *Env) recordWorktree(ctx context.Context, p Plan, m *config.Manifest, rt *runtime, browse bool) {
+	if browse {
+		return
+	}
+	prefix := commitprefix.ForIssues(m, p.Item.IID, rt.child.IID)
+	if err := commitprefix.WriteWorktreeConfig(ctx, rt.worktree, p.Item.IID, prefix); err != nil {
+		e.audit(p, "git.worktree.config", rt.worktree, nil, "", err)
+	}
 }
 
 // runHooks runs post_worktree hooks; a failing hook raises a warning but
@@ -438,7 +457,10 @@ func (e *Env) openWorkspace(ctx context.Context, p Plan, m *config.Manifest, rt 
 	if p.Mode == ModeBrowse {
 		title = rt.tp.Target.Name
 	}
-	err := e.Workspace(ctx, WorkspaceRequest{Project: m.Name, Repo: rt.tp.Target.Name, Worktree: rt.worktree, Title: title, ItemTrees: trees})
+	err := e.Workspace(ctx, WorkspaceRequest{
+		Project: m.Name, Repo: rt.tp.Target.Name, Worktree: rt.worktree, Title: title, ItemTrees: trees,
+		Layout: p.in.Choices.Layout, Item: itemAfterStart(p.in.Item, rts), Forge: m.Forge,
+	})
 	if err != nil {
 		// The work exists; a tab that did not open is a warning, not a failed start.
 		sr.Outcome, sr.Error = OutcomeSkipped, err.Error()
@@ -504,4 +526,26 @@ func stepOf(p Plan, kind StepKind, repo string) *Step {
 		}
 	}
 	return nil
+}
+
+// itemAfterStart is the work item with the child issues and MRs start work just
+// created added, which the sync cache does not know yet: the workspace shows
+// them and the agent skill names them.
+func itemAfterStart(it domain.WorkItem, rts map[string]*runtime) domain.WorkItem {
+	it.Children = slices.Clone(it.Children)
+	it.MRs = slices.Clone(it.MRs)
+	for _, name := range slices.Sorted(maps.Keys(rts)) {
+		rt := rts[name]
+		if !rt.child.IsZero() && !slices.ContainsFunc(it.Children, func(c forge.Issue) bool { return c.Ref == rt.child }) {
+			c := forge.Issue{Ref: rt.child, Title: rt.tp.Child.Title, Description: rt.tp.Child.Body, State: "opened"}
+			if rt.result.ChildURL != "" {
+				c.WebURL = rt.result.ChildURL
+			}
+			it.Children = append(it.Children, c)
+		}
+		if rt.mr != nil && !slices.ContainsFunc(it.MRs, func(m forge.MR) bool { return m.Ref == rt.mr.Ref }) {
+			it.MRs = append(it.MRs, *rt.mr)
+		}
+	}
+	return it
 }

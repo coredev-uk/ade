@@ -33,6 +33,9 @@ type MRDraft struct {
 	Description string
 	Draft       bool
 	Labels      []string
+	// CommitPrefix is the prefix for any commit the forge must create to open
+	// the MR (GitHub's empty start commit); empty means none.
+	CommitPrefix string
 }
 
 // Branch is a created branch.

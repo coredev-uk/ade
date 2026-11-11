@@ -12,6 +12,7 @@ import (
 	"github.com/coredev-uk/ade/internal/app"
 	"github.com/coredev-uk/ade/internal/project"
 	"github.com/coredev-uk/ade/internal/startwork"
+	"github.com/coredev-uk/ade/internal/workspace"
 )
 
 func init() {
@@ -33,6 +34,7 @@ type startFlags struct {
 	moveLabel   bool
 	noLabel     bool
 	noWorkspace bool
+	layout      string
 	dryRun      bool
 	session     string // zellij session for the tab; verify scripts only
 }
@@ -45,6 +47,7 @@ func (f *startFlags) bind(cmd *cobra.Command, withMode bool) {
 		fl.BoolVar(&f.moveLabel, "move-label", false, "confirm the workflow label move when labels.workflow.sync = ask")
 		fl.BoolVar(&f.noLabel, "no-move-label", false, "do not move the workflow label")
 		fl.BoolVar(&f.noWorkspace, "no-workspace", false, "do not open a workspace tab")
+		fl.StringVar(&f.layout, "layout", "", "main pane of the workspace tab: code (editor) | agent (omp with the ADE implement skill) | manual (shell); default: host.layout, then the manifest's workspace, then code")
 		fl.StringVar(&f.session, "session", "", "zellij session to open the tab in (default: ade; for tests)")
 		_ = fl.MarkHidden("session")
 	}
@@ -149,6 +152,12 @@ func (f startFlags) choices(r *startwork.Resolved) (startwork.Choices, error) {
 			return ch, err
 		}
 		ch.Child = p
+	}
+	if f.layout != "" {
+		if !workspace.ValidLayout(f.layout) || f.layout == workspace.LayoutReview {
+			return ch, fmt.Errorf("--layout %q: want code, agent or manual", f.layout)
+		}
+		ch.Layout = f.layout
 	}
 	if f.moveLabel && f.noLabel {
 		return ch, errors.New("--move-label and --no-move-label contradict each other")
