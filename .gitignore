@@ -22,3 +22,5 @@ result-*
 .impeccable/review/
 .impeccable/questions/
 demo.gif
+# bun runtime cache that appears when the cli tests run
+**/bun/@t@/
