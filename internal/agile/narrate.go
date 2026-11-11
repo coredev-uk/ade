@@ -2,6 +2,8 @@ package agile
 
 import (
 	"context"
+	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -63,4 +65,54 @@ func WithReviewNarrative(ctx context.Context, n ReviewNarrator, r Review) (Revie
 	}
 	r.Narrative = strings.TrimSpace(text)
 	return r, nil
+}
+
+// NarrateParent writes the narrative of one parent (a tracker issue and the MRs
+// merged for it) from its own facts.
+func (n *AINarrator) NarrateParent(ctx context.Context, r Review, it ReviewItem) (string, error) {
+	return n.run(ctx, ai.SprintParentJob(r.Project, r.Sprint.Title, it.Ref, parentFacts(r, it)))
+}
+
+// parentFacts is the deterministic input of a parent's narrative: the item
+// line with its cycle time, and the sprint it belongs to.
+func parentFacts(r Review, it ReviewItem) string {
+	basis := "by item count"
+	if r.Basis == BasisWeight {
+		basis = "by weight"
+	}
+	return fmt.Sprintf("Sprint %s (%s – %s), measured %s.\n\n%s\n", r.Sprint.Title, r.Sprint.Start, r.Sprint.Due, basis, itemLine(it))
+}
+
+// ParentNarrator writes the narrative of one parent of a sprint review.
+type ParentNarrator interface {
+	NarrateParent(ctx context.Context, r Review, it ReviewItem) (string, error)
+}
+
+// ParentNarrated says which parents get a narrative: done, with merged MRs
+// (what was delivered is what there is to narrate).
+func ParentNarrated(it ReviewItem) bool { return it.Done && len(it.MRs) > 0 }
+
+// WithParentNarratives attaches a narrative to every parent that has merged MRs
+// (PLAN 6.4, the Markdown export). Calls are cached by content and capped like
+// any other, so the first failure (a budget stop, AI off) ends the run: what
+// was written stays, and the failure is returned with the count done.
+func WithParentNarratives(ctx context.Context, n ParentNarrator, r Review) (Review, int, error) {
+	if n == nil {
+		return r, 0, nil
+	}
+	items := slices.Clone(r.Items)
+	r.Items = items
+	done := 0
+	for i := range items {
+		if !ParentNarrated(items[i]) {
+			continue
+		}
+		text, err := n.NarrateParent(ctx, r, items[i])
+		if err != nil {
+			return r, done, fmt.Errorf("%s: %w", short(items[i].Ref), err)
+		}
+		items[i].Narrative = strings.TrimSpace(text)
+		done++
+	}
+	return r, done, nil
 }

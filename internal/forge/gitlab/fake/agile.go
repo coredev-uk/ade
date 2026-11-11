@@ -173,6 +173,50 @@ func (s *Server) AddSprintEvent(ref forge.Ref, title, action string, at time.Tim
 	return nil
 }
 
+// AddSystemNote adds a system note, GitLab's own wording such as "assigned to
+// @sandbox-dev", to an issue or MR at the given time. It is an individual
+// discussion, which is how GitLab lists system notes.
+func (s *Server) AddSystemNote(ref forge.Ref, body string, at time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.touch(ref); err != nil {
+		return err
+	}
+	n := &note{ID: s.st.id(), Author: s.st.me, Body: body, System: true, Created: at}
+	s.st.threads[ref] = append(s.st.threads[ref], &discussion{ID: fmt.Sprintf("%040x", s.st.id()), Individual: true, Notes: []*note{n}})
+	return nil
+}
+
+// AddMergedMR adds an MR in project that was merged at the given time and
+// closes parent ("Closes group/tracker#N" in its description, which is how a
+// sync attaches an MR to a tracker item).
+func (s *Server) AddMergedMR(project, title string, parent forge.Ref, created, merged time.Time) (forge.Ref, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.st.findProject(project)
+	if p == nil {
+		return forge.Ref{}, fmt.Errorf("fake: no project %q", project)
+	}
+	is, err := s.issue(parent)
+	if err != nil {
+		return forge.Ref{}, err
+	}
+	iid := 1
+	for _, m := range s.st.mrs {
+		if m.Project == p {
+			iid = max(iid, m.IID+1)
+		}
+	}
+	id := s.st.id()
+	s.st.mrs = append(s.st.mrs, &mr{
+		ID: id, IID: iid, Project: p, Title: title, Desc: fmt.Sprintf("Closes %s.", parent),
+		State: "merged", Source: fmt.Sprintf("merged-work-%d", iid), Target: "main", SHA: fmt.Sprintf("%040x", id),
+		Author: s.st.me, Assignees: []*user{s.st.me}, MergedBy: s.st.me, Closes: []*issue{is},
+		Created: created, Updated: merged, Merged: &merged,
+	})
+	return s.st.ref(p, iid, forge.KindMR), nil
+}
+
 // AddEvent records an activity-feed entry for project events (author is the
 // sandbox user when empty).
 func (s *Server) AddEvent(e forge.Event) {

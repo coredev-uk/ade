@@ -14,6 +14,7 @@ import (
 	"github.com/coredev-uk/ade/internal/agent"
 	"github.com/coredev-uk/ade/internal/ai"
 	"github.com/coredev-uk/ade/internal/notify"
+	"github.com/coredev-uk/ade/internal/records"
 )
 
 func init() { register(newAgentCmd) }
@@ -68,6 +69,7 @@ type agentStartFlags struct {
 	repo, driver, profile string
 	maxUSD                float64
 	yes, dryRun           bool
+	noNotes               bool
 }
 
 func (f *agentStartFlags) bind(cmd *cobra.Command) {
@@ -78,6 +80,7 @@ func (f *agentStartFlags) bind(cmd *cobra.Command) {
 	fl.Float64Var(&f.maxUSD, "max-usd", 0, "lower the run's cost cap below budget.agent_run_usd")
 	fl.BoolVar(&f.yes, "yes", false, "skip the pre-flight confirmation")
 	fl.BoolVar(&f.dryRun, "dry-run", false, "show the target and the pre-flight; start nothing, spend nothing")
+	fl.BoolVar(&f.noNotes, "no-notes", false, "leave your notes on the item out of the prompts (they are included by default)")
 }
 
 func (f agentStartFlags) request(kind agent.Kind, t agent.Target, c agent.Context) agent.Request {
@@ -122,6 +125,11 @@ func runAgentStart(cmd *cobra.Command, refArg string, f agentStartFlags, kind ag
 	if err != nil {
 		return err
 	}
+	if !f.noNotes {
+		if err := c.AddNotes(records.New(appFrom(cmd).RecordsDir), t); err != nil {
+			return err
+		}
+	}
 	s, err := newAgentSession(cmd)
 	if err != nil {
 		return err
@@ -138,9 +146,13 @@ func runAgentStart(cmd *cobra.Command, refArg string, f agentStartFlags, kind ag
 	}
 	if f.dryRun {
 		if jsonOut {
-			return printJSON(w, map[string]any{"target": t, "preflight": pf, "dry_run": true})
+			return printJSON(w, map[string]any{"target": t, "preflight": pf, "dry_run": true, "includes_notes": c.Notes != ""})
 		}
-		fmt.Fprintf(w, "dry run: %s in %s (%s)\n  estimate of the first call $%.4f (priced: %v); nothing was started\n", kind, t.Worktree, t.Branch, pf.EstimateUSD, pf.Priced)
+		inc := ""
+		if c.Notes != "" {
+			inc = " · includes your notes"
+		}
+		fmt.Fprintf(w, "dry run: %s in %s (%s)\n  estimate of the first call $%.4f (priced: %v)%s; nothing was started\n", kind, t.Worktree, t.Branch, pf.EstimateUSD, pf.Priced, inc)
 		return nil
 	}
 	if kind == agent.KindPlan {

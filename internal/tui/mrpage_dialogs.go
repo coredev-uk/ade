@@ -23,6 +23,7 @@ const (
 	modalSubmit
 	modalMerge
 	modalLog
+	modalAI
 )
 
 // severities are the choices of a comment, in cycling order. The first, none,
@@ -71,6 +72,9 @@ type mrModal struct {
 	warn string // a refusal shown inside the dialog
 
 	thread string // reply: the discussion
+	aiNote string // reply: set when the text is an AI draft
+
+	ai aiKey // modalAI: the call waiting for a yes
 
 	target  lineTarget // comment: where
 	sev     int        // comment, edit: index into severities
@@ -150,6 +154,8 @@ func (m *model) modalKey(k tea.KeyPressMsg) tea.Cmd {
 		}
 	case modalMerge:
 		return m.mergeKey(md, ks)
+	case modalAI:
+		return m.aiConfirmKey(md, ks)
 	case modalLog:
 		switch ks {
 		case "j", "down":
@@ -236,6 +242,9 @@ func (m model) mrOverlay(w, h int) string {
 				break
 			}
 		}
+		if md.aiNote != "" {
+			l = append(l, stFaint.Render(ansi.Truncate(md.aiNote, inner, "…")))
+		}
 		l = append(l, md.ed.view(inner, editorRows, "your reply")...)
 	case modalComment, modalEditDraft:
 		title = "Comment · " + md.target.String()
@@ -255,6 +264,8 @@ func (m model) mrOverlay(w, h int) string {
 		title, l = m.submitDialog(md, inner)
 	case modalMerge:
 		title, l = m.mergeDialog(md, inner)
+	case modalAI:
+		title, l = m.aiModal(md, inner)
 	case modalLog:
 		title, l = m.logDialog(md, inner, h)
 	}
@@ -283,6 +294,8 @@ func (m model) modalHint(md *mrModal) string {
 	switch md.kind {
 	case modalReply:
 		return keys("enter", "post reply", "alt+enter", "newline", "esc", "cancel")
+	case modalAI:
+		return keys("enter", "send", "esc", "cancel")
 	case modalComment:
 		return keys("enter", "add draft", "tab", "severity", "alt+enter", "newline", "esc", "cancel")
 	case modalEditDraft:

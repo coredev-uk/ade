@@ -43,6 +43,7 @@ type glyphs struct {
 	Selected, Sep, Rule                            string
 	OK, Warn, Bad, Info, Unread                    string
 	Up, Down, Dirty, Sync                          string
+	Thread                                         string // unresolved review threads on a row
 }
 
 var unicodeGlyphs = glyphs{
@@ -50,7 +51,7 @@ var unicodeGlyphs = glyphs{
 	Travelled: "━", ToCome: "─", Vertical: "┃", Branch: "┣━", BranchEnd: "┗━",
 	Selected: "▸", Sep: "·", Rule: "─",
 	OK: "✓", Warn: "▲", Bad: "✕", Info: "●", Unread: "●",
-	Up: "↑", Down: "↓", Dirty: "✎", Sync: "⟳",
+	Up: "↑", Down: "↓", Dirty: "✎", Sync: "⟳", Thread: "✉",
 }
 
 var asciiGlyphs = glyphs{
@@ -58,7 +59,7 @@ var asciiGlyphs = glyphs{
 	Travelled: "=", ToCome: "-", Vertical: "|", Branch: "+-", BranchEnd: "`-",
 	Selected: ">", Sep: "-", Rule: "-",
 	OK: "+", Warn: "!", Bad: "x", Info: "*", Unread: "*",
-	Up: "^", Down: "v", Dirty: "~", Sync: "~",
+	Up: "^", Down: "v", Dirty: "~", Sync: "~", Thread: "m",
 }
 
 func glyphSet(name string) glyphs {

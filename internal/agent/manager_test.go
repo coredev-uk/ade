@@ -286,12 +286,12 @@ func TestLifecyclePlanApproveRunReviewPush(t *testing.T) {
 		}
 	}
 
-	// Events: awaiting-approval, review and pushed are news; running is not.
+	// Events: plan.ready, run.end and pushed are news; running is not.
 	seen := map[string]events.Event{}
 	for _, ev := range e.drain() {
 		seen[ev.Kind] = ev
 	}
-	for _, k := range []string{"agent.run.awaiting-approval", "agent.run.review", "agent.run.pushed"} {
+	for _, k := range []string{EventPlanReady, EventRunEnd, "agent.run.pushed"} {
 		if ev, ok := seen[k]; !ok || ev.Transient || ev.Subject != "g/tracker#42" {
 			t.Errorf("event %s = %+v (present %v)", k, ev, ok)
 		}
@@ -369,7 +369,7 @@ func TestCostCapKillsTheProcess(t *testing.T) {
 	}
 	var failedEv bool
 	for _, ev := range e.drain() {
-		if ev.Kind == "agent.run.failed" && ev.Severity == events.Error {
+		if ev.Kind == EventRunFailed && ev.Severity == events.Error {
 			failedEv = true
 		}
 	}

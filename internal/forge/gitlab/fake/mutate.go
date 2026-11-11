@@ -143,6 +143,25 @@ func (s *Server) MergeMR(ref forge.Ref) error {
 	return nil
 }
 
+// MergeMRAs merges an open MR as username, who then shows as its merger.
+func (s *Server) MergeMRAs(ref forge.Ref, username string) error {
+	if err := s.MergeMR(ref); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m, err := s.mr(ref)
+	if err != nil {
+		return err
+	}
+	u := s.st.findUser(username)
+	if u == nil {
+		return fmt.Errorf("fake gitlab: no user %q", username)
+	}
+	m.MergedBy = u
+	return nil
+}
+
 // Advance moves the fake clock forward; later mutations are stamped with it.
 func (s *Server) Advance(d time.Duration) {
 	s.mu.Lock()

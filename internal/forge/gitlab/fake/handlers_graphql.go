@@ -31,6 +31,10 @@ func (s *Server) graphql(w http.ResponseWriter, r *http.Request) {
 		s.setIterationMutation(w, req.Variables)
 		return
 	}
+	if strings.Contains(req.Query, "issueSetWeight") {
+		s.setWeightMutation(w, req.Variables)
+		return
+	}
 	path, _ := req.Variables["path"].(string)
 	if !s.st.hasGroup(path) {
 		writeJSON(w, http.StatusOK, object{"data": object{"group": nil}})
@@ -40,7 +44,11 @@ func (s *Server) graphql(w http.ResponseWriter, r *http.Request) {
 	var errs []object
 	if strings.Contains(req.Query, "iterationCadences") {
 		if s.tier == Premium {
-			group["iterationCadences"] = object{"nodes": []object{{"id": "gid://gitlab/Iterations::Cadence/1"}}}
+			nodes := []object{{"id": "gid://gitlab/Iterations::Cadence/1"}}
+			if strings.Contains(req.Query, "durationInWeeks") {
+				nodes = s.cadenceNodes(true)
+			}
+			group["iterationCadences"] = object{"nodes": nodes}
 		} else {
 			group["iterationCadences"] = nil
 			errs = append(errs, object{

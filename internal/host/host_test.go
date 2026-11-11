@@ -36,18 +36,41 @@ func TestDecide(t *testing.T) {
 
 func TestArgv(t *testing.T) {
 	cases := []struct {
-		a     Action
-		state zellij.State
-		want  []string
+		a      Action
+		state  zellij.State
+		config string
+		want   []string
 	}{
-		{Create, zellij.Absent, []string{"zellij", "--session", "ade", "--new-session-with-layout", "/l.kdl"}},
-		{Attach, zellij.Live, []string{"zellij", "attach", "ade"}},
-		{Attach, zellij.Exited, []string{"zellij", "attach", "--force-run-commands", "ade"}},
-		{RunHere, zellij.Absent, nil},
+		{Create, zellij.Absent, "", []string{"zellij", "--session", "ade", "--new-session-with-layout", "/l.kdl"}},
+		{Attach, zellij.Live, "", []string{"zellij", "attach", "ade"}},
+		{Attach, zellij.Exited, "", []string{"zellij", "attach", "--force-run-commands", "ade"}},
+		{RunHere, zellij.Absent, "", nil},
+		{Create, zellij.Absent, "/c/z.kdl", []string{"zellij", "--config", "/c/z.kdl", "--session", "ade", "--new-session-with-layout", "/l.kdl"}},
+		{Attach, zellij.Live, "/c/z.kdl", []string{"zellij", "--config", "/c/z.kdl", "attach", "ade"}},
+		{Attach, zellij.Exited, "/c/z.kdl", []string{"zellij", "--config", "/c/z.kdl", "attach", "--force-run-commands", "ade"}},
 	}
 	for _, c := range cases {
-		if got := Argv(c.a, c.state, "/l.kdl"); !slices.Equal(got, c.want) {
-			t.Errorf("Argv(%v,%v) = %v, want %v", c.a, c.state, got, c.want)
+		if got := Argv(c.a, c.state, "/l.kdl", c.config); !slices.Equal(got, c.want) {
+			t.Errorf("Argv(%v,%v,%q) = %v, want %v", c.a, c.state, c.config, got, c.want)
 		}
+	}
+}
+
+func TestUsesUnlockFirstOnlyInsideVSCodeWithoutAUserConfig(t *testing.T) {
+	none := func(string) string { return "" }
+	userCfg := func(k string) string {
+		if k == "ZELLIJ_CONFIG_FILE" {
+			return "/home/me/z.kdl"
+		}
+		return ""
+	}
+	if !(Env{InsideVSCode: true}).UsesUnlockFirst(none) {
+		t.Error("zellij started in a VS Code terminal must get the unlock-first preset")
+	}
+	if (Env{}).UsesUnlockFirst(none) {
+		t.Error("outside VS Code the user's own zellij config applies")
+	}
+	if (Env{InsideVSCode: true}).UsesUnlockFirst(userCfg) {
+		t.Error("an explicit $ZELLIJ_CONFIG_FILE wins over ADE's preset")
 	}
 }

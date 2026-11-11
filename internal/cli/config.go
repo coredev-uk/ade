@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -21,7 +22,7 @@ func newConfigCmd() *cobra.Command {
 		Short:             "Inspect and validate configuration",
 		PersistentPreRunE: lenientPreRun,
 	}
-	cmd.AddCommand(newConfigCheckCmd())
+	cmd.AddCommand(newConfigCheckCmd(), newConfigSchemaCmd())
 	return cmd
 }
 
@@ -30,6 +31,8 @@ type fileReport struct {
 	File   string         `json:"file"`
 	Kind   string         `json:"kind"` // config | manifest
 	Issues []config.Issue `json:"issues"`
+	// Overlay is the local override merged into the file, when there is one.
+	Overlay string `json:"overlay,omitempty"`
 }
 
 func newConfigCheckCmd() *cobra.Command {
@@ -62,6 +65,55 @@ func newConfigCheckCmd() *cobra.Command {
 	return cmd
 }
 
+func newConfigSchemaCmd() *cobra.Command {
+	var (
+		manifest bool
+		write    string
+	)
+	cmd := &cobra.Command{
+		Use:   "schema",
+		Short: "Print the JSON Schema of the user config or of a manifest",
+		Long: "Prints the JSON Schema (draft 2020-12) generated from ADE's config structs, for editor\n" +
+			"completion and typo detection in config.toml and *.ade.toml (taplo, VS Code Even Better\n" +
+			"TOML: put `#:schema <path or URL>` on the first line). The user config schema is printed by\n" +
+			"default, --manifest prints the manifest one, and --write DIR writes both as\n" +
+			"config.schema.json and manifest.schema.json (what docs/schema/ holds).",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if write != "" {
+				if err := os.MkdirAll(write, 0o755); err != nil {
+					return err
+				}
+				for _, k := range []config.SchemaKind{config.SchemaConfig, config.SchemaManifest} {
+					doc, err := config.Schema(k)
+					if err != nil {
+						return err
+					}
+					path := filepath.Join(write, config.SchemaFile(k))
+					if err := os.WriteFile(path, doc, 0o644); err != nil {
+						return err
+					}
+					fmt.Fprintln(cmd.OutOrStdout(), "wrote", path)
+				}
+				return nil
+			}
+			kind := config.SchemaConfig
+			if manifest {
+				kind = config.SchemaManifest
+			}
+			doc, err := config.Schema(kind)
+			if err != nil {
+				return err
+			}
+			_, err = cmd.OutOrStdout().Write(doc)
+			return err
+		},
+	}
+	cmd.Flags().BoolVar(&manifest, "manifest", false, "print the manifest schema instead of the user config schema")
+	cmd.Flags().StringVar(&write, "write", "", "write config.schema.json and manifest.schema.json into this directory")
+	return cmd
+}
+
 func checkConfig(cmd *cobra.Command, files []string) []fileReport {
 	a := appFrom(cmd)
 	var cfg *config.Config
@@ -75,7 +127,7 @@ func checkConfig(cmd *cobra.Command, files []string) []fileReport {
 	var ms []*config.Manifest
 	add := func(label string, m *config.Manifest, err error) {
 		if err != nil {
-			reports = append(reports, fileReport{label, "manifest", []config.Issue{{Severity: config.SeverityError, Msg: err.Error()}}})
+			reports = append(reports, fileReport{File: label, Kind: "manifest", Issues: []config.Issue{{Severity: config.SeverityError, Msg: err.Error()}}})
 			return
 		}
 		if m.Source == "" {
@@ -85,7 +137,7 @@ func checkConfig(cmd *cobra.Command, files []string) []fileReport {
 	}
 	if len(files) > 0 {
 		for _, f := range files {
-			m, err := readManifestFile(f)
+			m, err := config.ReadManifestFile(f)
 			add(f, m, err)
 		}
 	} else if a != nil {
@@ -101,7 +153,7 @@ func checkConfig(cmd *cobra.Command, files []string) []fileReport {
 			continue
 		}
 		seen[m.Source] = true
-		reports = append(reports, fileReport{m.Source, "manifest", nonNil(byFile[m.Source])})
+		reports = append(reports, fileReport{m.Source, "manifest", nonNil(byFile[m.Source]), m.Overlay})
 	}
 	return reports
 }
@@ -116,22 +168,14 @@ func configReport(cmd *cobra.Command, a *app.App) fileReport {
 		if err := loadError(cmd); err != nil {
 			msg = err.Error()
 		}
-		return fileReport{file, "config", []config.Issue{{Severity: config.SeverityError, Msg: msg}}}
+		return fileReport{File: file, Kind: "config", Issues: []config.Issue{{Severity: config.SeverityError, Msg: msg}}}
 	}
 	cfg := a.Config
 	issues := cfg.Validate()
 	if cfg.Missing {
 		issues = append([]config.Issue{{Severity: config.SeverityWarn, Msg: "file not found; defaults in use"}}, issues...)
 	}
-	return fileReport{cfg.File, "config", nonNil(issues)}
-}
-
-func readManifestFile(path string) (*config.Manifest, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	return config.ParseManifest(data, path)
+	return fileReport{File: cfg.File, Kind: "config", Issues: nonNil(issues), Overlay: cfg.Overlay}
 }
 
 // nonNil keeps JSON output as [] rather than null.
@@ -145,6 +189,9 @@ func nonNil(i []config.Issue) []config.Issue {
 func printReports(w io.Writer, reports []fileReport) {
 	for _, r := range reports {
 		fmt.Fprintf(w, "%s (%s)\n", r.File, r.Kind)
+		if r.Overlay != "" {
+			fmt.Fprintf(w, "  local override %s\n", r.Overlay)
+		}
 		if len(r.Issues) == 0 {
 			fmt.Fprintln(w, "  ok")
 		}

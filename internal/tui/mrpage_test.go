@@ -29,6 +29,10 @@ import (
 
 const grp = fake.GroupPath
 
+// settleTimeout is how long one command may take; the live test raises it: a
+// real model answers in seconds and a rate-limited forge makes the client wait.
+var settleTimeout = 10 * time.Second
+
 func mrRef(proj string, iid int) forge.Ref {
 	return forge.Ref{Project: grp + "/" + proj, IID: iid, Kind: forge.KindMR}
 }
@@ -116,7 +120,7 @@ func (e *mrEnv) settle(cmd tea.Cmd) {
 		var msg tea.Msg
 		select {
 		case msg = <-done:
-		case <-time.After(10 * time.Second):
+		case <-time.After(settleTimeout):
 			e.t.Fatal("a command did not return")
 		}
 		switch msg := msg.(type) {

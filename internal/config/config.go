@@ -38,6 +38,8 @@ type Config struct {
 	// existed and defaults are in effect.
 	File    string `toml:"-"`
 	Missing bool   `toml:"-"`
+	// Overlay is the local override file merged over File ("" when there is none).
+	Overlay string `toml:"-"`
 	// Undecoded lists keys present in the file that ADE does not know.
 	Undecoded []string `toml:"-"`
 }
@@ -148,7 +150,7 @@ type Budget struct {
 
 type Host struct {
 	Mode   string `toml:"mode"`   // auto | zellij | vscode | plain
-	Editor string `toml:"editor"` // auto | nvim | code | $EDITOR
+	Editor string `toml:"editor"` // auto | nvim | ade-nvim | code | $EDITOR
 	Glyphs string `toml:"glyphs"` // unicode | nerd | ascii
 }
 
@@ -184,18 +186,30 @@ func Defaults() Config {
 	}
 }
 
-// Load reads the config at path, layering it over Defaults. A missing file is
-// not an error: Missing is set and defaults apply.
+// Load reads the config at path, layering it over Defaults and then the local
+// override beside it (config.local.toml, see LocalPath and MergeTOML). A
+// missing file is not an error: Missing is set and defaults apply.
 func Load(path string) (*Config, error) {
 	cfg := Defaults()
 	cfg.File = path
 	data, err := os.ReadFile(path)
-	if errors.Is(err, fs.ErrNotExist) {
+	missing := errors.Is(err, fs.ErrNotExist)
+	if err != nil && !missing {
+		return nil, err
+	}
+	ov, err := readOverlay(path)
+	if err != nil {
+		return nil, err
+	}
+	if missing && ov == nil {
 		cfg.Missing = true
 		return &cfg, nil
 	}
-	if err != nil {
-		return nil, err
+	if ov != nil {
+		if data, err = MergeTOML(data, path, ov, LocalPath(path)); err != nil {
+			return nil, err
+		}
+		cfg.Overlay = LocalPath(path)
 	}
 	md, err := toml.Decode(string(data), &cfg)
 	if err != nil {

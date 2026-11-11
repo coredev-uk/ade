@@ -8,34 +8,22 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"strings"
 )
 
 // MaxBytes is the largest text copied. Terminals and multiplexers cap an
-// OSC 52 payload (tmux drops it above roughly 100 KB), and a silent
-// truncation would paste half a report.
+// OSC 52 payload, and a silent truncation would paste half a report.
 const MaxBytes = 70_000
 
 // ErrTooLarge says the text exceeds MaxBytes.
 var ErrTooLarge = errors.New("clipboard: text too large for an OSC 52 copy")
 
-// Sequence returns the escape sequence that sets the system clipboard to
-// text. Under tmux (TMUX set) it is wrapped in tmux's DCS passthrough, which
-// needs `set -g allow-passthrough on`; elsewhere (including zellij) it is the
-// bare OSC 52.
-func Sequence(text string) (string, error) { return sequence(text, os.Getenv("TMUX") != "") }
-
-func sequence(text string, tmux bool) (string, error) {
+// Sequence returns the OSC 52 escape that sets the system clipboard to text.
+// zellij and the terminals ADE supports pass it through as is.
+func Sequence(text string) (string, error) {
 	if len(text) > MaxBytes {
 		return "", fmt.Errorf("%w (%d bytes, limit %d)", ErrTooLarge, len(text), MaxBytes)
 	}
-	osc := "\x1b]52;c;" + base64.StdEncoding.EncodeToString([]byte(text)) + "\x07"
-	if tmux {
-		// Inside the DCS every ESC is doubled.
-		return "\x1bPtmux;" + strings.ReplaceAll(osc, "\x1b", "\x1b\x1b") + "\x1b\\", nil
-	}
-	return osc, nil
+	return "\x1b]52;c;" + base64.StdEncoding.EncodeToString([]byte(text)) + "\x07", nil
 }
 
 // Copy writes the copy request to w, normally the terminal (stdout or

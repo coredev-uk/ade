@@ -272,6 +272,7 @@ func TestItemPreviewShowsTheStrip(t *testing.T) {
 	h := newWsHarness(t)
 	h.selectRef("g/tracker#3")
 	h.m.ws.chips = map[string][]svcChip{"g/tracker#3": {{node: "api.dev", port: 5031, state: "ready"}}}
+	h.m.w = 120 // two regions: at 140+ the services move to the rail
 	out := ansi.Strip(h.m.homeDetail(60))
 	if !strings.Contains(out, "services  api.dev ● 5031") {
 		t.Fatalf("preview lacks the services strip:\n%s", out)

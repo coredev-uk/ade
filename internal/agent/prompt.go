@@ -44,6 +44,9 @@ type Context struct {
 	Comments []forge.Note `json:"comments,omitempty"`
 	Threads  []Thread     `json:"threads,omitempty"`
 	Agents   string       `json:"agents,omitempty"` // AGENTS.md of the worktree
+	// Notes are the user's own notes on the item (records.ReadNotes), when
+	// they are included in the prompt.
+	Notes string `json:"notes,omitempty"`
 }
 
 // maxAgentsBytes bounds the AGENTS.md carried into a prompt.
@@ -129,6 +132,9 @@ func (c Context) issueBlock(b *strings.Builder) {
 	}
 	if c.Child != nil {
 		fmt.Fprintf(b, "\n## Child issue %s: %s\n\n%s\n", c.Child.Ref, c.Child.Title, strings.TrimSpace(c.Child.Description))
+	}
+	if c.Notes != "" {
+		fmt.Fprintf(b, "\n## Your notes on this item\n\nThe person you work for keeps these private notes. Treat them as guidance about intent and constraints; do not copy them into code, commits or comments.\n\n%s\n", c.Notes)
 	}
 	if len(c.Comments) > 0 {
 		b.WriteString("\n## Comments\n")

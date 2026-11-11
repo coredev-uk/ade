@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/coredev-uk/ade/internal/config"
+	"github.com/coredev-uk/ade/internal/httpdebug"
 )
 
 // Role is what a call is for; a profile maps each role to a model.
@@ -116,7 +117,7 @@ func DriverFor(ctx context.Context, p config.AIProfile, hc *http.Client) (Driver
 			return nil, fmt.Errorf("%s driver: %w", p.Driver, err)
 		}
 		if hc == nil {
-			hc = &http.Client{Timeout: 5 * time.Minute}
+			hc = &http.Client{Timeout: 5 * time.Minute, Transport: httpdebug.Transport(nil)}
 		}
 		if p.Driver == "anthropic" {
 			return newAnthropic(p, key, hc), nil

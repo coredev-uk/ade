@@ -138,6 +138,8 @@ weight = { source = "auto" }
 
 An issue without a weight is **unweighted**, never zero, and appears in the needs-triage filter.
 
+ADE never re-weights silently. `ade issue weight <ref> <n|none>` (or `=` in the dashboard) is the explicit, audited way: it writes the weight field where `source` is `gitlab`, or `auto` and the forge licenses it, and otherwise swaps the `pattern` label, removing every old weight label explicitly. `github-field` and `none` cannot be written. The child issue start work made follows unless `--no-child`. `ade ai classify` suggests a weight from the closed issues of the same type and app that share a title word, with no model call.
+
 ### Starting work
 
 ```toml
@@ -154,7 +156,7 @@ mr          = { create = "ask", template = "Default", draft = true, closes = "ch
   when the issue already lives in the code repo. `always` / `never` force it. The child is linked back to the
   tracker issue (`relates_to` link on GitLab, native sub-issue on GitHub) and carries a `Parent:` reference in
   its description. Reading accepts any of these, so older data still resolves.
-- `mr.create`: `ask` (default), `always`, `never`. `mr.draft` opens the MR as a draft. `mr.closes = "child"`
+- `mr.create`: `ask` (default), `always`, `never`. `mr.draft` opens the MR as a draft; leave it out (or set `true`) for a draft MR, `false` to open it ready for review. `mr.closes = "child"`
   puts `Closes #<child>` in the MR body; `mr.mention = "parent"` references the tracker issue.
 - `mr.template`: the template name in the repo's MR template directory (GitLab
   `.gitlab/merge_request_templates/<name>.md`, GitHub `.github/pull_request_template.md`). ADE shows the
@@ -221,6 +223,88 @@ app  = ["api"]
 ade init --yes --forge github --token-cmd 'gh auth token' \
     --project 'git+https://github.com/acme/tracker.git#.ade.toml'
 ```
+
+## Bootstrapping a manifest
+
+A team lead does not have to write the manifest by hand: `ade project bootstrap` reads an existing forge group
+and generates it. It needs a forge entry in your own user config (run `ade init` first); that entry's name
+becomes the manifest's `forge` key.
+
+```sh
+ade project bootstrap --forge work --group acme --yes --out acme.ade.toml
+ade project bootstrap --forge personal --group my-org --match 'side-*' --tracker side-planning
+ade project bootstrap --forge work --group acme --publish --dry-run     # preview the merge request
+```
+
+| Flag | Meaning |
+|---|---|
+| `--forge` | entry of your user config; may be left out when there is exactly one |
+| `--group` | GitLab group (subgroups included) or GitHub organisation or user |
+| `--tracker` | tracker repo, full path or unique name; detected when left out |
+| `--name` | project name; defaults to the group's name |
+| `--match` | glob on repo names (or paths): include only these repos |
+| `--out` | file to write (default `.ade.toml`); `-` prints to stdout |
+| `--yes` | never prompt; ambiguities with no sensible default fail naming the flag that settles them |
+| `--force` | replace an existing `--out` file, or an existing manifest when publishing |
+| `--publish` | open a merge request adding `.ade.toml` to the tracker repo (a forge write, audited) |
+| `--dry-run` | write nothing, local or forge; print the manifest and what `--publish` would do |
+| `--json` | machine-readable result: manifest text, repos, skipped repos, notes, warnings, publish plan |
+
+In a terminal it asks about what it cannot settle (which repo is the tracker, which iteration cadence); with
+`--yes` or without a terminal it never prompts. Everything is read through the forge API: nothing is cloned.
+
+**What it detects** (and only states what it found; the rest is left as a comment):
+
+- **Repos:** the group's repos, archived ones skipped. A name prefix shared by every repo (`acme-api`,
+  `acme-web`, `acme-tracker`) is dropped from the `[repos.<name>]` keys.
+- **Tracker:** `--tracker`, else the repo whose recent issues carry the most app-like labels, else the one named
+  `tracker`, `issues` or `planning`. When these disagree or tie it asks, or fails under `--yes`.
+- **Label patterns:** scoped labels with `::`, `:` or `/` separators. The facet is read from the scope name:
+  `type` (also `kind`), `app` (`area`, `component`, `service`), `workflow` (`status`, `state`, `stage`) and
+  `weight` (`points`, `estimate`; values must be numbers). The spelling used on the most issues wins.
+- **Workflow stages:** by value name. `in progress` / `doing` / `wip` is `started` and `draft`; anything with
+  `review` is `review`; `done` / `closed` / `shipped` is `merged` and also `labels.workflow.done`. `blocked` is
+  left unmapped (ADE already reads it as blocked), as are values like `backlog`.
+- **App values:** a repo takes the app-label values equal to its name, else containing or contained in it,
+  else its own name (with a comment saying it is a guess).
+- **Iterations:** GitLab iterations when the group licenses them and has some (`cadence` is set when there are
+  several; the one with the most iterations is the default), otherwise milestones, otherwise `auto`. On GitHub:
+  the tracker repo's milestones.
+- **Weight:** the GitLab weight field when the group licenses it and issues use it, else a `weight` label
+  pattern, else `none`.
+- **Tasks:** from each repo's root files at the default branch. `go.mod` gives `go test ./...` (and `go run .`
+  when there is a root `main.go`), `package.json` gives its `dev`, `test`, `build` and `lint` scripts through the
+  package manager the lockfile names, `Makefile` gives `dev`/`run`/`serve`/`start`, `test`, `build` and `lint`
+  targets, and a `Procfile` gives one service per process (`$PORT` in the command sets `port = "auto"` and
+  `PORT = "{port}"`). A `flake.nix` with a `devShell` wraps every command in `nix develop -c`. When two files
+  offer the same task name, the order is Procfile, `package.json`, `Makefile`, `go.mod`. Docker compose services
+  and `package.json` install hooks are only mentioned in comments, and no `ready` probe is guessed.
+- **Conventions:** `child_issue = "auto"`, plus a comment naming the repos' MR templates.
+
+What it cannot know stays a comment: `requires` between repos, `ready` probes, hooks, services and any
+`conventions` beyond `child_issue`. Read the generated comments, adjust, and commit the file to the tracker repo.
+
+It validates the result exactly as `ade config check` would and refuses to write an invalid manifest. An existing
+file is never replaced without `--force`; a file that already holds exactly the manifest this run generates is left
+alone, so repeating a command is safe. (The output is deterministic: it changes only when the forge does.)
+
+**Publishing.** `--publish` creates the branch `ade/bootstrap-manifest` on the tracker repo, commits `.ade.toml`
+to it and opens a merge request into the default branch. It is idempotent: an identical file is not committed
+again, and an open merge request for the branch is reused (so editing the draft and publishing again updates the
+same request). If the default branch already has a different `.ade.toml`, publishing refuses unless `--force`;
+if it has the identical one, there is nothing to do. In a terminal the plan is shown and confirmed before anything
+is written. The three writes (`forge.branch.create`, `forge.file.commit`, `forge.mr.create`) land in the audit log;
+`--dry-run` shows the plan and the request body.
+
+Next steps, which the command also prints: try the file locally with `ade init --project <file>` (or
+`ade project add <file>`), and once it is merged, teammates use
+`ade init --yes --forge <kind> --token-env <VAR> --project 'git+<host>/<tracker>.git#.ade.toml'`.
+
+## Local overrides and the JSON Schema
+
+A `*.local.toml` beside a manifest (`acme.ade.toml` → `acme.ade.local.toml`) holds per-machine changes that are never shared, e.g. a clone URL or a fixed port. It is merged over the manifest before validation: tables merge key by key (so `[repos.api]` can change one key and keep the rest), every other value, arrays included, replaces the base. A manifest fetched from `git+…` or `https://…` has no file beside it, so its override lives in ADE's config directory under the manifest's file name (`~/.config/ade/acme.ade.local.toml`). `ade config check` names the override it applied, and `ade project add` / `ade update` store the merged manifest in the project snapshot.
+
+`ade config schema --manifest` prints a JSON Schema of the manifest (`docs/schema/manifest.schema.json`), for completion and typo detection in taplo or VS Code Even Better TOML: put `#:schema …/manifest.schema.json` on the first line.
 
 ## Checking a manifest
 

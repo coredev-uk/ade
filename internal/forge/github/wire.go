@@ -177,6 +177,7 @@ type wirePull struct {
 	Base               wireBranch  `json:"base"`
 	UpdatedAt          time.Time   `json:"updated_at"`
 	MergedAt           *time.Time  `json:"merged_at"`
+	MergedBy           *wireUser   `json:"merged_by"` // single-pull payload only
 	// Mergeable is null while GitHub computes it, and absent from lists.
 	Mergeable      *bool  `json:"mergeable"`
 	MergeableState string `json:"mergeable_state"`
@@ -206,7 +207,39 @@ func (w wirePull) mr(project string) forge.MR {
 		DetailedStatus: w.MergeableState,
 		UpdatedAt:      w.UpdatedAt,
 		MergedAt:       w.MergedAt,
+		MergedBy:       w.mergedBy(),
 	}
+}
+
+func (w wirePull) mergedBy() string {
+	if w.MergedBy == nil {
+		return ""
+	}
+	return w.MergedBy.Login
+}
+
+// changesRequested lists reviewers whose latest verdict is CHANGES_REQUESTED.
+func changesRequested(reviews []wireReview) []forge.User {
+	latest := map[int64]wireReview{}
+	var order []int64
+	for _, r := range reviews {
+		switch r.State {
+		case "APPROVED", "CHANGES_REQUESTED", "DISMISSED":
+		default:
+			continue
+		}
+		if _, seen := latest[r.User.ID]; !seen {
+			order = append(order, r.User.ID)
+		}
+		latest[r.User.ID] = r
+	}
+	var out []forge.User
+	for _, id := range order {
+		if r := latest[id]; r.State == "CHANGES_REQUESTED" {
+			out = append(out, r.User.user())
+		}
+	}
+	return out
 }
 
 type wireReview struct {

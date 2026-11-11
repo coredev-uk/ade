@@ -118,3 +118,18 @@ func TestRenderLayoutPutsRequirementsInTheServicesStack(t *testing.T) {
 		t.Fatalf("oneshots run as part of their dependents, no pane:\n%s", kdl)
 	}
 }
+
+// A review tab is for reading a diff: it carries no service or task panes even
+// when the manifest's workspace has a run group.
+func TestRenderLayoutOfAReviewTabRunsNothing(t *testing.T) {
+	f := newFixture(t, appManifest, "api/main", "web/main")
+	a := newApp(t, f, "plain")
+	tree := filepath.Join(f.root, "demo", "web", "main")
+	kdl, err := RenderLayout(context.Background(), a, "demo", "web", tree, WithLayout(LayoutReview), WithBaseRef("origin/main"), WithTitle("review-7"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(kdl, `"task"`) || strings.Contains(kdl, "services") || !strings.Contains(kdl, `name="diff"`) || !strings.Contains(kdl, `tab name="web/review-7"`) {
+		t.Fatalf("a review tab shows the diff and starts nothing:\n%s", kdl)
+	}
+}

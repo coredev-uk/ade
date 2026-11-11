@@ -6,6 +6,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/coredev-uk/ade/internal/editor"
 )
 
 var fullTools = Tools{Ade: "/opt/ade/bin/ade", Editor: "nvim -u NONE", Lazygit: "/bin/lazygit", Delta: "/bin/delta", Omp: "/bin/omp"}
@@ -266,5 +268,19 @@ func TestSlugIsASingleSafePathElement(t *testing.T) {
 	}
 	if slugOf("web.dev@/a") == slugOf("web.dev@/b") {
 		t.Error("different trees must not share a slug")
+	}
+}
+
+func TestCodeLayoutEditorPaneOpensTheVSCodeWindowAndKeepsAShell(t *testing.T) {
+	s := baseSpec(LayoutCode)
+	s.Tools.Editor, s.Tools.EditorArgs = editor.Editor{Kind: editor.Code, Cmd: "/bin/code"}.PaneCommand(s.Dir)
+	got, err := BuildLayout(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range []string{`name="editor"`, `command="sh"`, `"/bin/code"`, `"/projects/acme/web/418-paginate"`, `exec`} {
+		if !strings.Contains(got, w) {
+			t.Errorf("layout lacks %s\n%s", w, got)
+		}
 	}
 }

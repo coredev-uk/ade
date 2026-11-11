@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/coredev-uk/ade/internal/config"
+	"github.com/coredev-uk/ade/internal/httpdebug"
 )
 
 // Status of a single check.
@@ -61,7 +62,7 @@ func (o *Options) defaults() {
 		o.Timeout = 10 * time.Second
 	}
 	if o.HTTP == nil {
-		o.HTTP = &http.Client{Timeout: o.Timeout}
+		o.HTTP = &http.Client{Timeout: o.Timeout, Transport: httpdebug.Transport(nil)}
 	}
 	if o.Getenv == nil {
 		o.Getenv = os.Getenv

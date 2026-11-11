@@ -53,15 +53,25 @@ func (c *Client) MR(ctx context.Context, ref forge.Ref) (forge.MR, error) {
 		return forge.MR{}, err
 	}
 	var (
-		w     wireMR
-		appr  wireApprovals
-		discs []forge.Discussion
+		w         wireMR
+		appr      wireApprovals
+		discs     []forge.Discussion
+		reviewers []wireReviewer
 	)
 	base := mrPath(ref)
 	err := concurrently(
 		func() error { return c.getJSON(ctx, base, nil, false, &w) },
 		func() error { return c.getJSON(ctx, base+"/approvals", nil, false, &appr) },
 		func() (err error) { discs, err = c.Discussions(ctx, ref); return },
+		func() error {
+			// Reviewer verdicts are best effort: an instance without the
+			// endpoint just has no "changes requested" signal.
+			err := c.getJSON(ctx, base+"/reviewers", nil, true, &reviewers)
+			if errors.Is(err, forge.ErrUnavailable) || errors.Is(err, forge.ErrNotFound) {
+				return nil
+			}
+			return err
+		},
 	)
 	if err != nil {
 		return forge.MR{}, err
@@ -69,6 +79,8 @@ func (c *Client) MR(ctx context.Context, ref forge.Ref) (forge.MR, error) {
 	mr := w.mr(ref.Project)
 	mr.Approvals = appr.approvals()
 	mr.Unresolved, mr.Resolved = threadCounts(discs)
+	mr.Threads = forge.ThreadStates(discs)
+	mr.ChangesRequestedBy = changesRequested(reviewers)
 	return mr, nil
 }
 

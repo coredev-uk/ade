@@ -10,12 +10,13 @@ import (
 )
 
 // homeRow is one selectable line on Home: a work item or an MR awaiting
-// your review. Section rules are not rows; they are drawn between groups.
+// your review (or found by the search). Section rules are not rows; they are
+// drawn between groups.
 type homeRow struct {
 	project string
 	section homeSection
 	item    *domain.WorkItem // nil for review rows
-	mr      *forge.MR        // set for review rows
+	mr      *forge.MR        // set for review and search rows
 }
 
 func (r homeRow) ref() string {
@@ -35,10 +36,12 @@ const (
 	secReviews
 	secSprintOpen
 	secNext
+	secPrevious // unfinished items of the sprint that just ended
+	secSearch   // open MRs the forge search found beyond the synced ones
 )
 
 func (s homeSection) title() string {
-	return [...]string{"My work", "Reviews requested", "Sprint · open", "Next sprint"}[s]
+	return [...]string{"My work", "Reviews requested", "Sprint · open", "Next sprint", "Previous sprint", "Open MRs · search"}[s]
 }
 
 // homeFilter narrows Home to one kind of attention.
@@ -79,13 +82,65 @@ var courtRank = map[domain.Court]int{
 	domain.CourtReviewers: 3, domain.CourtCI: 4, domain.CourtAuthor: 5, domain.CourtNobody: 6,
 }
 
+// homeQuery is everything that narrows or extends Home's rows: the attention
+// filter, one facet value, one project, the search text and the open MRs the
+// forge search returned.
+type homeQuery struct {
+	filter  homeFilter
+	facet   string // "type" | "app" | "workflow"; "" none
+	value   string
+	project string
+	text    string
+	remote  []remoteMR
+}
+
+// remoteMR is an open MR found by the project-wide search.
+type remoteMR struct {
+	project string
+	mr      forge.MR
+}
+
+// facetValues lists the values a facet takes in it, "type" | "app" | "workflow".
+func facetValues(it *domain.WorkItem, facet string) []string {
+	switch facet {
+	case "type":
+		if it.Type != "" {
+			return []string{it.Type}
+		}
+	case "app":
+		return it.Apps
+	case "workflow":
+		if it.Workflow != "" {
+			return []string{it.Workflow}
+		}
+	}
+	return nil
+}
+
+func (q homeQuery) keep(r homeRow) bool {
+	if !q.filter.keep(r) {
+		return false
+	}
+	if q.facet != "" && (r.item == nil || !contains(facetValues(r.item, q.facet), q.value)) {
+		return false
+	}
+	return q.text == "" || fuzzyFields(q.text, rowFields(r))
+}
+
 // buildHomeRows flattens sync results into Home's selectable rows, grouped
 // per project and section, filtered by f.
 func buildHomeRows(results []forgesync.Result, f homeFilter) []homeRow {
+	return buildRows(results, homeQuery{filter: f})
+}
+
+func buildRows(results []forgesync.Result, q homeQuery) []homeRow {
 	var rows []homeRow
 	for ri := range results {
 		res := &results[ri]
-		var mine, open, next []*domain.WorkItem
+		if q.project != "" && res.Project != q.project {
+			continue
+		}
+		var mine, open, next, prev []*domain.WorkItem
 		for i := range res.Items {
 			it := &res.Items[i]
 			switch {
@@ -97,28 +152,46 @@ func buildHomeRows(results []forgesync.Result, f homeFilter) []homeRow {
 				open = append(open, it)
 			case inSprint(it, res.Window.Next):
 				next = append(next, it)
+			case inSprint(it, res.Window.Previous):
+				prev = append(prev, it)
 			}
 		}
 		sortMine(mine)
 		sortByRef(open)
 		sortByRef(next)
+		sortByRef(prev)
 		add := func(sec homeSection, items []*domain.WorkItem) {
 			for _, it := range items {
 				r := homeRow{project: res.Project, section: sec, item: it}
-				if f.keep(r) {
+				if q.keep(r) {
 					rows = append(rows, r)
 				}
 			}
 		}
 		add(secMine, mine)
+		have := map[string]bool{}
 		for i := range res.Reviews {
+			have[res.Reviews[i].Ref.String()] = true
 			r := homeRow{project: res.Project, section: secReviews, mr: &res.Reviews[i]}
-			if f.keep(r) {
+			if q.keep(r) {
 				rows = append(rows, r)
 			}
 		}
 		add(secSprintOpen, open)
 		add(secNext, next)
+		add(secPrevious, prev)
+		if q.text != "" {
+			for i := range q.remote {
+				rm := &q.remote[i]
+				if rm.project != res.Project || have[rm.mr.Ref.String()] {
+					continue
+				}
+				r := homeRow{project: res.Project, section: secSearch, mr: &rm.mr}
+				if q.filter == hfAll && q.facet == "" && q.keep(r) {
+					rows = append(rows, r)
+				}
+			}
+		}
 	}
 	return rows
 }

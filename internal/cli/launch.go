@@ -68,11 +68,25 @@ func launch(cmd *cobra.Command, dry bool) error {
 	}
 	layout := zellij.Layout(ade)
 	layoutFile := filepath.Join(a.Paths.CacheDir, "layout.kdl")
-	argv := host.Argv(action, env.Session, layoutFile)
+	var zellijConfig string
+	if env.UsesUnlockFirst(os.Getenv) {
+		// A zellij started inside VS Code runs ADE's unlock-first preset (PLAN 6.7).
+		zellijConfig = filepath.Join(filepath.Dir(a.Config.File), zellij.ConfigFileName)
+	}
+	argv := host.Argv(action, env.Session, layoutFile, zellijConfig)
 	if dry {
 		out := cmd.OutOrStdout()
-		fmt.Fprintf(out, "# layout file: %s\n%s# argv: %s\n", layoutFile, layout, strings.Join(argv, " "))
+		fmt.Fprintf(out, "# layout file: %s\n%s", layoutFile, layout)
+		if zellijConfig != "" {
+			fmt.Fprintf(out, "# zellij config: %s (unlock-first preset)\n", zellijConfig)
+		}
+		fmt.Fprintf(out, "# argv: %s\n", strings.Join(argv, " "))
 		return nil
+	}
+	if zellijConfig != "" {
+		if _, err := zellij.WriteUnlockFirst(filepath.Dir(zellijConfig)); err != nil {
+			return fmt.Errorf("write zellij config: %w", err)
+		}
 	}
 	if action == host.Create {
 		if err := paths.EnsureDir(a.Paths.CacheDir); err != nil {
@@ -96,7 +110,10 @@ func launch(cmd *cobra.Command, dry bool) error {
 }
 
 func hostEnv(ctx context.Context, a *app.App) (host.Env, error) {
-	env := host.Env{Mode: a.Config.Host.Mode, InsideZellij: os.Getenv("ZELLIJ") != ""}
+	env := host.Env{
+		Mode: a.Config.Host.Mode, InsideZellij: os.Getenv("ZELLIJ") != "",
+		InsideVSCode: os.Getenv("TERM_PROGRAM") == "vscode" || os.Getenv("VSCODE_IPC_HOOK_CLI") != "",
+	}
 	if env.InsideZellij {
 		return env, nil
 	}

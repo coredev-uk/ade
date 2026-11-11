@@ -101,10 +101,12 @@ type mrData struct {
 	loadedAt time.Time
 	busy     string // the write in flight ("merging"), empty when idle
 	outage   bool   // a failed read already raised its toast; later ones stay quiet
+
+	ai map[aiKey]*aiText // answers asked of the model, per kind and thread
 }
 
 func (d *mrData) anyBusy() bool {
-	return d.busy != "" || d.mrL.busy() || d.threadsL.busy() || d.diffL.busy() || d.jobsL.busy()
+	return d.busy != "" || d.mrL.busy() || d.threadsL.busy() || d.diffL.busy() || d.jobsL.busy() || d.aiBusy()
 }
 
 func (d *mrData) refreshDrafts(st *review.Store) {
@@ -131,6 +133,7 @@ type mrPage struct {
 	tab      mrTab
 
 	ovTop    int  // overview scroll
+	rawDesc  bool // Overview shows the raw description instead of the AI summary
 	thSel    int  // selected thread (index into threadList)
 	thDetail bool // narrow: the thread's conversation instead of the list
 
@@ -185,6 +188,7 @@ type mrResultMsg struct {
 	verb string // writes: the action in progress ("merging"), for messages
 	err  error
 	out  any
+	ai   aiKey // what == "ai": which answer this is
 }
 
 type mrSpinMsg struct{}
@@ -237,7 +241,7 @@ func (m *model) mrSelect(i int) tea.Cmd {
 	p := m.mr
 	p.hist, p.histEntries, p.histL = nil, nil, load{}
 	p.cur = i
-	p.thSel, p.thDetail, p.fileSel, p.focusDiff, p.lineCur, p.revSel, p.ciSel, p.ovTop = 0, false, 0, false, 0, 0, 0, 0
+	p.thSel, p.thDetail, p.fileSel, p.focusDiff, p.lineCur, p.revSel, p.ciSel, p.ovTop, p.rawDesc = 0, false, 0, false, 0, 0, 0, 0, false
 	if len(p.mrs) == 0 {
 		p.data = nil
 		return nil
@@ -274,6 +278,8 @@ func (m *model) ensureTab() tea.Cmd {
 	}
 	var cmds []tea.Cmd
 	switch p.tab {
+	case tabOverview:
+		cmds = append(cmds, m.maybeSummary())
 	case tabThreads, tabDiff, tabReview:
 		if d.diffL.st == loadIdle {
 			cmds = append(cmds, m.loadDiff(d))
@@ -394,6 +400,12 @@ func (m model) backend(ctx context.Context, ref forge.Ref, key string) (review.B
 
 // mrRun runs fn against the MR's forge off the UI loop.
 func (m *model) mrRun(d *mrData, what, verb string, fn func(ctx context.Context, be review.Backend) (any, error)) tea.Cmd {
+	return m.mrRunMsg(d, mrResultMsg{what: what, verb: verb}, fn)
+}
+
+// mrRunMsg is mrRun for a result that carries more than a name: msg is what
+// comes back, with ref, err and out filled in.
+func (m *model) mrRunMsg(d *mrData, msg mrResultMsg, fn func(ctx context.Context, be review.Backend) (any, error)) tea.Cmd {
 	ctx, ref, key, mm := m.ctx, d.ref, d.forgeKey, *m
 	if ctx == nil {
 		ctx = context.Background()
@@ -404,7 +416,8 @@ func (m *model) mrRun(d *mrData, what, verb string, fn func(ctx context.Context,
 		if err == nil {
 			out, err = fn(ctx, be)
 		}
-		return mrResultMsg{ref: ref, what: what, verb: verb, err: err, out: out}
+		msg.ref, msg.err, msg.out = ref, err, out
+		return msg
 	}
 	return tea.Batch(run, m.kickSpin())
 }
@@ -512,6 +525,9 @@ func (m *model) onMRResult(msg mrResultMsg) tea.Cmd {
 			}
 			d.session, d.drafts = s, s.Drafts
 		}
+		if m.mr != nil && m.mr.data == d && m.mr.tab == tabOverview {
+			return m.maybeSummary() // the summary was waiting for the diff
+		}
 		return nil
 	case "jobs":
 		d.jobsL = settled(msg.err)
@@ -526,6 +542,11 @@ func (m *model) onMRResult(msg mrResultMsg) tea.Cmd {
 		if p := m.mr; p != nil && p.modal != nil && p.modal.kind == modalLog {
 			p.modal.setLog(msg)
 		}
+		return nil
+	case "ai":
+		return m.onAI(d, msg)
+	case "pager":
+		m.onPager(msg)
 		return nil
 	}
 	return m.onWritten(d, msg)

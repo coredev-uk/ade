@@ -113,7 +113,11 @@ type Job struct {
 	Forge string
 	Ref   forge.Ref
 	// Name is the artifact slug, e.g. "summary-mr233".
-	Name      string
+	Name string
+	// Notes is true when Prompt carries the user's notes (WithNotes): the
+	// notes are part of the prompt and so of the cache key, and the
+	// pre-flight says so.
+	Notes     bool
 	MaxTokens int
 	// Params are extra audit params (no prompt bodies, never secrets).
 	Params map[string]any
@@ -219,10 +223,16 @@ func (s *Service) Run(ctx context.Context, j Job) (Result, error) {
 		call.MaxCostUSD = s.Cfg.Budget.CallUSD
 	}
 	resp, err := d.Complete(ctx, call)
+	var res Result
 	if err != nil {
-		return s.failed(j, name, p, model, item, resp, err, pf)
+		res, err = s.failed(j, name, p, model, item, resp, err, pf)
+	} else {
+		res, err = s.finish(j, name, p, model, item, hash, resp, pf)
 	}
-	return s.finish(j, name, p, model, item, hash, resp, pf)
+	// The call happened (and may have cost something) whether or not it
+	// succeeded: spend can cross a threshold either way.
+	s.warnBudget(item)
+	return res, err
 }
 
 // Preview reports what Run would do without sending anything or writing an
@@ -367,7 +377,7 @@ func (s *Service) preflight(ctx context.Context, j Job, name string, p config.AI
 	pf := Preflight{
 		Profile: name, Driver: p.Driver, Model: model, Role: string(j.Role),
 		InTokens: estimateTokens(j.System) + estimateTokens(j.Prompt), OutTokens: out,
-		Dest: destOf(p),
+		Dest: destOf(p), Notes: j.Notes,
 	}
 	if price, ok := s.priceFor(ctx, name, p, d, model); ok {
 		pf.Priced = true

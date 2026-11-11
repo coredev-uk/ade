@@ -35,6 +35,7 @@ type svcChip struct {
 	feature bool   // runs in a feature tree, not the repo's baseline
 	shared  bool   // more than one worktree's workspace holds it
 	blocker string // for blocked: the requirement that died
+	row     workspace.Row
 }
 
 type (
@@ -229,7 +230,7 @@ func buildChips(instances []workspace.Row, trees []row, items []workspace.ItemRe
 			}
 			seen[key+"|"+in.ID] = true
 			c := svcChip{
-				node: in.Node, port: in.Port, state: "ready", shared: heldByMany(in.Holders),
+				node: in.Node, port: in.Port, state: "ready", shared: heldByMany(in.Holders), row: in,
 				feature: filepath.Clean(in.Tree) != filepath.Clean(wt) && !baseline[filepath.Clean(in.Tree)],
 			}
 			switch {

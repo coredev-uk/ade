@@ -1,0 +1,352 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "ai": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "description": "off disables every AI call; ask confirms over the budget threshold; auto runs within caps.",
+          "enum": [
+            "off",
+            "ask",
+            "auto"
+          ],
+          "type": "string"
+        },
+        "profile": {
+          "description": "Key of the active profile in ai.profiles.",
+          "type": "string"
+        },
+        "profiles": {
+          "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "agent": {
+                "description": "CLI that runs agent work for this profile (default omp).",
+                "enum": [
+                  "omp",
+                  "claude",
+                  "codex"
+                ],
+                "type": "string"
+              },
+              "agent_command": {
+                "type": "string"
+              },
+              "base_url": {
+                "type": "string"
+              },
+              "billing": {
+                "additionalProperties": false,
+                "properties": {
+                  "admin_key_cmd": {
+                    "type": "string"
+                  },
+                  "admin_key_env": {
+                    "type": "string"
+                  },
+                  "base_url": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "description": "Where authoritative spend comes from.",
+                    "enum": [
+                      "litellm",
+                      "omp",
+                      "anthropic",
+                      "openai",
+                      "moonshot",
+                      "openrouter",
+                      "none"
+                    ],
+                    "type": "string"
+                  },
+                  "weekly_soft_usd": {
+                    "type": "number"
+                  }
+                },
+                "type": "object"
+              },
+              "command": {
+                "type": "string"
+              },
+              "driver": {
+                "description": "How calls are made.",
+                "enum": [
+                  "omp",
+                  "anthropic",
+                  "openai-compat"
+                ],
+                "type": "string"
+              },
+              "key_cmd": {
+                "type": "string"
+              },
+              "key_env": {
+                "type": "string"
+              },
+              "models": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Role (explain, draft, plan, implement, review) to model id. A missing review model falls back to draft.",
+                "type": "object"
+              },
+              "prices": {
+                "additionalProperties": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "cache_read": {
+                      "type": "number"
+                    },
+                    "cache_write": {
+                      "type": "number"
+                    },
+                    "input": {
+                      "type": "number"
+                    },
+                    "output": {
+                      "type": "number"
+                    }
+                  },
+                  "type": "object"
+                },
+                "description": "Model id to list prices in USD per million tokens, for pre-flight estimates.",
+                "type": "object"
+              }
+            },
+            "type": "object"
+          },
+          "description": "Places AI calls can go: a driver plus the models its roles use.",
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "budget": {
+      "additionalProperties": false,
+      "properties": {
+        "agent_run_usd": {
+          "description": "Passed as --max-cost to agent runs.",
+          "type": "number"
+        },
+        "call_usd": {
+          "description": "Hard cap per call; also passed to omp as --max-cost.",
+          "type": "number"
+        },
+        "confirm_over_usd": {
+          "description": "Pre-flight confirmation threshold per action.",
+          "type": "number"
+        },
+        "daily_usd": {
+          "description": "Daily local spend cap; 0 is no cap.",
+          "type": "number"
+        },
+        "sprint_usd": {
+          "description": "Sprint cap, enforced while a sprint window is known; 0 is no cap.",
+          "type": "number"
+        },
+        "weekly_usd": {
+          "description": "Weekly local spend cap; 0 is no cap.",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "forges": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "git_protocol": {
+            "description": "Protocol used for clones (default ssh).",
+            "enum": [
+              "ssh",
+              "https"
+            ],
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "gitlab",
+              "github"
+            ],
+            "type": "string"
+          },
+          "token_cmd": {
+            "description": "Command whose stdout is the access token. Secrets never live in the config file.",
+            "type": "string"
+          },
+          "token_env": {
+            "description": "Environment variable holding the access token.",
+            "type": "string"
+          },
+          "url": {
+            "description": "Web/API base URL; defaults to gitlab.com or github.com by kind.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "description": "One entry per GitLab or GitHub host, keyed by a name manifests refer to.",
+      "type": "object"
+    },
+    "host": {
+      "additionalProperties": false,
+      "properties": {
+        "editor": {
+          "description": "auto: code inside a VS Code terminal, else nvim, else $EDITOR. ade-nvim opens the Nix-wrapped Neovim; $EDITOR uses the environment.",
+          "enum": [
+            "auto",
+            "nvim",
+            "ade-nvim",
+            "code",
+            "$EDITOR"
+          ],
+          "type": "string"
+        },
+        "glyphs": {
+          "description": "Glyph set of the dashboard.",
+          "enum": [
+            "unicode",
+            "nerd",
+            "ascii"
+          ],
+          "type": "string"
+        },
+        "mode": {
+          "description": "Where workspaces open: zellij tabs, VS Code, or plain terminal supervision (auto detects).",
+          "enum": [
+            "auto",
+            "zellij",
+            "vscode",
+            "plain"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "notify": {
+      "additionalProperties": false,
+      "properties": {
+        "toast": {
+          "description": "Event-kind globs shown as pop-ups; every event is recorded in the inbox regardless.",
+          "items": {
+            "description": "Event-kind globs shown as pop-ups; every event is recorded in the inbox regardless.",
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "paths": {
+      "additionalProperties": false,
+      "properties": {
+        "root": {
+          "description": "Projects root: <root>/<project>/<repo>/<worktree> (default ~/ade).",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "projects": {
+      "description": "Registered project manifests.",
+      "items": {
+        "additionalProperties": false,
+        "description": "Registered project manifests.",
+        "properties": {
+          "source": {
+            "description": "Local path, https URL, or git+<url>#<path> of a *.ade.toml manifest.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "records": {
+      "additionalProperties": false,
+      "properties": {
+        "audit_retain": {
+          "description": "\"forever\" (default) or a day count such as \"365d\": whole monthly audit files older than that are deleted; the current month never is.",
+          "pattern": "^(forever|\\d+d)$",
+          "type": "string"
+        },
+        "dir": {
+          "description": "Where audit logs and work-item records live (default $XDG_DATA_HOME/ade). Keep it outside any git work tree.",
+          "type": "string"
+        },
+        "snapshot_comments": {
+          "description": "Latest comments copied into item.md.",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "update": {
+      "additionalProperties": false,
+      "properties": {
+        "concurrency": {
+          "description": "Repositories updated in parallel.",
+          "type": "integer"
+        },
+        "feature_branches": {
+          "description": "ff-if-clean fast-forwards clean feature worktrees; notify-only only reports them.",
+          "enum": [
+            "ff-if-clean",
+            "notify-only"
+          ],
+          "type": "string"
+        },
+        "interval": {
+          "description": "How often the dashboard updates in the background (default 10m).",
+          "examples": [
+            "10m",
+            "90s"
+          ],
+          "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+          "type": "string"
+        },
+        "on_start": {
+          "description": "Run a full update (git, then forge sync) at every start (default true).",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "user": {
+      "additionalProperties": false,
+      "properties": {
+        "handle": {
+          "description": "Your username on the forge; \"mine\" means assigned to or authored by this handle.",
+          "type": "string"
+        },
+        "holidays": {
+          "description": "Non-working dates (YYYY-MM-DD); standup skips them.",
+          "items": {
+            "description": "Non-working dates (YYYY-MM-DD); standup skips them.",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "timezone": {
+          "description": "IANA time zone for standup and sprint boundaries.",
+          "type": "string"
+        },
+        "workdays": {
+          "description": "Working days, lower-case three-letter names. Standup looks back to the previous working day.",
+          "items": {
+            "description": "Working days, lower-case three-letter names. Standup looks back to the previous working day.",
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "title": "ADE user config (config.toml, config.local.toml)",
+  "type": "object"
+}

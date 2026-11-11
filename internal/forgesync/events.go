@@ -1,26 +1,32 @@
 package forgesync
 
 import (
+	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/coredev-uk/ade/internal/domain"
 	"github.com/coredev-uk/ade/internal/events"
 	"github.com/coredev-uk/ade/internal/forge"
+	"github.com/coredev-uk/ade/internal/project"
 )
 
 // Event kinds raised by a sync.
 const (
-	EvIssueAssigned  = "issue.assigned"
-	EvIterationMoved = "issue.iteration_changed"
-	EvCIFailed       = "ci.failed"
-	EvCIPassed       = "ci.passed"
-	EvMRComment      = "mr.comment"
-	EvMRApproved     = "mr.approved"
-	EvMRMerged       = "mr.merged"
-	EvReviewAsked    = "mr.review_requested"
-	EvSyncDone       = "sync.done"
-	EvSyncFailed     = "sync.failed"
+	EvIssueAssigned     = "issue.assigned"
+	EvIterationMoved    = "issue.iteration_changed"
+	EvCIFailed          = "ci.failed"
+	EvCIPassed          = "ci.passed"
+	EvCICanceled        = "ci.canceled"
+	EvMRComment         = "mr.comment"
+	EvMRApproved        = "mr.approved"
+	EvMRChangesAsked    = "mr.changes_requested"
+	EvMRMerged          = "mr.merged"
+	EvReviewAsked       = "mr.review_requested"
+	EvWorktreeRemovable = "worktree.removable"
+	EvSyncDone          = "sync.done"
+	EvSyncFailed        = "sync.failed"
 )
 
 // diff lists what changed between two syncs of the same project.
@@ -49,7 +55,7 @@ func diff(old, cur Result) []events.Event {
 				continue
 			}
 			seen[mr.Ref] = true
-			out = append(out, mrEvents(cur.Project, wi, mr, oldMRs)...)
+			out = append(out, mrEvents(cur.Project, cur.Me.Username, wi, mr, oldMRs)...)
 		}
 	}
 	oldReviews := map[forge.Ref]bool{}
@@ -62,6 +68,54 @@ func diff(old, cur Result) []events.Event {
 				fmt.Sprintf("review requested on %s: %s", mrLabel(mr.Ref), mr.Title), mr.WebURL)
 			out = append(out, e)
 		}
+	}
+	return out
+}
+
+// mergedMR is an MR that merged between two syncs and the work item it
+// belongs to.
+type mergedMR struct {
+	item forge.Ref
+	mr   forge.MR
+}
+
+// mergedMRs lists MRs that were open at old and are merged at cur, whoever
+// merged them (mine included: removing the worktree is still on offer). They
+// are what worktree.removable is about.
+func mergedMRs(old, cur Result) []mergedMR {
+	was := map[forge.Ref]string{}
+	for _, wi := range old.Items {
+		for _, mr := range wi.MRs {
+			was[mr.Ref] = mr.State
+		}
+	}
+	var out []mergedMR
+	seen := map[forge.Ref]bool{}
+	for _, wi := range cur.Items {
+		for _, mr := range wi.MRs {
+			if mr.State == mrMerged && was[mr.Ref] != "" && was[mr.Ref] != mrMerged && !seen[mr.Ref] {
+				seen[mr.Ref] = true
+				out = append(out, mergedMR{item: wi.Ref, mr: mr})
+			}
+		}
+	}
+	return out
+}
+
+// removableEvents offers to remove the local worktree each merged MR was made
+// from, when the guard (clean, pushed) allows it. The detail carries the exact
+// commands; ade gc applies them to every such worktree at once.
+func removableEvents(ctx context.Context, ps *project.Service, name string, merged []mergedMR) []events.Event {
+	var out []events.Event
+	for _, m := range merged {
+		t, ok, err := ps.TreeOf(ctx, name, m.mr)
+		if err != nil || !ok || !t.Removable() {
+			continue
+		}
+		e := newEvent(name, EvWorktreeRemovable, events.Info, m.item.String(),
+			fmt.Sprintf("%s merged: worktree %s can go · run ade gc --yes", mrLabel(m.mr.Ref), t.Label()), m.mr.WebURL)
+		e.Detail = fmt.Sprintf("worktree %s is clean and pushed.\nremove all such worktrees: ade gc --yes   (preview: ade gc --dry-run)\nor just this one: %s", t.Path, t.RemoveCommand())
+		out = append(out, e)
 	}
 	return out
 }
@@ -102,8 +156,8 @@ func sprintTitle(wi domain.WorkItem) string {
 
 // mrEvents compares one MR with its state at the previous sync. Changes need
 // a previous state, except a failing pipeline, which is news even on a
-// freshly appeared MR.
-func mrEvents(project string, wi domain.WorkItem, mr forge.MR, oldMRs map[forge.Ref]forge.MR) []events.Event {
+// freshly appeared MR. Nothing that me did themselves is echoed back.
+func mrEvents(project, me string, wi domain.WorkItem, mr forge.MR, oldMRs map[forge.Ref]forge.MR) []events.Event {
 	prev, known := oldMRs[mr.Ref]
 	subject := wi.Ref.String()
 	label := mrLabel(mr.Ref)
@@ -118,20 +172,102 @@ func mrEvents(project string, wi domain.WorkItem, mr forge.MR, oldMRs map[forge.
 		emit(EvCIFailed, events.Error, "pipeline failed on "+label)
 	case known && now == "success" && was != "success":
 		emit(EvCIPassed, events.Success, "pipeline passed on "+label)
+	case known && now == "canceled" && was != "canceled":
+		emit(EvCICanceled, events.Warn, "pipeline canceled on "+label)
 	}
 	if !known {
 		return out
 	}
-	if mr.Unresolved+mr.Resolved > prev.Unresolved+prev.Resolved {
-		emit(EvMRComment, events.Info, "new thread on "+label)
+	if title := newComments(mr, prev, me, label); title != "" {
+		emit(EvMRComment, events.Info, title)
 	}
-	if n := len(mr.Approvals.ApprovedBy); n > len(prev.Approvals.ApprovedBy) {
-		emit(EvMRApproved, events.Success, fmt.Sprintf("%s approved by %s", label, approvers(mr, prev)))
+	if names := newcomers(userNames(mr.Approvals.ApprovedBy), userNames(prev.Approvals.ApprovedBy), me); len(names) > 0 {
+		emit(EvMRApproved, events.Success, fmt.Sprintf("%s approved by %s", label, strings.Join(names, ", ")))
 	}
-	if mr.State == "merged" && prev.State != "merged" {
-		emit(EvMRMerged, events.Success, label+" merged")
+	if names := newcomers(userNames(mr.ChangesRequestedBy), userNames(prev.ChangesRequestedBy), me); len(names) > 0 {
+		emit(EvMRChangesAsked, events.Warn, fmt.Sprintf("changes requested on %s by %s", label, strings.Join(names, ", ")))
+	}
+	if mr.State == mrMerged && prev.State != mrMerged && (me == "" || mr.MergedBy != me) {
+		title := label + " merged"
+		if mr.MergedBy != "" {
+			title += " by " + mr.MergedBy
+		}
+		emit(EvMRMerged, events.Success, title)
 	}
 	return out
+}
+
+const mrMerged = "merged"
+
+func userNames(us []forge.User) []string {
+	names := make([]string, len(us))
+	for i, u := range us {
+		names[i] = u.Username
+	}
+	return names
+}
+
+// newcomers lists names in cur that prev lacked, leaving out me: what I did
+// myself is not news.
+func newcomers(cur, prev []string, me string) []string {
+	var out []string
+	for _, n := range cur {
+		if n != me && !slices.Contains(prev, n) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// newComments words the conversation that others added since prev: new
+// threads and replies counted per discussion, by note author. Where either
+// sync lacks thread data (an old cache, a bare list payload) only a rise in
+// the resolvable-thread count can be seen. It returns "" for nothing new.
+func newComments(mr, prev forge.MR, me, label string) string {
+	if mr.Threads == nil || prev.Threads == nil {
+		if mr.Unresolved+mr.Resolved > prev.Unresolved+prev.Resolved {
+			return "new thread on " + label
+		}
+		return ""
+	}
+	had := make(map[string]int, len(prev.Threads))
+	for _, t := range prev.Threads {
+		had[t.ID] = len(t.Authors)
+	}
+	threads, replies := 0, 0
+	for _, t := range mr.Threads {
+		n, existed := had[t.ID]
+		fresh := 0
+		for _, a := range t.Authors[min(n, len(t.Authors)):] {
+			if a != me {
+				fresh++
+			}
+		}
+		switch {
+		case fresh == 0:
+		case existed:
+			replies += fresh
+		default:
+			threads++
+		}
+	}
+	switch {
+	case threads+replies == 0:
+		return ""
+	case threads == 1 && replies == 0:
+		return "new thread on " + label
+	case threads > 1 && replies == 0:
+		return fmt.Sprintf("%d new threads on %s", threads, label)
+	case threads == 0 && replies == 1:
+		return "new reply on " + label
+	case threads == 0:
+		return fmt.Sprintf("%d new replies on %s", replies, label)
+	}
+	reply := "1 reply"
+	if replies != 1 {
+		reply = fmt.Sprintf("%d replies", replies)
+	}
+	return fmt.Sprintf("%s and %s on %s", plural(threads, "new thread"), reply, label)
 }
 
 func pipelineStatus(mr forge.MR) string {
@@ -139,21 +275,6 @@ func pipelineStatus(mr forge.MR) string {
 		return ""
 	}
 	return mr.Pipeline.Status
-}
-
-// approvers names the users who approved since prev.
-func approvers(mr, prev forge.MR) string {
-	had := map[string]bool{}
-	for _, u := range prev.Approvals.ApprovedBy {
-		had[u.Username] = true
-	}
-	var names []string
-	for _, u := range mr.Approvals.ApprovedBy {
-		if !had[u.Username] {
-			names = append(names, u.Username)
-		}
-	}
-	return strings.Join(names, ", ")
 }
 
 // mrLabel is "api!1": the last path segment of the project and the MR number.

@@ -74,7 +74,16 @@ func draftLoc(dr review.Draft) string {
 	return fmt.Sprintf("%s:%d", dr.Path, dr.Line)
 }
 
+// mrReview is the Review tab: the agent pass's line (AI on), then the drafts.
 func (m model) mrReview(w, h int) string {
+	line := m.agentLine(w)
+	if line == "" {
+		return m.mrReviewList(w, h)
+	}
+	return fit(line+"\n\n"+m.mrReviewList(w, h-2), w, h)
+}
+
+func (m model) mrReviewList(w, h int) string {
 	p := m.mr
 	d := p.data
 	g := m.g

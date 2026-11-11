@@ -25,6 +25,8 @@ type Preflight struct {
 	// then $0 and the call's cost will be unknown as well.
 	Priced bool   `json:"priced"`
 	Dest   string `json:"dest,omitempty"`
+	// Notes is true when the prompt carries the user's own notes on the item.
+	Notes bool `json:"includes_notes,omitempty"`
 
 	Spent Spent `json:"spent"`
 	// Headroom is what the provider says is left under its own cap
@@ -109,6 +111,9 @@ func (pf Preflight) Describe() string {
 	}
 	if pf.Dest != "" {
 		fmt.Fprintf(&b, " · to %s", pf.Dest)
+	}
+	if pf.Notes {
+		b.WriteString(" · includes your notes")
 	}
 	return b.String()
 }

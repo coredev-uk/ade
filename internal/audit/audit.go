@@ -4,13 +4,17 @@ package audit
 
 import (
 	"bufio"
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -102,6 +106,65 @@ func (l *Log) Append(e Entry) error {
 		return err
 	}
 	return f.Sync()
+}
+
+// months lists the monthly files as (month, path), oldest first.
+func (l *Log) months() (names, paths []string, err error) {
+	files, err := filepath.Glob(filepath.Join(l.Dir, "*.jsonl"))
+	if err != nil {
+		return nil, nil, err
+	}
+	sort.Strings(files)
+	for _, f := range files {
+		m := strings.TrimSuffix(filepath.Base(f), ".jsonl")
+		if _, err := time.Parse("2006-01", m); err == nil {
+			names, paths = append(names, m), append(paths, f)
+		}
+	}
+	return names, paths, nil
+}
+
+// ParseRetain reads records.audit_retain: "forever" (or empty) keeps
+// everything and reports ok=false; "<n>d" keeps n days.
+func ParseRetain(retain string) (days int, ok bool, err error) {
+	if retain == "" || retain == "forever" {
+		return 0, false, nil
+	}
+	n, found := strings.CutSuffix(retain, "d")
+	days, perr := strconv.Atoi(n)
+	if !found || perr != nil || days < 0 {
+		return 0, false, fmt.Errorf("audit_retain %q: want \"forever\" or a day count like \"365d\"", retain)
+	}
+	return days, true, nil
+}
+
+// Prune enforces records.audit_retain. It deletes whole monthly files whose
+// last day is older than the retention, counted back from now, and returns
+// the months removed (oldest first). A month that still contains an entry
+// inside the retention window stays whole, and the month containing now is
+// never touched. "forever" prunes nothing.
+func (l *Log) Prune(retain string, now time.Time) (removed []string, err error) {
+	days, ok, err := ParseRetain(retain)
+	if err != nil || !ok {
+		return nil, err
+	}
+	cutoff := now.UTC().AddDate(0, 0, -days)
+	current := now.UTC().Format("2006-01")
+	names, paths, err := l.months()
+	if err != nil {
+		return nil, err
+	}
+	for i, m := range names {
+		start, _ := time.Parse("2006-01", m)
+		if m >= current || !start.AddDate(0, 1, 0).Before(cutoff) {
+			continue
+		}
+		if err := os.Remove(paths[i]); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return removed, err
+		}
+		removed = append(removed, m)
+	}
+	return removed, nil
 }
 
 // Filter selects entries for Query. Zero fields match everything.
@@ -201,4 +264,90 @@ func GlobMatch(pattern, name string) bool {
 		rest = rest[idx+len(parts[i]):]
 	}
 	return strings.HasSuffix(rest, parts[len(parts)-1])
+}
+
+// Follow calls fn for every entry matching f that is appended after the call
+// began, until ctx ends. It polls the monthly files every interval, so it also
+// sees entries written by other ade processes and the file of a month that
+// starts while it runs. Pruned files are forgotten.
+func (l *Log) Follow(ctx context.Context, f Filter, interval time.Duration, fn func(Entry)) error {
+	offsets := map[string]int64{}
+	_, paths, err := l.months()
+	if err != nil {
+		return err
+	}
+	for _, p := range paths {
+		if st, err := os.Stat(p); err == nil {
+			offsets[p] = st.Size()
+		}
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-t.C:
+		}
+		_, paths, err := l.months()
+		if err != nil {
+			return err
+		}
+		live := map[string]bool{}
+		for _, p := range paths {
+			live[p] = true
+			off, err := readFrom(p, offsets[p], func(e Entry) {
+				if f.match(e) {
+					fn(e)
+				}
+			})
+			if err != nil {
+				return err
+			}
+			offsets[p] = off
+		}
+		for p := range offsets {
+			if !live[p] {
+				delete(offsets, p)
+			}
+		}
+	}
+}
+
+// readFrom decodes the complete lines of path after offset and returns the new
+// offset; a trailing partial line (a write in flight) is left for the next poll.
+func readFrom(path string, offset int64, fn func(Entry)) (int64, error) {
+	fh, err := os.Open(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return offset, nil
+	}
+	if err != nil {
+		return offset, err
+	}
+	defer fh.Close()
+	if st, err := fh.Stat(); err != nil || st.Size() <= offset {
+		return min(offset, sizeOf(st)), err // a shrunken file starts over from its end
+	}
+	if _, err := fh.Seek(offset, io.SeekStart); err != nil {
+		return offset, err
+	}
+	data, err := io.ReadAll(fh)
+	if err != nil {
+		return offset, err
+	}
+	end := bytes.LastIndexByte(data, '\n') + 1
+	for line := range bytes.SplitSeq(data[:end], []byte{'\n'}) {
+		var e Entry
+		if len(line) > 0 && json.Unmarshal(line, &e) == nil {
+			fn(e)
+		}
+	}
+	return offset + int64(end), nil
+}
+
+func sizeOf(st os.FileInfo) int64 {
+	if st == nil {
+		return 0
+	}
+	return st.Size()
 }

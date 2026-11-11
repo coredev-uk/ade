@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -766,5 +767,75 @@ func TestReportTitle(t *testing.T) {
 	}
 	if rep.Severity() != events.Error {
 		t.Error("severity")
+	}
+}
+
+// A local override (PLAN 2) is merged before validation and stored in the
+// snapshot, so every later reader of the project sees it.
+func TestLocalOverrideReachesTheSnapshot(t *testing.T) {
+	e := newEnv(t)
+	api := newRemote(t, "api")
+	src := e.manifest("demo", map[string]*remote{"api": api}, map[string]string{"api": `path = "acme/api"`})
+	overlay := config.LocalPath(src)
+	if err := os.WriteFile(overlay, []byte("[repos.api]\napp = [\"api\"]\n[repos.api.tasks.dev]\ncmd = \"make dev\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.Add(context.Background(), src); err != nil {
+		t.Fatal(err)
+	}
+	m, err := LoadManifest(filepath.Join(e.app.Root, "demo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := m.Repos["api"]
+	if r.Path != "acme/api" || r.URL != api.url() || !slices.Equal(r.App, []string{"api"}) || r.Tasks["dev"].Cmd != "make dev" {
+		t.Fatalf("snapshot repo = %+v", r)
+	}
+
+	// Changing only the override is picked up by the next update.
+	if err := os.WriteFile(overlay, []byte("[repos.api.tasks.dev]\ncmd = \"make serve\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.Update(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if m, err = LoadManifest(filepath.Join(e.app.Root, "demo")); err != nil || m.Repos["api"].Tasks["dev"].Cmd != "make serve" {
+		t.Fatalf("after update: %+v %v", m, err)
+	}
+}
+
+func TestLocalOverrideInvalidMergeRejectsTheManifest(t *testing.T) {
+	e := newEnv(t)
+	api := newRemote(t, "api")
+	src := e.manifest("demo", map[string]*remote{"api": api}, nil)
+	if err := os.WriteFile(config.LocalPath(src), []byte("[repos.api.tasks.dev]\ncmd = \"x\"\nrequires = [\"api.nope\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.Add(context.Background(), src); err == nil {
+		t.Fatal("an override that breaks the manifest must be rejected before anything is cloned")
+	}
+	if exists(filepath.Join(e.app.Root, "demo")) {
+		t.Error("project directory created despite the invalid merged manifest")
+	}
+}
+
+func TestLocalOverrideOfRemoteManifestLivesInTheConfigDir(t *testing.T) {
+	e := newEnv(t)
+	for source, want := range map[string]string{
+		"git+file:///srv/shared.git#ade/project.ade.toml": "project.ade.local.toml",
+		"https://example.com/m/shop.ade.toml?ref=main":    "shop.ade.local.toml",
+	} {
+		cfgDir := filepath.Dir(e.app.Config.File)
+		if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(cfgDir, want)
+		if err := os.WriteFile(path, []byte("name = \"x\"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		got, err := e.svc.localOverlay(source)
+		if err != nil || got.path != path {
+			t.Errorf("localOverlay(%q) = %q, %v; want %q", source, got.path, err, path)
+		}
 	}
 }

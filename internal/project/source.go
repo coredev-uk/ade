@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/coredev-uk/ade/internal/app"
 	"github.com/coredev-uk/ade/internal/config"
+	"github.com/coredev-uk/ade/internal/httpdebug"
 )
 
 const maxManifestBytes = 1 << 20
@@ -46,11 +49,54 @@ func (s *Service) fetchParsed(ctx context.Context, source string) (*config.Manif
 	if err != nil {
 		return nil, nil, fmt.Errorf("fetch manifest %s: %w", source, err)
 	}
+	overlay, err := s.localOverlay(source)
+	if err != nil {
+		return nil, nil, err
+	}
+	if overlay.path != "" {
+		if raw, err = config.MergeTOML(raw, source, overlay.data, overlay.path); err != nil {
+			return nil, nil, err
+		}
+	}
 	m, err := config.ParseManifest(raw, source)
 	if err != nil {
 		return nil, nil, err
 	}
+	m.Overlay = overlay.path
 	return m, raw, nil
+}
+
+type overlayFile struct {
+	path string // "" when there is no overlay
+	data []byte
+}
+
+// localOverlay finds the local override of the manifest at a canonical source
+// (PLAN 2): beside the file for a local path; for a git or https source, which
+// has no "beside" on this machine, in the config directory under the
+// manifest's file name (shop.ade.toml → <config dir>/shop.ade.local.toml). The
+// merged text is what the project snapshot stores, so an override takes effect
+// at the next update and every later reader sees it.
+func (s *Service) localOverlay(source string) (overlayFile, error) {
+	var path string
+	if isRemote(source) {
+		name := source
+		if i := strings.LastIndex(name, "#"); i >= 0 {
+			name = name[i+1:]
+		}
+		name, _, _ = strings.Cut(name, "?")
+		path = config.LocalPath(filepath.Join(filepath.Dir(s.App.Config.File), filepath.Base(name)))
+	} else {
+		path = config.LocalPath(source)
+	}
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return overlayFile{}, nil
+	}
+	if err != nil {
+		return overlayFile{}, err
+	}
+	return overlayFile{path: path, data: data}, nil
 }
 
 // loadManifest fetches, parses and fully validates the manifest at a canonical
@@ -131,7 +177,7 @@ func (s *Service) fetchHTTP(ctx context.Context, rawURL string) ([]byte, error) 
 			}
 		}
 	}
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	resp, err := (&http.Client{Timeout: 30 * time.Second, Transport: httpdebug.Transport(nil)}).Do(req)
 	if err != nil {
 		return nil, err
 	}

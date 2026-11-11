@@ -261,3 +261,45 @@ func keptOpen(it domain.WorkItem) domain.WorkItem {
 	it.KeptOpen = true
 	return it
 }
+
+func TestMRDraftFollowsTheManifestAndDefaultsToDraft(t *testing.T) {
+	item := domain.WorkItem{
+		Ref: issueRef(tracker, 3), Type: "story",
+		Issue: forge.Issue{Ref: issueRef(tracker, 3), Title: "Retry deliveries", Labels: []string{"type::story", "app::api"}},
+	}
+	for _, tt := range []struct {
+		name, mr  string
+		wantDraft bool
+		wantText  string
+	}{
+		{"explicit false", `mr = { draft = false, closes = "child" }`, false, "open MR "},
+		{"explicit true", `mr = { draft = true, closes = "child" }`, true, "open draft MR "},
+		{"unset", `mr = { closes = "child" }`, true, "open draft MR "},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			toml := strings.Replace(manifestTOML, `mr     = { draft = true, closes = "child", mention = "parent" }`, tt.mr, 1)
+			if toml == manifestTOML && tt.name != "explicit true" {
+				t.Fatal("fixture manifest has no mr line to replace")
+			}
+			p, err := startwork.BuildPlan(startwork.PlanInput{
+				Item: item, Manifest: manifest(t, toml), Root: "/r",
+				Choices: startwork.Choices{Repos: []string{"api"}, Mode: startwork.ModeDraft, Child: startwork.ChildAuto},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := p.Targets[0].MR.Draft; got != tt.wantDraft {
+				t.Errorf("MR.Draft = %v, want %v", got, tt.wantDraft)
+			}
+			var text string
+			for _, s := range p.Steps {
+				if s.Kind == startwork.StepMR {
+					text = s.Text
+				}
+			}
+			if !strings.HasPrefix(text, tt.wantText) {
+				t.Errorf("MR step %q, want prefix %q", text, tt.wantText)
+			}
+		})
+	}
+}

@@ -16,6 +16,8 @@ const (
 	minW, minH  = 60, 16
 	twoPaneMinW = 100
 	drawerW     = 60
+	wideMinW    = 140 // three regions: list | preview | activity and services
+	railW       = 28
 )
 
 func (m model) View() tea.View {
@@ -45,12 +47,12 @@ func (m model) render() string {
 		layers = append(layers, lipgloss.NewLayer(fit(d, dw, h-2)).X(w-dw).Y(1).Z(1))
 	}
 	mrDialog := m.mr != nil && (m.mr.modal != nil || m.help)
-	if ts := m.nc.toastStack(m.g, toastWidth(w)); ts != "" && !m.nc.open && !m.help && m.agt == nil && m.sw == nil && !mrDialog { // a dialog owns the screen: toasts must not cover its keys
+	if ts := m.nc.toastStack(m.g, toastWidth(w)); ts != "" && !m.nc.open && !m.help && m.agt == nil && m.sw == nil && m.cl == nil && m.nt == nil && m.wt == nil && m.hs.pal == nil && !mrDialog { // a dialog owns the screen: toasts must not cover its keys
 		layers = append(layers, lipgloss.NewLayer(ts).X(w-lipgloss.Width(ts)-1).Y(max(1, h-1-lipgloss.Height(ts))).Z(3))
 	}
 	switch {
 	case m.help && m.mr != nil:
-		layers = append(layers, blankFieldLayer(mrHelpView(min(w, 100), h, m.g), w, h))
+		layers = append(layers, blankFieldLayer(mrHelpView(min(w, 100), h, m.g, m.aiOn()), w, h))
 	case m.help:
 		hw := min(76, w-4)
 		if narrow {
@@ -67,6 +69,15 @@ func (m model) render() string {
 		layers = append(layers, l)
 	}
 	if l := m.classifyOverlayLayer(w, h); l != nil {
+		layers = append(layers, l)
+	}
+	if l := m.notesOverlayLayer(w, h); l != nil {
+		layers = append(layers, l)
+	}
+	if l := m.weightOverlayLayer(w, h); l != nil {
+		layers = append(layers, l)
+	}
+	if l := m.paletteOverlayLayer(w, h); l != nil {
 		layers = append(layers, l)
 	}
 	if l := m.agentOverlayLayer(w, h); l != nil {
@@ -151,6 +162,8 @@ func (m model) activity() string {
 func (m model) footer(w int) string {
 	narrow := w < twoPaneMinW
 	switch {
+	case m.hs.pal != nil:
+		return " " + keys("up/down", "choose", "enter", "run", "esc", "close")
 	case m.agt != nil:
 		return " " + keys("esc", "back/close", "ctrl+c", "quit") + stFaint.Render("   the agent dialog has its own keys")
 	case m.nc.open:
@@ -165,10 +178,12 @@ func (m model) footer(w int) string {
 		return m.budgetFooter(w)
 	case m.page == pageLog:
 		return m.logFooter(w)
+	case m.page == pageHome && m.hs.search.typing:
+		return " " + keys("enter", "keep filter", "up/down", "move", "esc", "clear search")
 	case m.page == pageHome && narrow:
-		return " " + keys("j/k", "move", "enter", "open", "tab", "details", "f", m.homeFilter.String(), "t", "trees", "i", "inbox", "?", "keys")
+		return " " + keys("j/k", "move", "enter", "open", "/", "search", ":", "palette", "f", m.homeFilterName(), "tab", "details", "?", "keys")
 	case m.page == pageHome:
-		return " " + keys("j/k", "move", "enter", "open", "w", "workspace", "f", "filter: "+m.homeFilter.String(), "y", "copy link", "U", "refresh", "t", "worktrees", "i", "notifications", "?", "keys", "q", "quit")
+		return " " + keys("j/k", "move", "enter", "open", "/", "search", ":", "palette", "f", "filter: "+m.homeFilterName(), "o", "browser", "w", "workspace", "U", "refresh", "?", "keys", "q", "quit")
 	case narrow:
 		return " " + keys("j/k", "move", "tab", "details", "U", "update", "t", "home", "i", "inbox", "?", "keys")
 	}
@@ -262,9 +277,18 @@ func (m model) homeBody(w, h int) string {
 		}
 		return m.homeLines(w, h)
 	}
+	sep := stRule.Render(" │ ")
+	if m.threeRegion() {
+		// list | preview | activity and services
+		rest := w - railW - 2*3
+		prevW := max(34, rest*30/100)
+		listW := rest - prevW
+		return columns(sep, h, m.homeLines(listW, h),
+			fit(m.homeDetail(prevW-1), prevW, h), m.railView(railW, h))
+	}
 	listW := w * 66 / 100
 	right := fit(m.homeDetail(w-listW-4), w-listW-3, h)
-	return columns(stRule.Render(" │ "), h, m.homeLines(listW, h), right)
+	return columns(sep, h, m.homeLines(listW, h), right)
 }
 
 func (m model) empty(w, h int) string {
@@ -501,15 +525,16 @@ func helpGroups(full bool) []helpGroup {
 		return []helpGroup{
 			{"Move", [][2]string{
 				{"j k g G", "move; top or bottom"},
-				{"tab t", "details (narrow); Home or Worktrees"},
-				{"f", "Home filter: all, waiting on you, triage, blocked, drift"},
+				{"tab t p e", "details (narrow); Home or Worktrees; project; Activity"},
+				{"/ : f", "search; palette; filter (triage, blocked, type, app...)"},
 			}},
 			{"Selected item", [][2]string{
 				{"enter", "open: the item's MR page"},
 				{"s M", "start work; create the MR for started work"},
 				{"c", "classify: suggest missing type/app labels"},
 				{"a A", "agent runs for the item; all runs"},
-				{"w y", "open workspace (zellij); copy link or path"},
+				{"w y o", "open workspace (zellij); copy link or path; browser"},
+				{"n = r", "notes; set weight; restart blocked services"},
 			}},
 			{"Pages", [][2]string{
 				{"S V", "standup; sprint review"},
@@ -526,7 +551,11 @@ func helpGroups(full bool) []helpGroup {
 			{"j / k", "move"},
 			{"g / G", "jump to the top or bottom"},
 			{"t", "switch Home (work items) and Worktrees"},
-			{"f", "Home filter: all, waiting on you, triage, blocked, drift"},
+			{"/", "search: fuzzy over items and MRs, and the forge's open MRs; esc clears"},
+			{":", "command palette: every action by name, with its key and CLI command"},
+			{"f", "filter: waiting on you, triage, blocked, drift, or a type, app or workflow"},
+			{"p", "project filter: cycles through the projects"},
+			{"e", "show or hide the Activity section (a side rail at 140+ columns)"},
 			{"tab", "details for the selection (narrow terminals)"},
 		}},
 		{"Selected item", [][2]string{
@@ -538,6 +567,10 @@ func helpGroups(full bool) []helpGroup {
 			{"A", "agents: every run"},
 			{"w", "open the workspace (needs the ade zellij session)"},
 			{"y", "copy the item's link (Home) or the tree's path (Worktrees)"},
+			{"o", "open the item in the browser (plain host: shows the URL)"},
+			{"n", "notes (yours; fed to agents and AI)"},
+			{"=", "set weight (shown before it is written; audited)"},
+			{"r", "restart blocked services of the item; otherwise refresh"},
 		}},
 		{"Pages", [][2]string{
 			{"S", "standup: yesterday, today, blockers"},

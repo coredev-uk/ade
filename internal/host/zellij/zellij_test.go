@@ -1,6 +1,8 @@
 package zellij
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -61,5 +63,41 @@ ade [Created 5days ago] (EXITED - attach to resurrect)
 		if got := SessionState(c.listing, c.name); got != c.want {
 			t.Errorf("SessionState(%q, %q) = %v, want %v", c.listing, c.name, got, c.want)
 		}
+	}
+}
+
+func TestUnlockFirstPresetIsShippedAndWrittenIdempotently(t *testing.T) {
+	for _, want := range []string{`default_mode "locked"`, `bind "Ctrl g" { SwitchToMode "Normal"; }`} {
+		if !strings.Contains(UnlockFirstConfig, want) {
+			t.Errorf("embedded preset lacks %s", want)
+		}
+	}
+	dir := filepath.Join(t.TempDir(), "ade")
+	path, err := WriteUnlockFirst(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != filepath.Join(dir, ConfigFileName) {
+		t.Fatalf("path %s", path)
+	}
+	if got, _ := os.ReadFile(path); string(got) != UnlockFirstConfig {
+		t.Fatalf("written file differs from the embedded preset")
+	}
+	// An older ADE's copy is replaced; an identical one is left alone.
+	if err := os.WriteFile(path, []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := WriteUnlockFirst(dir); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != UnlockFirstConfig {
+		t.Fatal("stale copy kept")
+	}
+	before, _ := os.Stat(path)
+	if _, err := WriteUnlockFirst(dir); err != nil {
+		t.Fatal(err)
+	}
+	if after, _ := os.Stat(path); !after.ModTime().Equal(before.ModTime()) {
+		t.Error("an identical file was rewritten")
 	}
 }

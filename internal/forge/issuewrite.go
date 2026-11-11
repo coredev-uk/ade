@@ -73,3 +73,10 @@ type IssueWriter interface {
 	// directory is empty, not an error.
 	ListFiles(ctx context.Context, project, ref, dir string) ([]string, error)
 }
+
+// WeightWriter sets an issue's weight field, on forges that license one
+// (Caps.Weight): GitLab Premium. A nil weight clears it. Forges without the
+// field carry weights on labels, which IssueWriter.SetLabels already writes.
+type WeightWriter interface {
+	SetWeight(ctx context.Context, ref Ref, weight *int) error
+}

@@ -69,7 +69,7 @@ func TestHomeRendersFromCacheWhileSyncHangs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := model{app: a, cache: st, g: unicodeGlyphs, nc: newNotifCenter(notify.NewInbox(st)), w: 160, h: 40}
+	m := model{app: a, cache: st, g: unicodeGlyphs, nc: newNotifCenter(notify.NewInbox(st)), w: 200, h: 40}
 	// Simulate the cache read finishing while a sync is still in flight.
 	m.syncing = true
 	next, _ := m.Update(resultsMsg{results: []forgesync.Result{sampleResult()}})
@@ -121,7 +121,7 @@ func TestTruncLeftKeepsTail(t *testing.T) {
 // The help dialog lists every Home key in both its roomy and its tight form,
 // and the tight form fits a short terminal.
 func TestHelpListsEveryHomeKey(t *testing.T) {
-	want := []string{"j", "k", "g", "G", "tab", "t", "f", "enter", "s", "M", "c", "a", "A", "w", "y", "S", "V", "b", "L", "i", "U", "esc", "?", "q"}
+	want := []string{"j", "k", "g", "G", "tab", "t", "p", "e", "o", "n", "=", "r", ":", "f", "enter", "s", "M", "c", "a", "A", "w", "y", "S", "V", "b", "L", "i", "U", "esc", "?", "q"}
 	for _, full := range []bool{true, false} {
 		have := map[string]bool{}
 		for _, grp := range helpGroups(full) {

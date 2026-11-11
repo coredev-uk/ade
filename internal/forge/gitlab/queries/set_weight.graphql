@@ -1,0 +1,8 @@
+mutation SetWeight($projectPath: ID!, $iid: String!, $weight: Int) {
+  issueSetWeight(input: {projectPath: $projectPath, iid: $iid, weight: $weight}) {
+    errors
+    issue {
+      iid
+    }
+  }
+}

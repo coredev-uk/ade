@@ -121,7 +121,7 @@ func (m *Manager) New(ctx context.Context, req Request) (Run, ai.Preflight, erro
 
 	feature := "agent-" + string(req.Kind)
 	if m.AI != nil {
-		pf, _, err = m.AI.Preview(ctx, ai.Job{Feature: feature, Role: role, Profile: req.Profile, Prompt: prompt, Forge: t.Forge, Ref: t.Tracker})
+		pf, _, err = m.AI.Preview(ctx, ai.Job{Feature: feature, Role: role, Profile: req.Profile, Prompt: prompt, Forge: t.Forge, Ref: t.Tracker, Notes: req.Context.Notes != ""})
 		if err != nil {
 			return Run{}, pf, err
 		}
@@ -637,6 +637,26 @@ func (m *Manager) settle(r Run, err error) (Run, error) {
 	return m.fail(r, err)
 }
 
+// Event kinds the spec (PLAN 6.8) names for agent runs. The other states
+// announce themselves as agent.run.<state> (queued, planning, running, approved,
+// pushed, cancelled, push-failed): progress, mostly transient.
+const (
+	EventPlanReady = "agent.plan.ready" // the plan waits for approval
+	EventRunEnd    = "agent.run.end"    // the run finished and its diff waits for review
+	EventRunFailed = "agent.run.failed"
+)
+
+// eventKind maps a state word to its event kind.
+func eventKind(what string) string {
+	switch what {
+	case "awaiting-approval":
+		return EventPlanReady
+	case "review":
+		return EventRunEnd
+	}
+	return "agent.run." + what
+}
+
 func (m *Manager) emit(r Run, what string, sev events.Severity, transient bool, title, detail string) {
 	if m.Bus == nil {
 		return
@@ -649,7 +669,7 @@ func (m *Manager) emit(r Run, what string, sev events.Severity, transient bool, 
 		}
 		title = fmt.Sprintf("agent %s: %s", r.Item(), firstNonEmpty(words[what], what))
 	}
-	e := events.New("agent.run."+what, sev, title)
+	e := events.New(eventKind(what), sev, title)
 	e.Project, e.Subject, e.Detail, e.Transient = r.Project, r.Item(), detail, transient
 	m.Bus.Publish(e)
 }

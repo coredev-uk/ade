@@ -16,14 +16,32 @@ import (
 func init() { register(newReviewCmd) }
 
 func newReviewCmd() *cobra.Command {
+	var (
+		noZellij bool
+		session  string
+	)
 	cmd := &cobra.Command{
-		Use:   "review",
-		Short: "Collect line comments on an MR and submit them as one batch",
-		Long: "Comments collect as local drafts (kept across runs) and nothing is posted until\n" +
+		Use:   "review <ref> | review add|list|rm|submit",
+		Short: "Open an MR in a review workspace tab; collect line comments and submit them as one batch",
+		Long: "`ade review <ref>` checks out the MR's source branch as a worktree (made when it\n" +
+			"does not exist) and opens it in the `review` layout: the diff against the target\n" +
+			"branch through delta, lazygit and a shell, in a tab of the ade zellij session.\n" +
+			"--no-zellij opens no tab: it prints the worktree and the command that shows the diff.\n\n" +
+			"Comments collect as local drafts (kept across runs) and nothing is posted until\n" +
 			"`ade review submit`, which sends them as one GitLab draft-note batch: one\n" +
 			"notification for the author. <ref> is group/project!N.",
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return cmd.Help()
+			}
+			return runReviewOpen(cmd, args[0], noZellij, session)
+		},
 	}
 	mrFlags(cmd)
+	cmd.Flags().BoolVar(&noZellij, "no-zellij", false, "open no tab: print the worktree and the command that shows the diff")
+	cmd.Flags().StringVar(&session, "session", "", "zellij session to open the tab in (default: ade; for tests)")
+	_ = cmd.Flags().MarkHidden("session")
 	cmd.AddCommand(newReviewAddCmd(), newReviewListCmd(), newReviewRemoveCmd(), newReviewSubmitCmd())
 	return cmd
 }

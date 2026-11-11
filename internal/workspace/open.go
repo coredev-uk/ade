@@ -13,6 +13,7 @@ import (
 
 	"github.com/coredev-uk/ade/internal/app"
 	"github.com/coredev-uk/ade/internal/audit"
+	"github.com/coredev-uk/ade/internal/editor"
 	"github.com/coredev-uk/ade/internal/host"
 	"github.com/coredev-uk/ade/internal/host/zellij"
 )
@@ -129,7 +130,8 @@ type prepared struct {
 	cfg     openConfig
 	res     OpenResult // Tab and Layout filled in
 	ade     string
-	runArgs []string // extra arguments of every generated `ade task run`
+	editor  editor.Editor // host.editor resolved against the environment
+	runArgs []string      // extra arguments of every generated `ade task run`
 }
 
 func prepare(ctx context.Context, a *app.App, project, repo, worktree string, opts []OpenOption) (*prepared, error) {
@@ -159,8 +161,10 @@ func prepare(ctx context.Context, a *app.App, project, repo, worktree string, op
 	if !ValidLayout(layout) {
 		return nil, fmt.Errorf("unknown layout %q (want code, agent, review or manual)", layout)
 	}
-	p := &prepared{loc: loc, cfg: cfg}
-	if hasWorkspace {
+	p := &prepared{loc: loc, cfg: cfg, editor: editor.Resolve(a.Config.Host.Editor, editor.FromOS())}
+	// A review tab shows a diff: it must not bring up the run graph (services,
+	// ports, required repos) for code that is only being read.
+	if hasWorkspace && layout != LayoutReview {
 		mgr, err := NewManager(a)
 		if err != nil {
 			return nil, err
@@ -243,7 +247,7 @@ func runZellij(ctx context.Context, args ...string) (string, error) {
 func openZellij(ctx context.Context, a *app.App, p *prepared, res *OpenResult) error {
 	session := p.cfg.session
 	if session == "" {
-		session = host.SessionName
+		session = currentSession(os.Getenv)
 	}
 	res.Session = session
 	kdl, err := BuildLayout(layoutSpec(ctx, p))
@@ -262,6 +266,18 @@ func openZellij(ctx context.Context, a *app.App, p *prepared, res *OpenResult) e
 	created, err := openTab(ctx, runZellij, session, res.Tab, file)
 	res.Created = created
 	return err
+}
+
+// currentSession is the session tabs open in by default: the one the caller is
+// running inside (the dashboard may live in any zellij session, e.g. a user's own),
+// else the `ade` session the launcher creates.
+func currentSession(getenv func(string) string) string {
+	if getenv("ZELLIJ") != "" {
+		if name := getenv("ZELLIJ_SESSION_NAME"); name != "" {
+			return name
+		}
+	}
+	return host.SessionName
 }
 
 // openTab focuses the tab when it exists, otherwise creates it from layoutFile.
@@ -287,7 +303,7 @@ func openTab(ctx context.Context, run zellijRunner, session, tab, layoutFile str
 // layoutSpec assembles the layout input: tools found on PATH, a pane per
 // run-graph node.
 func layoutSpec(ctx context.Context, p *prepared) LayoutSpec {
-	spec := LayoutSpec{Layout: p.res.Layout, Tab: p.res.Tab, Dir: p.loc.Tree, Tools: DetectTools(p.ade), BaseRef: p.cfg.baseRef}
+	spec := LayoutSpec{Layout: p.res.Layout, Tab: p.res.Tab, Dir: p.loc.Tree, Tools: DetectTools(p.ade, p.editor, p.loc.Tree), BaseRef: p.cfg.baseRef}
 	if spec.BaseRef == "" && spec.Layout == LayoutReview {
 		tr := newTreeResolver(p.loc, TreeOptions{})
 		if base, err := tr.git.DefaultBranch(ctx, filepath.Join(p.loc.RepoDir, ".bare")); err == nil {
@@ -315,8 +331,9 @@ func layoutSpec(ctx context.Context, p *prepared) LayoutSpec {
 	return spec
 }
 
-// DetectTools looks up the programs the layouts use on PATH.
-func DetectTools(ade string) Tools {
+// DetectTools looks up the programs the layouts use on PATH; the editor is the
+// resolved host.editor and opens dir.
+func DetectTools(ade string, ed editor.Editor, dir string) Tools {
 	find := func(name string) string {
 		if p, err := exec.LookPath(name); err == nil {
 			return p
@@ -324,11 +341,7 @@ func DetectTools(ade string) Tools {
 		return ""
 	}
 	t := Tools{Ade: ade, Lazygit: find("lazygit"), Delta: find("delta"), Omp: find("omp")}
-	if ed := os.Getenv("EDITOR"); ed != "" {
-		t.Editor = ed
-	} else {
-		t.Editor = find("nvim")
-	}
+	t.Editor, t.EditorArgs = ed.PaneCommand(dir)
 	return t
 }
 

@@ -104,6 +104,8 @@ func (m model) mrStrip(w int) string {
 	switch {
 	case d.busy != "":
 		seg = append(seg, stBold.Render(spinnerFrame(g, p.spin)+" "+d.busy+"…"))
+	case d.ai[aiKey{kind: aiReview}] != nil && d.ai[aiKey{kind: aiReview}].l.busy():
+		seg = append(seg, stBold.Render(spinnerFrame(g, p.spin)+" agent review…"))
 	case d.mrL.busy() && d.loadedAt.IsZero(): // nothing read yet: the sync summary stands in
 		seg = append(seg, stFaint.Render(spinnerFrame(g, p.spin)+" reading from the forge"))
 	case d.mrL.busy():
@@ -299,12 +301,30 @@ func (m model) mrOverview(w, h int) string {
 			kv("merge", stWarn.Render(g.Warn+" "+v.why))
 		}
 	}
-	if desc := strings.TrimSpace(mr.Description); desc != "" {
-		l = append(l, "", subRule("Description", "", w, g))
+	desc := strings.TrimSpace(mr.Description)
+	sum := d.ai[aiKey{kind: aiSummary}]
+	summarised := m.aiOn() && sum != nil && sum.l.st == loadOK
+	if m.aiOn() && !summarised && !p.rawDesc { // running, waiting for a yes, or failed: say so above the description
+		if blk := m.aiBlock("Summary", sum, w); len(blk) > 0 {
+			l = append(l, "")
+			l = append(l, blk...)
+		}
+	}
+	switch {
+	case summarised && !p.rawDesc:
+		l = append(l, "")
+		l = append(l, m.aiBlock("Summary", sum, w)...)
+		l = append(l, "   "+stFaint.Render("d shows the raw description · s asks again (a new call, the cache is skipped)"))
+	case desc != "":
+		guide := ""
+		if summarised {
+			guide = "d shows the AI summary"
+		}
+		l = append(l, "", subRule("Description", guide, w, g))
 		for _, ln := range strings.Split(lipgloss.Wrap(desc, w-6, " "), "\n") {
 			l = append(l, "   "+ln)
 		}
-	} else if d.mrL.busy() && d.loadedAt.IsZero() {
+	case d.mrL.busy() && d.loadedAt.IsZero():
 		l = append(l, "", subRule("Description", "", w, g), "   "+stFaint.Render(spinnerFrame(g, p.spin)+" reading the description…"))
 	}
 	return m.scrolled(l, w, h)
@@ -521,6 +541,9 @@ func (m model) threadDetail(t thread, w, h int) string {
 	}
 	head := []string{stBold.Render(ansi.Truncate(t.where(), w, "…")), state}
 	var body []string
+	if m.aiOn() {
+		body = append(body, m.threadAI(d, t.d.ID, w)...)
+	}
 	if t.d.Position != nil {
 		if ctx := m.diffContext(d, t.d.Position, w); len(ctx) > 0 {
 			body = append(body, ctx...)

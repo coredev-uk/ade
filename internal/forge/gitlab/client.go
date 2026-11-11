@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/coredev-uk/ade/internal/forge"
+	"github.com/coredev-uk/ade/internal/httpdebug"
 )
 
 const (
@@ -80,7 +81,7 @@ func New(baseURL, token string, opts ...Option) *Client {
 	c := &Client{
 		base:       strings.TrimRight(baseURL, "/"),
 		token:      token,
-		hc:         &http.Client{Timeout: 30 * time.Second},
+		hc:         &http.Client{Timeout: 30 * time.Second, Transport: httpdebug.Transport(nil)},
 		sem:        make(chan struct{}, maxInFlight),
 		maxRetries: defaultMaxRetries,
 		now:        time.Now,

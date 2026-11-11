@@ -160,6 +160,7 @@ func (s *Service) syncProject(ctx context.Context, st *store.Store, ref config.P
 	// failed has nothing cached, and everything in it would look new.
 	if hadPrev && (old.Err == "" || len(old.Items) > 0) {
 		out.events = diff(old, res)
+		out.events = append(out.events, removableEvents(ctx, project.New(s.App, Actor), res.Project, mergedMRs(old, res))...)
 	}
 	return out
 }

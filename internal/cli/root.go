@@ -17,6 +17,7 @@ import (
 
 	"github.com/coredev-uk/ade/internal/app"
 	"github.com/coredev-uk/ade/internal/audit"
+	"github.com/coredev-uk/ade/internal/httpdebug"
 )
 
 // Version is set at build time (-ldflags "-X .../cli.Version=...").
@@ -41,6 +42,19 @@ func appFrom(cmd *cobra.Command) *app.App {
 
 // jsonFlag is the shared --json flag value.
 var jsonOut bool
+
+// debugHTTP is the global --debug-http flag (PLAN 4.3).
+var debugHTTP bool
+
+func init() {
+	// Runs after flag parsing and before any command's PreRun, whichever
+	// command (and PersistentPreRunE) is the one that executes.
+	cobra.OnInitialize(func() {
+		if debugHTTP {
+			httpdebug.Enable(os.Stderr)
+		}
+	})
+}
 
 // printJSON writes v as indented JSON to w.
 func printJSON(w io.Writer, v any) error {
@@ -84,6 +98,8 @@ func newRoot() *cobra.Command {
 		},
 	}
 	root.PersistentFlags().BoolVar(&jsonOut, "json", false, "machine-readable JSON output")
+	root.PersistentFlags().BoolVar(&debugHTTP, "debug-http", false,
+		"log every forge and AI HTTP request to stderr (method, URL, status, timing; credentials and bodies never shown)")
 	for _, b := range builders {
 		root.AddCommand(b())
 	}

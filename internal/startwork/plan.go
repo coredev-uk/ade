@@ -435,7 +435,7 @@ func planTarget(in PlanInput, t Target) TargetPlan {
 
 	conv := m.Conventions.MR
 	tp.MR = MRSpec{
-		Title: tp.Child.Title, Draft: true, Target: tp.Base, Template: f.TemplateName,
+		Title: tp.Child.Title, Draft: conv.DraftMR(), Target: tp.Base, Template: f.TemplateName,
 		closes: conv.Closes, mention: conv.Mention, templateBody: f.TemplateBody, override: ch.MRBody,
 		Stripped: ch.StripActions,
 	}
@@ -657,7 +657,11 @@ func mrStep(tp TargetPlan) Step {
 	if f.MR != nil {
 		return Step{Kind: StepMR, Repo: tp.Target.Name, Done: true, Text: fmt.Sprintf("MR %s exists", f.MR.Ref)}
 	}
-	text := fmt.Sprintf("open draft MR %s → %s", tp.Branch, tp.MR.Target)
+	kind := "MR"
+	if tp.MR.Draft {
+		kind = "draft MR"
+	}
+	text := fmt.Sprintf("open %s %s → %s", kind, tp.Branch, tp.MR.Target)
 	if tp.MR.Template != "" {
 		text += " from template " + tp.MR.Template
 	}

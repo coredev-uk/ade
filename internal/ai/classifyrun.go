@@ -134,15 +134,29 @@ func (s *Service) UsesAI(o ClassifyOpts) bool {
 }
 
 // Classify suggests the missing type/app labels: with the model when AI is on,
-// by keywords when it is off or unconfigured. ErrNothingToClassify when the
-// issue has every facet. Nothing is applied.
+// by keywords when it is off or unconfigured. Either way an unweighted issue
+// also gets a weight suggested from similar closed issues (SuggestWeight: no
+// model, no cost). ErrNothingToClassify when the issue has every facet and
+// no weight to suggest. Nothing is applied.
 func (s *Service) Classify(ctx context.Context, forgeName string, in ClassifyInput, o ClassifyOpts) (ClassifyResult, error) {
 	job, err := ClassifyJob(forgeName, in)
-	if err != nil {
+	nothing := errors.Is(err, ErrNothingToClassify)
+	if err != nil && !nothing {
 		return ClassifyResult{}, err
 	}
-	if !s.UsesAI(o) {
-		return ClassifyResult{Suggestion: SuggestKeywords(in)}, nil
+	if nothing || !s.UsesAI(o) {
+		sug := Suggestion{Labels: []string{}}
+		if !nothing {
+			sug = SuggestKeywords(in)
+		}
+		sug.Weight, sug.WeightReason = SuggestWeight(in.Issue, in.Labels, in.Weight, sug, in.Samples)
+		if nothing && sug.Weight == nil {
+			return ClassifyResult{}, ErrNothingToClassify
+		}
+		if nothing {
+			sug.Source = SourceKeywords
+		}
+		return ClassifyResult{Suggestion: sug}, nil
 	}
 	job.Profile, job.Refresh, job.Override, job.Assume, job.Confirm = o.Profile, o.Refresh, o.Override, o.Assume, o.Confirm
 	res, err := s.Run(ctx, job)
@@ -154,6 +168,7 @@ func (s *Service) Classify(ctx context.Context, forgeName string, in ClassifyInp
 		return ClassifyResult{Run: &res}, err
 	}
 	sug.Source = SourceAI
+	sug.Weight, sug.WeightReason = SuggestWeight(in.Issue, in.Labels, in.Weight, sug, in.Samples)
 	return ClassifyResult{Suggestion: sug, Run: &res}, nil
 }
 

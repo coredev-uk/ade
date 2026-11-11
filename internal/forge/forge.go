@@ -191,24 +191,60 @@ type Approvals struct {
 	ApprovedBy []User `json:"approved_by,omitempty"`
 }
 
+// ThreadState is what a sync remembers of one discussion: the author of each
+// human note, oldest first. Comparing two syncs shows new threads and replies,
+// and who wrote them, without keeping the text.
+type ThreadState struct {
+	ID      string   `json:"id"`
+	Authors []string `json:"authors"`
+}
+
+// ThreadStates summarises discussions for MR.Threads. Discussions made only
+// of system notes ("added 1 commit") are not conversation and are skipped. The
+// result is never nil, so that "no threads" differs from "not read".
+func ThreadStates(ds []Discussion) []ThreadState {
+	out := []ThreadState{}
+	for _, d := range ds {
+		t := ThreadState{ID: d.ID}
+		for _, n := range d.Notes {
+			if !n.System {
+				t.Authors = append(t.Authors, n.Author.Username)
+			}
+		}
+		if len(t.Authors) > 0 {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 type MR struct {
-	Ref            Ref        `json:"ref"`
-	ID             int64      `json:"id"`
-	Title          string     `json:"title"`
-	Description    string     `json:"description,omitempty"`
-	State          string     `json:"state"` // opened | merged | closed
-	Draft          bool       `json:"draft"`
-	SourceBranch   string     `json:"source_branch"`
-	TargetBranch   string     `json:"target_branch"`
-	HeadSHA        string     `json:"head_sha,omitempty"`
-	WebURL         string     `json:"web_url,omitempty"`
-	Author         User       `json:"author"`
-	Assignees      []User     `json:"assignees,omitempty"`
-	Reviewers      []User     `json:"reviewers,omitempty"`
-	Pipeline       *Pipeline  `json:"pipeline,omitempty"`
-	Approvals      Approvals  `json:"approvals"`
-	Unresolved     int        `json:"unresolved"` // unresolved resolvable threads
-	Resolved       int        `json:"resolved"`
+	Ref          Ref       `json:"ref"`
+	ID           int64     `json:"id"`
+	Title        string    `json:"title"`
+	Description  string    `json:"description,omitempty"`
+	State        string    `json:"state"` // opened | merged | closed
+	Draft        bool      `json:"draft"`
+	SourceBranch string    `json:"source_branch"`
+	TargetBranch string    `json:"target_branch"`
+	HeadSHA      string    `json:"head_sha,omitempty"`
+	WebURL       string    `json:"web_url,omitempty"`
+	Author       User      `json:"author"`
+	Assignees    []User    `json:"assignees,omitempty"`
+	Reviewers    []User    `json:"reviewers,omitempty"`
+	Pipeline     *Pipeline `json:"pipeline,omitempty"`
+	Approvals    Approvals `json:"approvals"`
+	Unresolved   int       `json:"unresolved"` // unresolved resolvable threads
+	Resolved     int       `json:"resolved"`
+	// Threads lists every conversation with its note authors; nil when the
+	// forge's list view did not read discussions (see ThreadStates).
+	Threads []ThreadState `json:"threads"`
+	// ChangesRequestedBy are the reviewers whose standing verdict is "changes
+	// requested" (GitLab reviewer state requested_changes, GitHub review
+	// CHANGES_REQUESTED).
+	ChangesRequestedBy []User `json:"changes_requested_by,omitempty"`
+	// MergedBy is the username that merged the MR, when the forge says.
+	MergedBy       string     `json:"merged_by,omitempty"`
 	HasConflicts   bool       `json:"has_conflicts,omitempty"`
 	DetailedStatus string     `json:"detailed_status,omitempty"`
 	UpdatedAt      time.Time  `json:"updated_at"`

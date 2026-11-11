@@ -378,10 +378,10 @@ func TestAgentKeyOnMRPageOpensTheItemsMenu(t *testing.T) {
 	e.seed("20261111-100000-aaa", agent.StateReview, 0.04)
 	it := e.m.homeRows[e.m.homeSel].item
 	e.m.mr = &mrPage{item: it}
-	// `a` on the MR page stays approve; the agent menu is `A`.
-	e.press("A")
+	// `a` on the MR page stays approve; the agent menu is `P` (`A` runs the AI review pass).
+	e.press("P")
 	if e.m.agt == nil || e.m.agt.item == nil || e.m.agt.item.Ref != it.Ref {
-		t.Fatalf("A on the MR page must open the item's agent menu: %+v", e.m.agt)
+		t.Fatalf("P on the MR page must open the item's agent menu: %+v", e.m.agt)
 	}
 	if !strings.Contains(e.view(), "20261111-100000-aaa") {
 		t.Error("the menu lists the item's runs")
@@ -389,7 +389,7 @@ func TestAgentKeyOnMRPageOpensTheItemsMenu(t *testing.T) {
 	// A review-requested MR has no tracker item: no menu.
 	e.m.agt = nil
 	e.m.mr = &mrPage{}
-	e.press("A")
+	e.press("P")
 	if e.m.agt != nil {
 		t.Error("an MR without a work item has no agent menu")
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -13,6 +14,7 @@ import (
 	"github.com/coredev-uk/ade/internal/ai"
 	"github.com/coredev-uk/ade/internal/audit"
 	"github.com/coredev-uk/ade/internal/config"
+	"github.com/coredev-uk/ade/internal/domain"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/startwork"
 )
@@ -105,18 +107,24 @@ func (m model) openClassify() (model, tea.Cmd) {
 		if err != nil {
 			return clResolvedMsg{d: d, err: err}
 		}
-		in := ai.ClassifyInput{Issue: res.Item.Issue, Labels: res.Manifest.Labels}
+		in := ai.ClassifyInput{Issue: res.Item.Issue, Labels: res.Manifest.Labels, Weight: res.Manifest.Tracker.Weight}
 		for _, r := range res.Manifest.Repos {
 			in.KnownApps = append(in.KnownApps, r.App...)
 		}
 		seen := map[string]bool{}
+		var items []domain.WorkItem
 		for _, r := range results {
+			items = append(items, r.Items...)
 			for _, wi := range r.Items {
 				if wi.Type != "" && !seen[wi.Type] {
 					seen[wi.Type] = true
 					in.KnownTypes = append(in.KnownTypes, wi.Type)
 				}
 			}
+		}
+		in.Samples = ai.WeightSamples(items)
+		if hist, err := ai.ClosedSamples(ctx, res.Forge, res.Manifest.Tracker.Project, res.Manifest.Labels, res.Manifest.Tracker.Weight, time.Now()); err == nil {
+			in.Samples = ai.MergeSamples(in.Samples, hist)
 		}
 		return clResolvedMsg{d: d, res: res, in: in}
 	}
@@ -157,10 +165,6 @@ func (m model) classifyUpdate(msg tea.Msg) (model, tea.Cmd, bool) {
 			return m, nil, true
 		}
 		d.res, d.in, d.stage = msg.res, msg.in, clThinking
-		if len(d.in.Missing()) == 0 {
-			d.stage, d.err = clFailed, ai.ErrNothingToClassify
-			return m, nil, true
-		}
 		return m, m.classifyCmd(d, false), true
 	case clSuggestedMsg:
 		if d == nil || msg.d != d {
@@ -213,13 +217,21 @@ func (m model) classifyKey(ks string) (model, tea.Cmd) {
 		case "esc", "q":
 			m.cl = nil
 		case "j", "down":
-			d.cur = min(d.cur+1, len(d.labels)-1)
+			d.cur = min(d.cur+1, max(len(d.labels)-1, 0))
 		case "k", "up":
 			d.cur = max(d.cur-1, 0)
 		case "space", " ", "x":
-			if d.cur < len(d.labels) {
+			if d.cur >= 0 && d.cur < len(d.labels) {
 				d.labels[d.cur].on = !d.labels[d.cur].on
 			}
+		case "=":
+			if d.cr.Suggestion.Weight == nil {
+				d.warn = "no weight to suggest: press = on Home to set one by hand"
+				return m, nil
+			}
+			ref, title := d.ref, d.res.Item.Issue.Title
+			m.cl = nil
+			return m.openWeightFor(ref, title)
 		case "enter", "y":
 			var add []string
 			for _, l := range d.labels {
@@ -229,6 +241,9 @@ func (m model) classifyKey(ks string) (model, tea.Cmd) {
 			}
 			if len(add) == 0 {
 				d.warn = "nothing ticked: space ticks a label, esc closes"
+				if len(d.labels) == 0 {
+					d.warn = "no label to add · esc closes"
+				}
 				return m, nil
 			}
 			d.warn, d.added, d.stage = "", add, clApplying
@@ -305,6 +320,9 @@ func (m model) classifyOverlay(w, h int) string {
 		hint = keys("space", "tick", "enter", "add labels", "esc", "close")
 		if len(d.labels) == 0 {
 			hint = keys("esc", "close")
+		}
+		if d.cr.Suggestion.Weight != nil {
+			hint += "   " + keys("=", "set weight")
 		}
 	case clApplying:
 		l = append(l, stFaint.Render(g.Sync+" adding "+strings.Join(d.added, ", ")+"…"))
@@ -404,9 +422,12 @@ func (m model) classifySuggestView(d *classifyDialog, inner int) []string {
 		}
 	}
 	miss := d.in.Missing()
-	l := []string{section("Suggested labels", how, inner, g)}
-	if len(d.labels) == 0 {
-		l = append(l, stFaint.Render("no label fits "+strings.Join(miss, " and ")+" confidently; add one by hand"))
+	l := []string{}
+	if len(miss) > 0 {
+		l = append(l, section("Suggested labels", how, inner, g))
+		if len(d.labels) == 0 {
+			l = append(l, stFaint.Render("no label fits "+strings.Join(miss, " and ")+" confidently; add one by hand"))
+		}
 	}
 	for i, lb := range d.labels {
 		cur, box := " ", g.Ahead
@@ -431,11 +452,25 @@ func (m model) classifySuggestView(d *classifyDialog, inner int) []string {
 			open = append(open, f)
 		}
 	}
-	note := "labels are only added, never removed"
-	if len(open) > 0 {
-		note = "no " + strings.Join(open, " or ") + " label suggested · " + note
+	if len(miss) > 0 {
+		note := "labels are only added, never removed"
+		if len(open) > 0 {
+			note = "no " + strings.Join(open, " or ") + " label suggested · " + note
+		}
+		l = append(l, stFaint.Render(ansi.Wrap(note, inner, "")))
 	}
-	l = append(l, stFaint.Render(ansi.Wrap(note, inner, "")))
+	if len(l) > 0 && (s.Weight != nil || s.WeightReason != "") {
+		l = append(l, "")
+	}
+	switch {
+	case s.Weight != nil:
+		l = append(l, section("Suggested weight", "from similar closed issues · no model", inner, g),
+			"  "+stBold.Render(fmt.Sprintf("%dw", *s.Weight)),
+			stFaint.Render(ansi.Wrap(s.WeightReason, inner, "")),
+			stFaint.Render("= sets it (shown first, then confirmed)"))
+	case s.WeightReason != "":
+		l = append(l, stFaint.Render(ansi.Wrap(s.WeightReason, inner, "")))
+	}
 	return l
 }
 

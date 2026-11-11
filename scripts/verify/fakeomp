@@ -1,0 +1,30 @@
+#!/bin/sh
+# A stand-in for `omp -p --mode json` for the MR page captures and checks: it
+# answers by the feature, picked from the system prompt, with canned text for the
+# synthetic api!2 (limit/bucket.go renamed to limit/token_bucket.go), and costs
+# nothing. FAKEOMP_DELAY=<seconds> makes every answer slow, to catch the
+# "running" states.
+cat >/dev/null
+[ -z "$FAKEOMP_DELAY" ] || sleep "$FAKEOMP_DELAY"
+case "$*" in
+*"summarise merge requests"*)
+  text='- Renames the bucket file to token_bucket.go and tracks tokens explicitly.
+- Allow now reports whether a token is free instead of always allowing.
+Risk: Allow reads Tokens but never spends one, so the limit does not limit.'
+  ;;
+*"summarise one code-review thread"*)
+  text='Rae asks whether Tokens should refill on a timer or lazily when Allow is called. Nobody has answered yet; the choice decides whether the bucket needs a goroutine per tenant.'
+  ;;
+*"draft a reply to a code-review thread"*)
+  text='Lazily, on Allow: a timer would need a goroutine per tenant. I will refill from the elapsed time and cap at Burst.'
+  ;;
+*"review a merge request diff"*)
+  text='[{"path":"limit/token_bucket.go","line":11,"side":"new","severity":"blocking","body":"Allow checks Tokens but never decrements it, so every call passes. Subtract one when it returns true."},
+{"path":"limit/token_bucket.go","line":7,"side":"new","severity":"question","body":"Why float64 for Tokens? Refill rounding will drift over long runs; milli-tokens in an int64 would not."},
+{"path":"limit/token_bucket.go","line":900,"side":"new","severity":"nit","body":"not a line of this diff"}]'
+  ;;
+*)
+  text='ok'
+  ;;
+esac
+jq -nc --arg t "$text" '{type:"turn_end",message:{role:"assistant",model:"claude-haiku-4-5",provider:"anthropic",stopReason:"stop",content:[{type:"text",text:$t}],usage:{input:1400,output:120,cost:{total:0.0021}}}}'

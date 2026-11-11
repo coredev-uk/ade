@@ -164,3 +164,73 @@ func TestPickSprint(t *testing.T) {
 		t.Fatalf("between sprints: the newest started one, got %+v, %v", got, err)
 	}
 }
+
+// The live path reads each merged item's assignment from the forge's system
+// notes (the real GitLab client against the fake) and takes the merge time from
+// the cached MRs.
+func TestReviewCycleTimeAgainstFake(t *testing.T) {
+	day := func(d, hm string) time.Time {
+		v, _ := time.Parse("2006-01-02 15:04", d+" "+hm)
+		return v
+	}
+	var closed, noNote forge.Ref
+	srv := fake.New(fake.Premium, fake.WithClock(fakeNow))
+	defer srv.Close()
+	closed = forge.Ref{Project: fakeTracker, IID: 10, Kind: forge.KindIssue} // closed in the seed, in Sprint 42
+	noNote = forge.Ref{Project: fakeTracker, IID: 4, Kind: forge.KindIssue}
+	if err := srv.AddSystemNote(closed, "added ~type::task label", day("2026-11-02", "08:00")); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.AddSystemNote(closed, "assigned to @sandbox-dev", day("2026-11-03", "09:00")); err != nil {
+		t.Fatal(err)
+	}
+	mrRef, err := srv.AddMergedMR(fake.GroupPath+"/api", "Upgrade", closed, day("2026-11-03", "10:00"), day("2026-11-05", "09:00"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.SetClosedAt(noNote, day("2026-11-06", "12:00")); err != nil {
+		t.Fatal(err)
+	}
+	noNoteMR, err := srv.AddMergedMR(fake.GroupPath+"/api", "Remove", noNote, day("2026-11-04", "10:00"), day("2026-11-06", "11:00"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c := gitlab.New(srv.URL, fake.Token, gitlab.WithClock(func() time.Time { return fakeNow }))
+	ctx := context.Background()
+	ms, err := c.Milestones(ctx, fake.GroupPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sprints := domain.SprintsFromMilestones(ms)
+	m := manifest()
+	m.Tracker.Project = fakeTracker
+	cur := domain.WindowAt(sprints, fakeNow, nil, 1).Current
+	merged := func(ref forge.Ref, at time.Time) []forge.MR {
+		return []forge.MR{{Ref: ref, State: "merged", MergedAt: &at}}
+	}
+	items := []domain.WorkItem{
+		{Ref: closed, MRs: merged(mrRef, day("2026-11-05", "09:00"))},
+		{Ref: noNote, MRs: merged(noNoteMR, day("2026-11-06", "11:00"))},
+	}
+	r, err := BuildReviewLive(ctx, c, ReviewLiveInput{
+		Project: "sandbox", Manifest: m, Sprint: *cur, Sprints: sprints, Me: forge.User{Username: "sandbox-dev"},
+		Cal: utcCal(), Now: fakeNow, VelocityN: 3, Items: items,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byIID := map[int]ReviewItem{}
+	for _, it := range r.Items {
+		byIID[it.Ref.IID] = it
+	}
+	if it := byIID[10]; it.AssignedFrom != AssignedFromNote || it.CycleHours == nil || *it.CycleHours != 48 {
+		t.Errorf("#10 (assigned by note 11-03 09:00, merged 11-05 09:00): %+v", it)
+	}
+	if it := byIID[4]; it.AssignedFrom != AssignedFromCreated || it.CycleHours == nil {
+		t.Errorf("#4 has no assignment note in the fake: it falls back to its creation time: %+v", it)
+	}
+	if r.Cycle.Items != 2 || r.Cycle.MedianHours == nil {
+		t.Errorf("summary %+v", r.Cycle)
+	}
+}

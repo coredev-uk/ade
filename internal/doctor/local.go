@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/coredev-uk/ade/internal/editor"
 )
 
 func configChecks(o Options) []Check {
@@ -137,7 +139,47 @@ func pathChecks(o Options) []Check {
 		}
 		checks = append(checks, checkWritable(d.name, d.dir))
 	}
+	if o.Records != "" {
+		checks = append(checks, checkRecordsOutsideGit(o.Records))
+	}
 	return checks
+}
+
+// checkRecordsOutsideGit warns when the records directory sits inside a git
+// work tree (PLAN 4.2): audit logs, notes and AI output are real work data and
+// must not be committed or pushed by accident. A tree is recognised by a .git
+// entry (a directory, or the file linked worktrees and submodules have) in the
+// directory or any ancestor; the directory itself need not exist yet.
+func checkRecordsOutsideGit(dir string) Check {
+	c := Check{Group: "paths", Name: "records outside git", Status: OK, Detail: dir + " is not inside a git work tree"}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		abs = dir
+	}
+	if resolved, err := filepath.EvalSymlinks(nearestExisting(abs)); err == nil {
+		abs = filepath.Join(resolved, strings.TrimPrefix(abs, nearestExisting(abs)))
+	}
+	for d := abs; ; d = filepath.Dir(d) {
+		if _, err := os.Stat(filepath.Join(d, ".git")); err == nil {
+			c.Status = Warn
+			c.Detail = dir + " is inside the git work tree " + d
+			c.Fix = "set records.dir to a path outside every repository (default: $XDG_DATA_HOME/ade); " +
+				"these directories hold real work data. On a remote dev environment use the persistent home volume"
+			return c
+		}
+		if filepath.Dir(d) == d {
+			return c
+		}
+	}
+}
+
+// nearestExisting returns the longest existing prefix of path.
+func nearestExisting(path string) string {
+	for p := path; ; p = filepath.Dir(p) {
+		if _, err := os.Stat(p); err == nil || filepath.Dir(p) == p {
+			return p
+		}
+	}
 }
 
 // checkWritable probes with a temp file instead of trusting mode bits, which
@@ -192,5 +234,16 @@ func hostChecks(o Options) []Check {
 	if o.Config != nil && o.Config.Host.Mode != "auto" && o.Config.Host.Mode != "" {
 		detail += "; host.mode forced to " + strings.TrimSpace(o.Config.Host.Mode)
 	}
-	return []Check{{Group: "host", Name: "host", Status: OK, Detail: detail}}
+	setting := ""
+	if o.Config != nil {
+		setting = o.Config.Host.Editor
+	}
+	ed := editor.Resolve(setting, editor.Env{
+		TermProgram: o.Getenv("TERM_PROGRAM"), VSCodeIPC: o.Getenv("VSCODE_IPC_HOOK_CLI"),
+		Visual: o.Getenv("VISUAL"), Editor: o.Getenv("EDITOR"),
+	})
+	return []Check{
+		{Group: "host", Name: "host", Status: OK, Detail: detail},
+		{Group: "host", Name: "editor", Status: OK, Detail: ed.String()},
+	}
 }

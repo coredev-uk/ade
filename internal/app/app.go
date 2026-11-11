@@ -5,7 +5,9 @@ package app
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/coredev-uk/ade/internal/audit"
 	"github.com/coredev-uk/ade/internal/config"
@@ -53,7 +55,27 @@ func Load(actor string) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	enforceRetention(al, cfg.Records.AuditRetain, time.Now())
 	return &App{Paths: p, Config: cfg, Root: root, RecordsDir: rec, Audit: al, Bus: events.NewBus()}, nil
+}
+
+// enforceRetention applies records.audit_retain (PLAN 4.2): whole months past
+// the retention are deleted, and the deletion is itself audited. A failure is
+// audited too and never stops the command. A malformed value is left to config
+// validation (which errors on it) rather than logged on every command.
+func enforceRetention(al *audit.Log, retain string, now time.Time) {
+	if _, _, err := audit.ParseRetain(retain); err != nil {
+		return
+	}
+	removed, err := al.Prune(retain, now)
+	if len(removed) == 0 && err == nil {
+		return
+	}
+	e := audit.Entry{Action: "audit.prune", Target: strings.Join(removed, ","), Params: map[string]any{"retain": retain, "months": removed}}
+	if err != nil {
+		e.Outcome, e.Error = "error", err.Error()
+	}
+	al.Append(e) //nolint:errcheck // the log being pruned is the one that just failed to write
 }
 
 // Cache opens cache.db once per process.

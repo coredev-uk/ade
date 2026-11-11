@@ -51,8 +51,10 @@ type model struct {
 	homeRows   []homeRow
 	homeSel    int
 	homeFilter homeFilter
-	homeLoaded bool // cache read: before it, "nothing assigned" would be a lie
+	hs         homeState // search, palette, facet and project filters, Activity, load average (homeactions.go)
+	homeLoaded bool      // cache read: before it, "nothing assigned" would be a lie
 	syncing    bool
+	syncQueued bool // a sync waits for the running update to finish (PLAN 2.3: git first, forge second)
 	lastSync   time.Time
 	syncErr    error
 
@@ -96,6 +98,11 @@ type model struct {
 	// spend figure (aichip.go).
 	cl   *classifyDialog
 	chip aiChip
+
+	// nt and wt are the open Notes and Weight dialogs, nil when closed
+	// (notes.go, weight.go).
+	nt *notesDialog
+	wt *weightDialog
 
 	// agt is the open agent dialog, nil when closed (agent.go).
 	agt *agentDialog
@@ -172,19 +179,36 @@ func (m model) runUpdate() tea.Cmd {
 	}
 }
 
-// refresh starts whichever of the update (git) and sync (forge) loops are
-// idle; they run in parallel and report independently.
+// refresh runs the update (git) and then the forge sync, in that order (PLAN
+// 2.3 step 6): the sync starts when the update reports done, so what it
+// writes (item records, branches seen) is read against fetched git state. A
+// loop already running is not started twice; a sync requested while an update
+// runs is queued behind it, and one requested while only a sync runs starts
+// its update alongside.
 func (m *model) refresh() tea.Cmd {
 	var cmds []tea.Cmd
 	if !m.updating {
 		m.updating, m.progress = true, project.Progress{}
 		cmds = append(cmds, m.runUpdate())
 	}
-	if !m.syncing && m.sync != nil {
-		m.syncing = true
-		cmds = append(cmds, m.runSync())
+	if m.updating && !m.syncing && !m.syncQueued && m.sync != nil {
+		m.syncQueued = true
 	}
 	return tea.Batch(cmds...)
+}
+
+// startQueuedSync is called when an update finishes: it starts the sync the
+// update was holding back.
+func (m *model) startQueuedSync() tea.Cmd {
+	if !m.syncQueued {
+		return nil
+	}
+	m.syncQueued = false
+	if m.syncing || m.sync == nil {
+		return nil
+	}
+	m.syncing = true
+	return m.runSync()
 }
 
 // pollInbox re-reads the inbox: rows from other ade processes pop up.
@@ -197,7 +221,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if next, cmd, ok := m.classifyUpdate(msg); ok {
 		return next, cmd
 	}
+	if next, cmd, ok := m.notesUpdate(msg); ok {
+		return next, cmd
+	}
+	if next, cmd, ok := m.weightUpdate(msg); ok {
+		return next, cmd
+	}
 	if next, cmd, ok := m.agentUpdate(msg); ok {
+		return next, cmd
+	}
+	if next, cmd, ok := m.homeUpdate(msg); ok {
 		return next, cmd
 	}
 	switch msg := msg.(type) {
@@ -216,7 +249,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setResults(msg.results)
 		}
 		m.homeLoaded = true
-		return m, m.pollInbox()
+		vel := m.loadVelocity(!msg.synced)
+		return m, tea.Batch(m.pollInbox(), vel)
 	case startUpdateMsg:
 		return m, m.refresh()
 	case updateTickMsg:
@@ -230,7 +264,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			r := msg.report
 			m.lastReport = &r
 		}
-		return m, tea.Batch(m.loadStatus(), m.pollInbox())
+		sync := m.startQueuedSync() // before m is returned: it sets m.syncing
+		return m, tea.Batch(m.loadStatus(), m.pollInbox(), sync)
 	case eventMsg:
 		m.nc.onEvent(events.Event(msg))
 		return m, m.pollInbox()
@@ -291,7 +326,7 @@ func (m *model) setResults(rs []forgesync.Result) {
 }
 
 func (m *model) rebuildHome(keep string) {
-	m.homeRows = buildHomeRows(m.results, m.homeFilter)
+	m.homeRows = buildRows(m.results, m.homeQuery())
 	m.homeSel = min(m.homeSel, max(len(m.homeRows)-1, 0))
 	for i, r := range m.homeRows {
 		if r.ref() == keep {
@@ -364,6 +399,8 @@ func (m model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case m.help:
 			m.help = false
 		case m.nc.dismissToasts():
+		case m.onHomePage() && m.searching():
+			return m.clearSearch(), nil
 		case m.showDetail:
 			m.showDetail = false
 		}
@@ -419,10 +456,36 @@ func (m model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "U":
 		return m, m.refresh()
 	case "f":
-		if m.page == pageHome {
-			m.homeFilter = (m.homeFilter + 1) % 5
-			m.homeSel = 0
-			m.rebuildHome("")
+		if m.onHomePage() {
+			return m.openFilterPicker(), nil
+		}
+	case "/":
+		next, cmd := m.openSearch()
+		return next, cmd
+	case ":":
+		if m.mr == nil {
+			return m.openPalette(), nil
+		}
+	case "r":
+		next, cmd := m.restartOrRefresh()
+		return next, cmd
+	case "n":
+		next, cmd := m.openNotes()
+		return next, cmd
+	case "=":
+		next, cmd := m.openWeight()
+		return next, cmd
+	case "o":
+		next, cmd := m.openBrowser()
+		return next, cmd
+	case "p":
+		if m.onHomePage() {
+			next, cmd := m.cycleProject()
+			return next, cmd
+		}
+	case "e":
+		if m.onHomePage() {
+			return m.toggleActivity(), nil
 		}
 	case "j", "down":
 		m.move(1)

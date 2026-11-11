@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/coredev-uk/ade/internal/httpdebug"
 )
 
 // Source names, as in config AIBilling.Source.
@@ -161,5 +163,5 @@ func httpClient(hc *http.Client) *http.Client {
 	if hc != nil {
 		return hc
 	}
-	return &http.Client{Timeout: 20 * time.Second}
+	return &http.Client{Timeout: 20 * time.Second, Transport: httpdebug.Transport(nil)}
 }

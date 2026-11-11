@@ -27,11 +27,15 @@ func ValidLayout(name string) bool {
 // Tools are the programs panes run. An empty field means the tool is not
 // installed and its pane falls back to a plain shell.
 type Tools struct {
-	Ade     string
-	Editor  string
-	Lazygit string
-	Delta   string
-	Omp     string
+	Ade    string
+	Editor string
+	// EditorArgs, when set, are the complete arguments of Editor, which is then
+	// a single program (a GUI launcher gets its directory and a trailing shell
+	// there); otherwise Editor is split into a program and its arguments.
+	EditorArgs []string
+	Lazygit    string
+	Delta      string
+	Omp        string
 }
 
 // Pane is one command pane.
@@ -138,6 +142,9 @@ func (s LayoutSpec) lazygit() (command, bool) {
 func (s LayoutSpec) primary() command {
 	switch s.Layout {
 	case LayoutCode:
+		if len(s.Tools.EditorArgs) > 0 {
+			return command{prog: s.Tools.Editor, args: s.Tools.EditorArgs, name: "editor"}
+		}
 		if f := strings.Fields(s.Tools.Editor); len(f) > 0 {
 			return command{prog: f[0], args: f[1:], name: "editor"}
 		}

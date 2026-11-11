@@ -3,9 +3,52 @@
 package zellij
 
 import (
+	"bytes"
+	_ "embed"
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
+
+// UnlockFirstConfig is ADE's zellij config for sessions inside a VS Code
+// terminal: zellij starts locked so no key collides with VS Code, neovim or
+// lazygit, and Ctrl-g unlocks (PLAN 6.7).
+//
+//go:embed unlock-first.kdl
+var UnlockFirstConfig string
+
+// ConfigFileName is the preset's file name in ADE's config directory.
+const ConfigFileName = "zellij-unlock-first.kdl"
+
+// WriteUnlockFirst writes the preset to dir/ConfigFileName (replacing a stale
+// copy from an older ADE) and returns its path.
+func WriteUnlockFirst(dir string) (string, error) {
+	path := filepath.Join(dir, ConfigFileName)
+	if cur, err := os.ReadFile(path); err == nil && bytes.Equal(cur, []byte(UnlockFirstConfig)) {
+		return path, nil
+	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return "", err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	tmp, err := os.CreateTemp(dir, ConfigFileName+".tmp*")
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(tmp.Name()) //nolint:errcheck // gone after a successful rename
+	if _, err := tmp.WriteString(UnlockFirstConfig); err != nil {
+		tmp.Close()
+		return "", err
+	}
+	if err := tmp.Close(); err != nil {
+		return "", err
+	}
+	return path, os.Rename(tmp.Name(), path)
+}
 
 // State is a named session's liveness.
 type State int

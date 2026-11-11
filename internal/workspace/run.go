@@ -53,6 +53,13 @@ type UpOptions struct {
 	HolderPID int
 	// Progress, when set, is called as each node finishes. Calls are serialised.
 	Progress func(Result)
+
+	// restore are the holds a restarted instance had before it was stopped
+	// (dropping its row dropped them); they replace the new hold of Holder.
+	restore map[string][]holdRec
+	// preset are instances a run leaves untouched; their result stands in for
+	// theirs (Restart's untouched part of the plan).
+	preset map[string]Result
 }
 
 // Up starts the plan in dependency order: independent nodes in parallel, a
@@ -66,6 +73,11 @@ func (m *Manager) Up(ctx context.Context, p *Plan, o UpOptions) ([]Result, error
 	if _, err := m.Reap(ctx); err != nil { // instances orphaned by crashed holders must not be reused
 		return nil, err
 	}
+	return m.start(ctx, p, o)
+}
+
+// start brings the planned instances up in dependency order.
+func (m *Manager) start(ctx context.Context, p *Plan, o UpOptions) ([]Result, error) {
 	results := make([]Result, len(p.Instances))
 	index := map[string]int{}
 	done := make([]chan struct{}, len(p.Instances))
@@ -85,6 +97,10 @@ func (m *Manager) Up(ctx context.Context, p *Plan, o UpOptions) ([]Result, error
 				case <-done[index[req]]:
 				case <-ctx.Done():
 				}
+			}
+			if r, ok := o.preset[in.ID]; ok {
+				results[i] = r
+				return
 			}
 			results[i] = m.bring(ctx, p, in, results, index, o)
 			if o.Progress != nil {
@@ -141,7 +157,7 @@ func (m *Manager) ensure(ctx context.Context, p *Plan, in *Instance, o UpOptions
 	}
 	if row != nil {
 		if m.reusable(ctx, in, row) {
-			if err := m.hold(in.ID, o.Holder, o.HolderPID); err != nil {
+			if err := m.holdFor(in.ID, o); err != nil {
 				return 0, false, err
 			}
 			return row.PID, true, nil
@@ -160,7 +176,23 @@ func (m *Manager) ensure(ctx context.Context, p *Plan, in *Instance, o UpOptions
 	if err != nil {
 		return pid, false, err
 	}
-	return pid, false, m.hold(in.ID, o.Holder, o.HolderPID)
+	return pid, false, m.holdFor(in.ID, o)
+}
+
+// holdFor records who keeps id up: its previous holds when it was restarted,
+// else the holder of the run.
+func (m *Manager) holdFor(id string, o UpOptions) error {
+	if hs, ok := o.restore[id]; ok {
+		for _, h := range hs {
+			if _, err := m.db.Exec(`INSERT INTO ws_holds (instance, holder, pid, pstart) VALUES (?,?,?,?)
+				ON CONFLICT(instance, holder) DO UPDATE SET pid = excluded.pid, pstart = excluded.pstart`,
+				id, h.holder, h.pid, h.pstart); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return m.hold(id, o.Holder, o.HolderPID)
 }
 
 // reusable decides whether an existing row can serve in. Services must still

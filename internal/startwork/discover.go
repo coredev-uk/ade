@@ -286,8 +286,15 @@ const (
 // templateSource says where the forge keeps MR templates: the directory
 // listing them and how a template name maps to a file path.
 func (e *Env) templateSource(ctx context.Context, t Target, f *Found) (names []string, pathOf func(string) string, err error) {
-	if e.Forge.Kind() != "github" {
-		files, err := e.Forge.ListFiles(ctx, t.Project, f.DefaultBranch, TemplateDir)
+	return TemplateNames(ctx, e.Forge, t.Project, f.DefaultBranch)
+}
+
+// TemplateNames lists the MR templates project offers at ref, by name, and
+// maps a name to its file path. GitLab keeps them in a directory; GitHub in
+// one well-known file (named "Default") and a directory.
+func TemplateNames(ctx context.Context, fg Forge, project, ref string) (names []string, pathOf func(string) string, err error) {
+	if fg.Kind() != "github" {
+		files, err := fg.ListFiles(ctx, project, ref, TemplateDir)
 		for _, p := range files {
 			if strings.HasSuffix(p, ".md") {
 				names = append(names, strings.TrimSuffix(path.Base(p), ".md"))
@@ -295,12 +302,12 @@ func (e *Env) templateSource(ctx context.Context, t Target, f *Found) (names []s
 		}
 		return names, func(n string) string { return TemplateDir + "/" + n + ".md" }, err
 	}
-	files, err := e.Forge.ListFiles(ctx, t.Project, f.DefaultBranch, gitHubTemplateDir)
+	files, err := fg.ListFiles(ctx, project, ref, gitHubTemplateDir)
 	if err != nil {
 		return nil, nil, err
 	}
 	single := false
-	if _, err := e.Forge.ReadFile(ctx, t.Project, f.DefaultBranch, gitHubTemplateFile); err == nil {
+	if _, err := fg.ReadFile(ctx, project, ref, gitHubTemplateFile); err == nil {
 		single = true
 		names = append(names, "Default")
 	} else if !errors.Is(err, forge.ErrNotFound) {

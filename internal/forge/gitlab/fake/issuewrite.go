@@ -2,6 +2,7 @@ package fake
 
 import (
 	"fmt"
+	"maps"
 	"net/http"
 	"regexp"
 	"slices"
@@ -31,15 +32,21 @@ func init() {
 }
 
 // repos is the git side the fake emulates: branches and files per project.
-// Branch names are in creation order; the first is the default branch.
+// Branch names are in creation order; the first is the default branch. files
+// are on every branch; overlay holds what commits added on one branch
+// (key "project@branch"), as the files API writes them.
 type repos struct {
 	branches map[string][]string
 	files    map[string]map[string]string // project path -> file path -> content
+	overlay  map[string]map[string]string
 }
 
 func (s *Server) repos() *repos {
 	return s.ext("issuewrite", func() any {
-		r := &repos{branches: map[string][]string{}, files: map[string]map[string]string{}}
+		r := &repos{
+			branches: map[string][]string{}, files: map[string]map[string]string{},
+			overlay: map[string]map[string]string{},
+		}
 		for _, p := range s.st.projects {
 			r.branches[p.Path] = []string{"main"}
 		}
@@ -51,6 +58,17 @@ func (s *Server) repos() *repos {
 		}
 		return r
 	}).(*repos)
+}
+
+// view is the project's files as seen on ref: the shared files plus what was
+// committed to that branch.
+func (r *repos) view(project, ref string) map[string]string {
+	out := maps.Clone(r.files[project])
+	if out == nil {
+		out = map[string]string{}
+	}
+	maps.Copy(out, r.overlay[project+"@"+ref])
+	return out
 }
 
 // AddFile puts a file in the project's repository (on every branch).
@@ -332,6 +350,9 @@ func (s *Server) createBranch(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, object{"message": "Invalid reference name: " + from})
 	default:
 		rs.branches[proj.Path] = append(rs.branches[proj.Path], name)
+		if o := rs.overlay[proj.Path+"@"+from]; o != nil {
+			rs.overlay[proj.Path+"@"+name] = maps.Clone(o)
+		}
 		writeJSON(w, http.StatusCreated, s.branchJSON(proj, name))
 	}
 }
@@ -350,7 +371,11 @@ func (s *Server) repoTree(w http.ResponseWriter, r *http.Request) {
 	}
 	dir := strings.Trim(r.URL.Query().Get("path"), "/")
 	var out []string
-	for path := range rs.files[p.Path] {
+	ref := r.URL.Query().Get("ref")
+	if ref == "" {
+		ref = rs.branches[p.Path][0]
+	}
+	for path := range rs.view(p.Path, ref) {
 		if d, _ := splitDir(path); d == dir {
 			out = append(out, path)
 		}
@@ -381,8 +406,9 @@ func (s *Server) rawFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rs := s.repos()
-	content, has := rs.files[p.Path][r.PathValue("path")]
-	if !has || !slices.Contains(rs.branches[p.Path], r.URL.Query().Get("ref")) {
+	ref := r.URL.Query().Get("ref")
+	content, has := rs.view(p.Path, ref)[r.PathValue("path")]
+	if !has || !slices.Contains(rs.branches[p.Path], ref) {
 		notFound(w)
 		return
 	}

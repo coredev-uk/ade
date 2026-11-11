@@ -327,23 +327,6 @@ func TestPickDiscussionByIDOrPrefix(t *testing.T) {
 	}
 }
 
-func TestClosedIssueParsing(t *testing.T) {
-	mr := forge.MR{Ref: forge.Ref{Project: "g/api", IID: 5, Kind: forge.KindMR}}
-	for desc, want := range map[string]string{
-		"Closes #4":                   "g/api#4",
-		"This fixes g/tracker#12 now": "g/tracker#12",
-		"resolves #7":                 "g/api#7",
-		"Relates to #3":               "",
-		"no refs":                     "",
-	} {
-		mr.Description = desc
-		got, ok := closedIssue(mr)
-		if (want == "") == ok || (ok && got.String() != want) {
-			t.Errorf("%q -> %v %v, want %q", desc, got, ok, want)
-		}
-	}
-}
-
 func classifyEnv(t *testing.T) *cliEnv {
 	t.Helper()
 	e, _ := aiEnvFor(t, "[]")

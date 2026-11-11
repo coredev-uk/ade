@@ -111,8 +111,10 @@ func (s *Server) groupProjects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	paged(s, w, r, s.st.projects, func(p *project) any {
+		name := p.Path[strings.LastIndex(p.Path, "/")+1:]
 		return object{
-			"id": p.ID, "name": p.Path[strings.LastIndex(p.Path, "/")+1:], "path_with_namespace": p.Path,
+			"id": p.ID, "name": name, "path": name, "path_with_namespace": p.Path,
+			"default_branch": s.repos().branches[p.Path][0], "archived": p.Archived,
 			"web_url": s.webURL(p.Path),
 		}
 	})

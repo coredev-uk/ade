@@ -77,7 +77,7 @@ func (s *Server) renderRepo(rp *repo) map[string]any {
 	return map[string]any{
 		"id": rp.ID, "node_id": nodeID("R", rp.ID), "name": rp.Name, "full_name": rp.Owner + "/" + rp.Name,
 		"private": true, "owner": s.renderUser(rp.Owner), "html_url": s.repoHTML(rp), "url": s.repoAPI(rp),
-		"default_branch": rp.Default, "has_issues": true, "archived": false,
+		"default_branch": rp.Default, "has_issues": true, "archived": rp.Archived,
 	}
 }
 

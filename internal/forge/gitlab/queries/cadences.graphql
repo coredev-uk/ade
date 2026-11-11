@@ -1,0 +1,12 @@
+query GroupCadences($path: ID!) {
+  group(fullPath: $path) {
+    iterationCadences(first: 100, includeAncestorGroups: true) {
+      nodes {
+        title
+        durationInWeeks
+        startDate
+        automatic
+      }
+    }
+  }
+}

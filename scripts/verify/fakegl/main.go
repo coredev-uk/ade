@@ -22,6 +22,7 @@ func main() {
 	tier := flag.String("tier", "free", "licence level to emulate: free | premium")
 	template := flag.Bool("mr-template", false, "give the api project a merge request template (Start work captures)")
 	latency := flag.Duration("latency", 0, "delay every response (shows loading states)")
+	carried := flag.Bool("carried", false, "leave an open issue in Sprint 41 (Home's Previous sprint section; needs tracker.iterations.overlap)")
 	activity := flag.Bool("agile", false, "add the history the standup and sprint-review captures need")
 	review := flag.String("review", "", "MR refs (group/project!N, comma separated) to list under Reviews requested for the signed-in user")
 	flag.Parse()
@@ -42,6 +43,13 @@ func main() {
 	defer srv.Close()
 	if *activity {
 		seedAgile(srv)
+	}
+	if *carried {
+		two := 2
+		_, _ = srv.AddIssue(fake.IssueSpec{
+			Title: "Finish the export audit trail", Milestone: "Sprint 41", Weight: &two,
+			Created: time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC), Labels: []string{"type::task", "app::api"},
+		})
 	}
 	for _, r := range strings.Split(*review, ",") {
 		if r = strings.TrimSpace(r); r == "" {
@@ -96,6 +104,19 @@ func seedAgile(srv *fake.Server) {
 		Created: day("2026-10-20", "09:00"), Labels: []string{"type::story", "app::api", "workflow::done"},
 	})
 	_ = srv.AddLabelEvent(tune, "workflow::done", "add", day("2026-11-09", "11:00"))
+
+	// Merged work with known assignment times, for the sprint review's cycle time:
+	// #4 was assigned on the 3rd and merged on the 5th; #10 was assigned on the 4th,
+	// merged on the 9th. #12 (the hotfix) has an MR but no assignment note, so its
+	// cycle time starts at its creation.
+	assign := func(iid int, when string) {
+		_ = srv.AddSystemNote(forge.Ref{Project: tracker, IID: iid}, "assigned to @sandbox-dev", day(when, "09:00"))
+	}
+	assign(4, "2026-11-03")
+	assign(10, "2026-11-04")
+	_, _ = srv.AddMergedMR(api, "Remove the legacy CSV export path", forge.Ref{Project: tracker, IID: 4}, day("2026-11-03", "10:00"), day("2026-11-05", "17:00"))
+	_, _ = srv.AddMergedMR(api, "Upgrade export worker dependencies", forge.Ref{Project: tracker, IID: 10}, day("2026-11-04", "11:00"), day("2026-11-09", "13:30"))
+	_, _ = srv.AddMergedMR(api, "Hotfix export crash on empty tenants", hot, day("2026-11-06", "09:00"), day("2026-11-09", "14:30"))
 
 	srv.AddMilestone("Sprint 39", "closed", "2026-09-21", "2026-10-02")
 	srv.AddMilestone("Sprint 40", "closed", "2026-10-05", "2026-10-16")

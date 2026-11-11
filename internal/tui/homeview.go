@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -17,15 +18,29 @@ import (
 // the court a third of the width so titles stay readable.
 type homeLayout struct {
 	refW, trackGap, weightW, courtW int
+	// badgeW is the thread-count and pipeline column after the track, 0 where
+	// the list is too narrow to spare it.
+	badgeW int
 }
+
+// badgeCells is the width of "✉ 12 ✓": threads, a space, the pipeline glyph.
+const badgeCells = 6
+
+// minTitleForBadge is the narrowest title cell that still gives up room to the
+// badge column.
+const minTitleForBadge = 20
 
 // layoutFor sizes columns for a list w cells wide; courtW is the widest court
 // text present, so reasons are never cut when there is room.
 func layoutFor(w, refW, courtW int) homeLayout {
-	if w < 110 {
-		return homeLayout{refW: refW, trackGap: 1, weightW: 3, courtW: min(courtW, max(18, w*2/5))}
+	badge := 0
+	if w >= 76 {
+		badge = badgeCells
 	}
-	return homeLayout{refW: refW, trackGap: 2, weightW: 4, courtW: min(courtW, 40)}
+	if w < 110 {
+		return homeLayout{refW: refW, trackGap: 1, weightW: 3, courtW: min(courtW, max(18, w*2/5)), badgeW: badge}
+	}
+	return homeLayout{refW: refW, trackGap: 2, weightW: 4, courtW: min(courtW, 40), badgeW: badge}
 }
 
 func (l homeLayout) trackW() int { return len(domain.Stations) + (len(domain.Stations)-1)*l.trackGap }
@@ -154,6 +169,26 @@ func newMark(n int) string {
 }
 
 func (m model) homeLines(w, h int) string {
+	if m.hs.search.typing || m.searching() {
+		return m.searchBar(w) + "\n" + m.homeList(w, h-1)
+	}
+	return m.homeList(w, h)
+}
+
+// narrowed says what is limiting the list, for the empty message.
+func (m model) narrowed() string {
+	switch {
+	case m.searching():
+		return `matching "` + strings.TrimSpace(m.hs.search.input) + `"`
+	case m.hs.facet != "":
+		return m.hs.facet + " " + m.hs.facetVal
+	case m.homeFilter != hfAll:
+		return m.homeFilter.String()
+	}
+	return ""
+}
+
+func (m model) homeList(w, h int) string {
 	marks := m.nc.marks()
 	var out []string
 	selLine := 0
@@ -168,12 +203,21 @@ func (m model) homeLines(w, h int) string {
 		}
 	}
 	lay := layoutFor(w, refW, courtW)
-	// Four two-cell gaps: ref|title|track|weight|court.
-	titleW := max(12, w-3-lay.refW-lay.trackW()-lay.weightW-lay.courtW-4*2)
+	// Gaps: ref|title|track|badge|weight|court; the badge and its gap go when
+	// they would leave the title under minTitleForBadge cells.
+	titleW := max(12, w-3-lay.refW-lay.trackW()-lay.weightW-lay.courtW-4*2-lay.badgeGap())
+	if lay.badgeW > 0 && titleW < minTitleForBadge {
+		lay.badgeW = 0
+		titleW = max(12, w-3-lay.refW-lay.trackW()-lay.weightW-lay.courtW-4*2)
+	}
 	idx := 0
 	legend := false // the station names appear once, above the first project that has tracks
+	narrowed := m.narrowed()
 	for ri := range m.results {
 		res := &m.results[ri]
+		if m.hs.project != "" && res.Project != m.hs.project {
+			continue
+		}
 		out = append(out, m.projectRule(res, w))
 		if !legend && res.Err == "" {
 			out = append(out, m.legend(lay, titleW))
@@ -183,13 +227,13 @@ func (m model) homeLines(w, h int) string {
 			out = append(out, "   "+stBad.Render(m.g.Bad+" sync failed: ")+ansi.Truncate(res.Err, w-20, "…"))
 		}
 		shown := false
-		for sec := secMine; sec <= secNext; sec++ {
+		for sec := secMine; sec <= secSearch; sec++ {
 			start := idx
 			for idx < len(m.homeRows) && m.homeRows[idx].project == res.Project && m.homeRows[idx].section == sec {
 				idx++
 			}
 			if start == idx {
-				if sec == secMine && m.homeFilter == hfAll && res.Err == "" {
+				if sec == secMine && narrowed == "" && res.Err == "" {
 					out = append(out, subRule(sec.title(), "nothing assigned", w, m.g),
 						"   "+stFaint.Render("Nothing assigned to you in this project."))
 				}
@@ -204,10 +248,17 @@ func (m model) homeLines(w, h int) string {
 				out = append(out, m.homeRowLine(m.homeRows[i], lay, i == m.homeSel, titleW, marks))
 			}
 		}
-		if !shown && m.homeFilter != hfAll {
-			out = append(out, "   "+stFaint.Render("No "+m.homeFilter.String()+" items here. f cycles the filter."))
+		if !shown && narrowed != "" {
+			hint := " f changes the filter."
+			if m.searching() {
+				hint = " esc clears the search."
+			}
+			out = append(out, "   "+stFaint.Render("Nothing "+narrowed+" here."+hint))
 		}
 		out = append(out, "")
+	}
+	if !m.threeRegion() {
+		out = append(out, m.activityLines(w)...)
 	}
 	top := 0
 	if selLine >= h-1 {
@@ -216,12 +267,22 @@ func (m model) homeLines(w, h int) string {
 	return fit(strings.Join(out[min(top, len(out)):], "\n"), w, h)
 }
 
+// badgeGap is the two-cell gap the badge column adds, 0 without the column.
+func (l homeLayout) badgeGap() int {
+	if l.badgeW == 0 {
+		return 0
+	}
+	return l.badgeW + 2
+}
+
 // projectRule heads a project: its name, the current sprint and days left on
 // the rule, load in the guide words.
 func (m model) projectRule(res *forgesync.Result, w int) string {
 	title := res.Project
 	sep := " " + m.g.Sep + " "
-	var guide []string   // highest priority first: dropped from the end to fit
+	var head []string    // the sprint's end and days left: always kept
+	var loads []string   // the load, most detailed first; a shorter one is tried before dropping anything
+	var next string      // the next sprint's start: dropped first
 	var compact []string // the same, with the sprint and its load squeezed into one group
 	if s := res.Window.Current; s != nil {
 		title += sep + s.Title
@@ -232,38 +293,62 @@ func (m model) projectRule(res *forgesync.Result, w int) string {
 			left, short = stWarn.Render(left), stWarn.Render(short)
 		}
 		ends := "ends " + s.Due.Format("Mon 2 Jan") + sep
-		guide = append(guide, ends+left)
-		var load, loadShort string
+		head = append(head, ends+left)
+		var loadShort string
 		if l := loadOf(res); l.items > 0 && l.unweighted == l.items {
-			load, loadShort = "no weights", "no weights"
+			loads, loadShort = []string{"no weights"}, "no weights"
 		} else if l.items > 0 {
 			loadShort = fmt.Sprintf("%d/%dw", l.done, l.committed)
-			load = fmt.Sprintf("%dw committed %s %dw done", l.committed, m.g.Sep, l.done)
-			if l.unweighted > 0 {
-				load += fmt.Sprintf(" %s %d unweighted", m.g.Sep, l.unweighted)
+			lean := fmt.Sprintf("%dw committed %s %dw done %s %dw left", l.committed, m.g.Sep, l.done, m.g.Sep, max(l.committed-l.done, 0))
+			mid := lean
+			if v, ok := m.hs.vel[res.Project]; ok {
+				mid += " " + m.g.Sep + " " + v.String()
 			}
+			full := mid
+			if l.unweighted > 0 {
+				full = lean + fmt.Sprintf(" %s %d unweighted", m.g.Sep, l.unweighted)
+				if v, ok := m.hs.vel[res.Project]; ok {
+					full += " " + m.g.Sep + " " + v.String()
+				}
+			}
+			loads = []string{full, mid, lean}
 		}
-		if load != "" {
-			guide = append(guide, load)
-		}
-		head := ends + short
+		c := ends + short
 		if loadShort != "" {
-			head += sep + loadShort
+			c += sep + loadShort
 		}
-		compact = append(compact, head)
+		compact = append(compact, c)
 	} else if s := res.Window.Next; s != nil {
-		guide = append(guide, "no sprint running "+m.g.Sep+" "+s.Title+" starts "+s.Start.Format("Mon 2 Jan"))
+		head = append(head, "no sprint running "+m.g.Sep+" "+s.Title+" starts "+s.Start.Format("Mon 2 Jan"))
 	}
 	if n := res.Window.Next; n != nil && res.Window.Current != nil {
-		next := "next " + n.Title + " starts " + n.Start.Format("Mon 2 Jan")
-		guide = append(guide, next)
+		next = "next " + n.Title + " starts " + n.Start.Format("Mon 2 Jan")
 		compact = append(compact, next)
 	}
 	room := w - lipgloss.Width(title) - 6
 	fits := func(g []string) bool { return lipgloss.Width(strings.Join(g, sep)) <= room }
-	if !fits(guide) && len(compact) > 0 {
-		// Keep load visible in short form before any group is dropped.
-		guide = compact
+	// Candidates from richest to leanest; the first that fits wins. The compact
+	// form keeps the load in short form before any group is dropped.
+	var cands [][]string
+	for _, load := range loads {
+		if next != "" {
+			cands = append(cands, append(append(slices.Clone(head), load), next))
+		}
+		cands = append(cands, append(slices.Clone(head), load))
+	}
+	if len(loads) == 0 {
+		cands = append(cands, append(slices.Clone(head), next))
+		cands[len(cands)-1] = slices.DeleteFunc(cands[len(cands)-1], func(s string) bool { return s == "" })
+	}
+	if len(compact) > 0 {
+		cands = append(cands, compact)
+	}
+	guide := cands[len(cands)-1]
+	for _, c := range cands {
+		if fits(c) {
+			guide = c
+			break
+		}
 	}
 	for len(guide) > 1 && !fits(guide) {
 		guide = guide[:len(guide)-1]
@@ -300,6 +385,18 @@ func (m model) sectionGuide(res *forgesync.Result, sec homeSection, n int) strin
 		return fmt.Sprintf("%d waiting on you", n)
 	case secSprintOpen, secNext:
 		return fmt.Sprintf("%d not assigned to you", n)
+	case secPrevious:
+		title := "the last sprint"
+		if p := res.Window.Previous; p != nil {
+			title = p.Title
+		}
+		return fmt.Sprintf("%d unfinished %s carried over from %s", n, m.g.Sep, title)
+	case secSearch:
+		note := ""
+		if m.hs.search.loading {
+			note = " " + m.g.Sep + " " + m.g.Sync + " searching"
+		}
+		return fmt.Sprintf("%d open %s on the forge%s", n, plural(n, "MR"), note)
 	default:
 		you := 0
 		for i := range m.homeRows {
@@ -344,7 +441,7 @@ func (m model) homeRowLine(r homeRow, lay homeLayout, selected bool, titleW int,
 		}
 		left := mark + stFaint.Render(ref) + "  " + pad(ansi.Truncate(title, titleW-lipgloss.Width(unread), "…")+unread, titleW)
 		right := stFaint.Render(mr.Author.Username) + stFaint.Render(" "+m.g.Sep+" ") + mrStatus(m.g, mr)
-		return left + "  " + strings.Repeat(" ", lay.trackW()+2+lay.weightW) + "  " + ansi.Truncate(right, lay.courtW, "…")
+		return left + "  " + strings.Repeat(" ", lay.trackW()+lay.badgeGap()+2+lay.weightW) + "  " + ansi.Truncate(right, lay.courtW, "…")
 	}
 	it := r.item
 	ref := pad(m.shortRefOf(r), lay.refW)
@@ -352,7 +449,7 @@ func (m model) homeRowLine(r homeRow, lay homeLayout, selected bool, titleW int,
 	if selected {
 		title = stBold.Render(title)
 	}
-	titleCell := pad(ansi.Truncate(title, titleW-lipgloss.Width(unread), "…")+unread, titleW)
+	titleCell := m.titleCell(it, title, titleW, unread)
 	tr := track(m.g, it, lay.trackGap)
 	if len(it.Triage) > 0 && contains(it.Triage, "type") && contains(it.Triage, "app") {
 		label := "? untriaged"
@@ -361,8 +458,25 @@ func (m model) homeRowLine(r homeRow, lay homeLayout, selected bool, titleW int,
 		}
 		tr = stFaint.Render(pad(label, lay.trackW()))
 	}
-	return mark + stFaint.Render(ref) + "  " + titleCell + "  " + tr + "  " +
+	badge := ""
+	if lay.badgeW > 0 {
+		badge = m.rowBadge(it) + "  "
+	}
+	return mark + stFaint.Render(ref) + "  " + titleCell + "  " + tr + "  " + badge +
 		pad(weightText(m.g, it.Weight), lay.weightW) + "  " + courtFit(m.g, it, lay.courtW)
+}
+
+// titleCell is the title, then the epic faint after it when the cell has
+// room for both.
+func (m model) titleCell(it *domain.WorkItem, title string, titleW int, unread string) string {
+	room := titleW - lipgloss.Width(unread)
+	epic := ""
+	if e := it.Issue.Epic; e != "" && titleW >= 36 {
+		epicW := min(lipgloss.Width(e)+3, max(room/3, 8))
+		epic = stFaint.Render(ansi.Truncate(" "+m.g.Sep+" "+e, epicW, "…"))
+		room -= lipgloss.Width(epic)
+	}
+	return pad(pad(ansi.Truncate(title, room, "…"), room)+epic+unread, titleW)
 }
 
 func contains(s []string, v string) bool {
@@ -372,6 +486,42 @@ func contains(s []string, v string) bool {
 		}
 	}
 	return false
+}
+
+// rowBadge is "✉ 2 ✓": unresolved review threads over the item's open MRs and
+// the state of the newest pipeline, each a glyph plus a number; blank when
+// there is neither. It is exactly badgeCells wide.
+func (m model) rowBadge(it *domain.WorkItem) string {
+	threads := 0
+	var pipe *forge.Pipeline
+	for i := range it.MRs {
+		mr := &it.MRs[i]
+		if mr.State != "opened" {
+			continue
+		}
+		threads += mr.Unresolved
+		if mr.Pipeline != nil && (pipe == nil || mr.Pipeline.UpdatedAt.After(pipe.UpdatedAt)) {
+			pipe = mr.Pipeline
+		}
+	}
+	t := ""
+	if threads > 0 {
+		t = stBold.Render(fmt.Sprintf("%s %d", m.g.Thread, threads))
+	}
+	p := ""
+	if pipe != nil {
+		switch pipe.Status {
+		case "failed":
+			p = stBad.Render(m.g.Bad)
+		case "success":
+			p = stOK.Render(m.g.OK)
+		case "canceled", "skipped", "manual":
+			p = stFaint.Render(m.g.Ahead)
+		default:
+			p = stWarn.Render(m.g.Sync)
+		}
+	}
+	return pad(t, badgeCells-2) + " " + pad(p, 1)
 }
 
 func mrStatus(g glyphs, mr *forge.MR) string {
@@ -444,7 +594,7 @@ func (m model) itemDetail(it *domain.WorkItem, w int) string {
 	l = append(l, "")
 	l = append(l, m.stationLines(it, w)...)
 	l = append(l, "", courtText(g, it))
-	if svc := m.serviceLines(it.Ref.String(), w); len(svc) > 0 {
+	if svc := m.serviceLines(it.Ref.String(), w); len(svc) > 0 && !m.threeRegion() { // the rail carries them at wide widths
 		l = append(l, "")
 		l = append(l, svc...)
 		l = append(l, "")

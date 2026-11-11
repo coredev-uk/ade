@@ -44,6 +44,9 @@ type Manifest struct {
 	// Source is where the manifest came from; Undecoded lists unknown keys.
 	Source    string   `toml:"-"`
 	Undecoded []string `toml:"-"`
+	// Overlay is the local override merged into this manifest, when ReadManifestFile
+	// or the project service applied one.
+	Overlay string `toml:"-"`
 }
 
 type Tracker struct {
@@ -158,10 +161,14 @@ type Conventions struct {
 type MRConv struct {
 	Create   string `toml:"create"`   // ask | always | never
 	Template string `toml:"template"` // template name in the repo's MR template dir
-	Draft    bool   `toml:"draft"`
+	Draft    *bool  `toml:"draft"`    // unset: true. A pointer tells "false" from "not said".
 	Closes   string `toml:"closes"`
 	Mention  string `toml:"mention"`
 }
+
+// DraftMR reports whether start work opens the MR as a draft: true unless the
+// manifest says draft = false.
+func (c MRConv) DraftMR() bool { return c.Draft == nil || *c.Draft }
 
 type Workspace struct {
 	Layout string `toml:"layout"`

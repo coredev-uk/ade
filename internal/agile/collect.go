@@ -373,6 +373,15 @@ func BuildReviewLive(ctx context.Context, f Forge, in ReviewLiveInput) (Review, 
 		return Review{}, fmt.Errorf("sprint issues: %w", brief(err))
 	}
 	hist, warns := histories(ctx, f, issues)
+	mergedAt := mergedTimes(in.Items)
+	var refs []forge.Ref // only merged items have a cycle time worth a notes call
+	for _, is := range issues {
+		if _, ok := mergedAt[is.Ref]; ok && (!in.Mine || assignedTo(is, in.Me)) {
+			refs = append(refs, is.Ref)
+		}
+	}
+	assigned, awarns := assignedTimes(ctx, f, refs, in.Me, in.Mine)
+	warns = append(warns, awarns...)
 
 	var past []PastSprint
 	for _, sp := range pastSprints(in.Sprints, in.Sprint, in.VelocityN) {
@@ -391,6 +400,7 @@ func BuildReviewLive(ctx context.Context, f Forge, in ReviewLiveInput) (Review, 
 	r := BuildReview(ReviewInput{
 		Project: in.Project, Manifest: in.Manifest, Sprint: in.Sprint, Issues: issues, History: hist, Past: past,
 		Me: in.Me, Mine: in.Mine, Cal: in.Cal, Now: in.Now, Merged: mergedMRs(in.Items),
+		MergedAt: mergedAt, Assigned: assigned,
 	})
 	r.Warnings = warns
 	return r, nil
@@ -418,6 +428,19 @@ func mergedMRs(items []domain.WorkItem) map[forge.Ref][]string {
 		for _, mr := range wi.MRs {
 			if mr.State == "merged" {
 				out[wi.Ref] = append(out[wi.Ref], short(mr.Ref))
+			}
+		}
+	}
+	return out
+}
+
+// mergedTimes is, per cached tracker item, when its last MR merged.
+func mergedTimes(items []domain.WorkItem) map[forge.Ref]time.Time {
+	out := map[forge.Ref]time.Time{}
+	for _, wi := range items {
+		for _, mr := range wi.MRs {
+			if mr.State == "merged" && mr.MergedAt != nil && mr.MergedAt.After(out[wi.Ref]) {
+				out[wi.Ref] = *mr.MergedAt
 			}
 		}
 	}

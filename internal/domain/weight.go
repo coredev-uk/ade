@@ -2,6 +2,7 @@ package domain
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/forge"
@@ -57,4 +58,37 @@ func labelWeight(labels []string, pattern string) *int {
 		}
 	}
 	return best
+}
+
+// WeightLabel is the label that carries weight n under pattern (default
+// "weight::{value}").
+func WeightLabel(pattern string, n int) string {
+	if pattern == "" {
+		pattern = defaultWeightPattern
+	}
+	for _, ph := range valuePlaceholders {
+		if strings.Contains(pattern, ph) {
+			return strings.Replace(pattern, ph, strconv.Itoa(n), 1)
+		}
+	}
+	return pattern
+}
+
+// WeightLabels returns the labels that match the weight pattern, whatever
+// value they carry: the ones a re-weight must remove explicitly, since "::"
+// labels are not exclusive on every tier. Labels whose value is not a number
+// are left alone.
+func WeightLabels(labels []string, pattern string) []string {
+	if pattern == "" {
+		pattern = defaultWeightPattern
+	}
+	var out []string
+	for _, l := range labels {
+		if v, ok := matchPattern(pattern, l); ok {
+			if _, err := strconv.Atoi(v); err == nil {
+				out = append(out, l)
+			}
+		}
+	}
+	return out
 }

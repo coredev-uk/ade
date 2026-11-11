@@ -221,33 +221,51 @@ func (s *sprintFlags) options() agile.ReviewOptions {
 
 func newSprintReviewCmd() *cobra.Command {
 	var (
-		ex exportFlags
-		sf sprintFlags
-		nf narrateFlags
+		ex      exportFlags
+		sf      sprintFlags
+		nf      narrateFlags
+		parents bool
 	)
 	cmd := &cobra.Command{
 		Use:   "review",
 		Short: "Committed, done and carried work of a sprint, by count and weight",
 		Long: "Reads the sprint's issues and their label and sprint history from the forge. Done means\n" +
 			"closed, or kept open with the manifest's labels.workflow.done label. Weight totals count\n" +
-			"only weighted issues; unweighted ones are counted separately and never add zero.",
+			"only weighted issues; unweighted ones are counted separately and never add zero. Cycle time is\n" +
+			"assigned → merged per item (from the forge's assignment note, else the issue's creation\n" +
+			"time, marked as such), with the median in the summary; an item without a merged MR has none.\n" +
+			"--ai-parents adds a short AI paragraph under every parent with merged MRs in the Markdown\n" +
+			"export (--md); each is cached by content, audited and capped like any AI call.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			r, err := agile.NewCollector(appFrom(cmd)).Review(cmd.Context(), sf.options())
 			if err != nil {
 				return err
 			}
-			if nf.on {
+			if nf.on || parents {
 				n, stop, err := nf.narrator(cmd)
 				if err != nil {
 					return err
 				}
 				defer stop()
-				var nerr error
-				if r, nerr = agile.WithReviewNarrative(cmd.Context(), n, r); nerr != nil {
-					r.Warnings = append(r.Warnings, narrateReport(cmd, n, "sprint-review", nerr)...)
-				} else {
-					narrateReport(cmd, n, "sprint-review", nil)
+				if nf.on {
+					var nerr error
+					if r, nerr = agile.WithReviewNarrative(cmd.Context(), n, r); nerr != nil {
+						r.Warnings = append(r.Warnings, narrateReport(cmd, n, "sprint-review", nerr)...)
+					} else {
+						narrateReport(cmd, n, "sprint-review", nil)
+					}
+				}
+				if parents {
+					var (
+						count int
+						nerr  error
+					)
+					if r, count, nerr = agile.WithParentNarratives(cmd.Context(), n, r); nerr != nil {
+						r.Warnings = append(r.Warnings, narrateReport(cmd, n, "sprint-parent", fmt.Errorf("after %d of the parents: %w", count, nerr))...)
+					} else {
+						fmt.Fprintf(cmd.ErrOrStderr(), "narrated %s\n", plural(count, "parent"))
+					}
 				}
 			}
 			return ex.emit(cmd, r, func(f agile.Format) string { return agile.RenderReview(r, f) })
@@ -256,6 +274,7 @@ func newSprintReviewCmd() *cobra.Command {
 	ex.bind(cmd)
 	sf.bind(cmd)
 	nf.bind(cmd)
+	cmd.Flags().BoolVar(&parents, "ai-parents", false, "add an AI paragraph per parent with merged MRs (shown in the Markdown export; JSON carries it as narrative)")
 	return cmd
 }
 

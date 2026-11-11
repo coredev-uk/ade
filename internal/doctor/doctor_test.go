@@ -296,9 +296,50 @@ func TestHostDetection(t *testing.T) {
 	}
 	for _, tt := range tests {
 		got := hostChecks(Options{Getenv: func(k string) string { return tt.env[k] }})
-		if len(got) != 1 || !strings.Contains(got[0].Detail, tt.want) {
+		if len(got) != 2 || got[0].Name != "host" || !strings.Contains(got[0].Detail, tt.want) {
 			t.Errorf("env %v: got %+v, want %q", tt.env, got, tt.want)
 		}
+	}
+}
+
+func TestHostReportsTheResolvedEditor(t *testing.T) {
+	env := map[string]string{"TERM_PROGRAM": "vscode", "EDITOR": "nano"}
+	cfg := config.Defaults()
+	cfg.Host.Editor = "$EDITOR"
+	got := hostChecks(Options{Config: &cfg, Getenv: func(k string) string { return env[k] }})
+	if len(got) != 2 || got[1].Name != "editor" || !strings.Contains(got[1].Detail, "$EDITOR (nano)") {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestRecordsInsideGitWorkTreeWarns(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	inside := filepath.Join(repo, "data", "ade") // does not exist yet: the check must still see the repo above it
+	c := checkRecordsOutsideGit(inside)
+	if c.Status != Warn || c.Fix == "" || !strings.Contains(c.Detail, repo) {
+		t.Fatalf("inside a work tree: %+v", c)
+	}
+	// A linked worktree or submodule has a .git *file*.
+	linked := t.TempDir()
+	if err := os.WriteFile(filepath.Join(linked, ".git"), []byte("gitdir: /elsewhere\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if c := checkRecordsOutsideGit(filepath.Join(linked, "records")); c.Status != Warn {
+		t.Errorf("linked worktree: %+v", c)
+	}
+	// Through a symlink that points into the repository.
+	link := filepath.Join(t.TempDir(), "records")
+	if err := os.Symlink(repo, link); err != nil {
+		t.Fatal(err)
+	}
+	if c := checkRecordsOutsideGit(link); c.Status != Warn {
+		t.Errorf("symlinked into a work tree: %+v", c)
+	}
+	if c := checkRecordsOutsideGit(filepath.Join(t.TempDir(), "ade")); c.Status != OK {
+		t.Errorf("outside any repository: %+v", c)
 	}
 }
 

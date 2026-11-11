@@ -11,6 +11,7 @@ import (
 const (
 	standupVersion = "standup-v1"
 	sprintVersion  = "sprint-review-v1"
+	parentVersion  = "sprint-parent-v1"
 
 	// StandupForge and SprintForge are the item-record roots of the agile
 	// artifacts: items/_standup/<project>/<yyyymmdd>/ai/ and items/_sprint/....
@@ -23,6 +24,8 @@ var (
 	standupSystem string
 	//go:embed prompts/sprint.md
 	sprintSystem string
+	//go:embed prompts/sprint-parent.md
+	sprintParentSystem string
 )
 
 // dayKey is yyyymmdd as a record number.
@@ -51,5 +54,19 @@ func SprintReviewJob(project, sprint string, start time.Time, facts string) Job 
 		Forge: SprintForge, Ref: forge.Ref{Project: project, IID: dayKey(start)},
 		Name: "review-" + fmt.Sprint(dayKey(start)), MaxTokens: 500,
 		Params: map[string]any{"sprint": sprint},
+	}
+}
+
+// SprintParentJob turns the facts of one parent of a sprint review (a tracker
+// issue with the MRs merged for it, as Markdown) into a short paragraph for
+// the review's Markdown export. It is filed under the parent's own number
+// next to the sprint's artifacts.
+func SprintParentJob(project, sprint string, parent forge.Ref, facts string) Job {
+	return Job{
+		Feature: "sprint-parent", Role: RoleExplain, PromptVersion: parentVersion,
+		System: sprintParentSystem, Prompt: facts,
+		Forge: SprintForge, Ref: forge.Ref{Project: project, IID: parent.IID},
+		Name: fmt.Sprintf("parent-%d", parent.IID), MaxTokens: 200,
+		Params: map[string]any{"sprint": sprint, "parent": parent.String()},
 	}
 }

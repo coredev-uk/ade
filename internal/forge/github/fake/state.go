@@ -206,6 +206,7 @@ type repo struct {
 	Owner      string
 	Name       string
 	Default    string
+	Archived   bool
 	Milestones []*milestone
 	Labels     []*label
 	Items      []*item

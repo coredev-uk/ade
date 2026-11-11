@@ -391,3 +391,29 @@ func TestApprovalsReduction(t *testing.T) {
 		}
 	}
 }
+
+func TestChangesRequestedReduction(t *testing.T) {
+	u := func(id int64, name string) wireUser { return wireUser{ID: id, Login: name} }
+	rv := func(user wireUser, state string) wireReview { return wireReview{User: user, State: state} }
+	tests := []struct {
+		name    string
+		reviews []wireReview
+		want    string
+	}{
+		{"requested", []wireReview{rv(u(1, "a"), "CHANGES_REQUESTED")}, "a"},
+		{"a later plain comment keeps the request", []wireReview{rv(u(1, "a"), "CHANGES_REQUESTED"), rv(u(1, "a"), "COMMENTED")}, "a"},
+		{"approving afterwards clears it", []wireReview{rv(u(1, "a"), "CHANGES_REQUESTED"), rv(u(1, "a"), "APPROVED")}, ""},
+		{"dismissed", []wireReview{rv(u(1, "a"), "CHANGES_REQUESTED"), rv(u(1, "a"), "DISMISSED")}, ""},
+		{"pending is the viewer's draft", []wireReview{rv(u(1, "a"), "PENDING")}, ""},
+		{"two reviewers", []wireReview{rv(u(2, "b"), "CHANGES_REQUESTED"), rv(u(1, "a"), "APPROVED"), rv(u(3, "c"), "CHANGES_REQUESTED")}, "b,c"},
+	}
+	for _, tc := range tests {
+		var names []string
+		for _, u := range changesRequested(tc.reviews) {
+			names = append(names, u.Username)
+		}
+		if got := strings.Join(names, ","); got != tc.want {
+			t.Errorf("%s: changesRequested = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}

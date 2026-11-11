@@ -220,6 +220,8 @@ type wireMR struct {
 	References     wireRefs      `json:"references"`
 	UpdatedAt      time.Time     `json:"updated_at"`
 	MergedAt       *time.Time    `json:"merged_at"`
+	MergeUser      *wireUser     `json:"merge_user"`
+	MergedBy       *wireUser     `json:"merged_by"` // deprecated spelling of merge_user
 }
 
 // mr converts the list/single payload. Approvals and thread counts come from
@@ -249,7 +251,36 @@ func (w wireMR) mr(project string) forge.MR {
 		DetailedStatus: w.DetailedStatus,
 		UpdatedAt:      w.UpdatedAt,
 		MergedAt:       w.MergedAt,
+		MergedBy:       w.mergedBy(),
 	}
+}
+
+func (w wireMR) mergedBy() string {
+	switch {
+	case w.MergeUser != nil:
+		return w.MergeUser.Username
+	case w.MergedBy != nil:
+		return w.MergedBy.Username
+	}
+	return ""
+}
+
+// wireReviewer is one entry of GET .../reviewers: the reviewer and their
+// verdict (unreviewed, review_started, approved, requested_changes).
+type wireReviewer struct {
+	User  wireUser `json:"user"`
+	State string   `json:"state"`
+}
+
+// changesRequested lists the reviewers whose verdict is requested_changes.
+func changesRequested(rs []wireReviewer) []forge.User {
+	var out []forge.User
+	for _, r := range rs {
+		if r.State == "requested_changes" {
+			out = append(out, r.User.user())
+		}
+	}
+	return out
 }
 
 type wireApprovals struct {

@@ -8,10 +8,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -19,6 +19,7 @@ import (
 	"github.com/coredev-uk/ade/internal/app"
 	"github.com/coredev-uk/ade/internal/budget"
 	"github.com/coredev-uk/ade/internal/config"
+	"github.com/coredev-uk/ade/internal/domain"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/forgesync"
 	"github.com/coredev-uk/ade/internal/notify"
@@ -43,6 +44,7 @@ type aiOpts struct {
 	yes      bool
 	override bool
 	dryRun   bool
+	noNotes  bool
 }
 
 func (o *aiOpts) bind(c *cobra.Command) {
@@ -133,6 +135,8 @@ type aiOut struct {
 	Preflight *ai.Preflight `json:"preflight,omitempty"`
 	DryRun    bool          `json:"dry_run,omitempty"`
 	Cached    bool          `json:"cached,omitempty"` // dry-run: an answer is already cached
+	// IncludesNotes: the prompt carries the user's notes (--no-notes leaves them out).
+	IncludesNotes bool `json:"includes_notes,omitempty"`
 }
 
 // runJob executes (or, with --dry-run, previews) a job and maps budget stops
@@ -140,7 +144,7 @@ type aiOut struct {
 func (e *aiEnv) runJob(cmd *cobra.Command, j ai.Job, o aiOpts) (ai.Result, aiOut, error) {
 	j.Profile, j.Refresh, j.Override, j.Assume = o.profile, o.refresh, o.override, o.yes
 	j.Confirm = confirmPrompt(cmd)
-	out := aiOut{Feature: j.Feature, Ref: j.Ref.String()}
+	out := aiOut{Feature: j.Feature, Ref: j.Ref.String(), IncludesNotes: j.Notes}
 	if o.dryRun {
 		pf, cached, err := e.svc.Preview(cmd.Context(), j)
 		if err != nil {
@@ -189,9 +193,9 @@ func printFooter(w io.Writer, o aiOut) {
 			fmt.Fprintf(w, "  would be refused: %s\n", pf.Refuse)
 		}
 	case o.CacheHit:
-		fmt.Fprintf(w, "— cached · $0.00 (saved $%.4f) · %s · %s\n", o.SavedUSD, o.Model, o.Artifact)
+		fmt.Fprintf(w, "— cached · $0.00 (saved $%.4f) · %s · %s%s\n", o.SavedUSD, o.Model, o.Artifact, notesMark(o))
 	default:
-		fmt.Fprintf(w, "— $%.4f · %s · %s · %s\n", o.CostUSD, o.Profile, o.Model, o.Artifact)
+		fmt.Fprintf(w, "— $%.4f · %s · %s · %s%s\n", o.CostUSD, o.Profile, o.Model, o.Artifact, notesMark(o))
 	}
 }
 
@@ -230,7 +234,11 @@ func newAISummarizeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			_, out, err := e.runJob(cmd, ai.SummarizeJob(e.forgeName, mr, diff, issue), o)
+			sj, err := e.withNotes(ai.SummarizeJob(e.forgeName, mr, diff, issue), o, ai.NoteRefs(mr, issue)...)
+			if err != nil {
+				return err
+			}
+			_, out, err := e.runJob(cmd, sj, o)
 			if err != nil {
 				return err
 			}
@@ -238,46 +246,13 @@ func newAISummarizeCmd() *cobra.Command {
 		},
 	}
 	o.bind(cmd)
+	o.bindNotes(cmd)
 	return cmd
 }
 
 // loadMR reads the MR, its latest diff, and the issue it closes (if any).
 func (e *aiEnv) loadMR(ctx context.Context, ref forge.Ref) (forge.MR, forge.Diff, *forge.Issue, error) {
-	mr, err := e.be.MR(ctx, ref)
-	if err != nil {
-		return mr, forge.Diff{}, nil, fmt.Errorf("read %s: %w", ref, err)
-	}
-	diff, err := e.be.MRDiff(ctx, ref)
-	if err != nil {
-		return mr, diff, nil, fmt.Errorf("read the diff of %s: %w", ref, err)
-	}
-	var issue *forge.Issue
-	if ir, ok := closedIssue(mr); ok {
-		if is, err := e.be.Issue(ctx, ir); err == nil {
-			issue = &is
-		}
-	}
-	return mr, diff, issue, nil
-}
-
-var closesRe = regexp.MustCompile(`(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+((?:[\w.-]+(?:/[\w.-]+)+)?#\d+)`)
-
-// closedIssue finds the issue an MR description closes ("Closes #4",
-// "Fixes group/proj#12"); a bare #n is in the MR's own project.
-func closedIssue(mr forge.MR) (forge.Ref, bool) {
-	m := closesRe.FindStringSubmatch(mr.Description)
-	if m == nil {
-		return forge.Ref{}, false
-	}
-	target := m[1]
-	if strings.HasPrefix(target, "#") {
-		target = mr.Ref.Project + target
-	}
-	ref, err := forge.ParseRef(target)
-	if err != nil || ref.Kind != forge.KindIssue {
-		return forge.Ref{}, false
-	}
-	return ref, true
+	return ai.LoadMR(ctx, e.be, ref)
 }
 
 // --- classify ----------------------------------------------------------------
@@ -314,7 +289,7 @@ func newAIClassifyCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("read %s: %w", ref, err)
 			}
-			in, err := classifyInput(cmd.Context(), e.a, issue)
+			in, err := classifyInput(cmd.Context(), e.a, e.be, issue)
 			if err != nil {
 				return err
 			}
@@ -435,11 +410,17 @@ func printSuggestion(w io.Writer, ref forge.Ref, s ai.Suggestion) {
 	for _, d := range s.Dropped {
 		fmt.Fprintf(w, "  ignored %s\n", d)
 	}
+	switch {
+	case s.Weight != nil:
+		fmt.Fprintf(w, "  suggested weight: %d (%s)\n    set it with: ade issue weight %s %d\n", *s.Weight, s.WeightReason, ref, *s.Weight)
+	case s.WeightReason != "":
+		fmt.Fprintf(w, "  %s\n", s.WeightReason)
+	}
 }
 
 // classifyInput finds the manifest that serves the issue's project and
 // gathers the label patterns and the values the team already uses.
-func classifyInput(ctx context.Context, a *app.App, is forge.Issue) (ai.ClassifyInput, error) {
+func classifyInput(ctx context.Context, a *app.App, f forge.Forge, is forge.Issue) (ai.ClassifyInput, error) {
 	in := ai.ClassifyInput{Issue: is}
 	var found *config.Manifest
 	for _, pr := range a.Config.Projects {
@@ -455,14 +436,16 @@ func classifyInput(ctx context.Context, a *app.App, is forge.Issue) (ai.Classify
 	if found == nil {
 		return in, fmt.Errorf("no registered project serves %s: its manifest holds the label patterns", is.Ref.Project)
 	}
-	in.Labels = found.Labels
+	in.Labels, in.Weight = found.Labels, found.Tracker.Weight
 	for _, r := range found.Repos {
 		in.KnownApps = append(in.KnownApps, r.App...)
 	}
 	if st, err := a.Cache(); err == nil {
 		if results, err := forgesync.Load(st); err == nil {
 			seen := map[string]bool{}
+			var items []domain.WorkItem
 			for _, r := range results {
+				items = append(items, r.Items...)
 				for _, it := range r.Items {
 					if it.Type != "" && !seen[it.Type] {
 						seen[it.Type] = true
@@ -470,6 +453,13 @@ func classifyInput(ctx context.Context, a *app.App, is forge.Issue) (ai.Classify
 					}
 				}
 			}
+			in.Samples = ai.WeightSamples(items)
+		}
+	}
+	// The synced items cover the sprint window; the forge has the history.
+	if f != nil && found.Tracker.Project != "" {
+		if hist, err := ai.ClosedSamples(ctx, f, found.Tracker.Project, found.Labels, found.Tracker.Weight, time.Now()); err == nil {
+			in.Samples = ai.MergeSamples(in.Samples, hist)
 		}
 	}
 	return in, nil
@@ -513,11 +503,15 @@ func newAIReplyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			mr, diff, _, err := e.loadMR(cmd.Context(), ref)
+			mr, diff, issue, err := e.loadMR(cmd.Context(), ref)
 			if err != nil {
 				return err
 			}
-			_, out, err := e.runJob(cmd, ai.ReplyJob(e.forgeName, mr, disc, diff), o)
+			rj, err := e.withNotes(ai.ReplyJob(e.forgeName, mr, disc, diff), o, ai.NoteRefs(mr, issue)...)
+			if err != nil {
+				return err
+			}
+			_, out, err := e.runJob(cmd, rj, o)
 			if err != nil {
 				return err
 			}
@@ -525,6 +519,7 @@ func newAIReplyCmd() *cobra.Command {
 		},
 	}
 	o.bind(cmd)
+	o.bindNotes(cmd)
 	return cmd
 }
 
@@ -600,7 +595,11 @@ func newAIReviewCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			res, out, err := e.runJob(cmd, ai.ReviewJob(e.forgeName, mr, diff, issue, threads, docs), o)
+			rj, err := e.withNotes(ai.ReviewJob(e.forgeName, mr, diff, issue, threads, docs), o, ai.NoteRefs(mr, issue)...)
+			if err != nil {
+				return err
+			}
+			res, out, err := e.runJob(cmd, rj, o)
 			if err != nil {
 				return err
 			}
@@ -636,6 +635,7 @@ func newAIReviewCmd() *cobra.Command {
 		},
 	}
 	o.bind(cmd)
+	o.bindNotes(cmd)
 	cmd.Flags().StringArrayVar(&guides, "guide", nil, "extra context file (AGENTS.md, contributing notes); repeatable")
 	return cmd
 }

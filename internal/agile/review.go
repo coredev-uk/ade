@@ -50,6 +50,16 @@ type ReviewItem struct {
 	Epic     string     `json:"epic,omitempty"`
 	Assigned bool       `json:"assigned"` // to you
 	MRs      []string   `json:"merged_mrs,omitempty"`
+	// AssignedAt/MergedAt/CycleHours measure assigned → merged (PLAN 6.4).
+	// MergedAt is the last merged MR of the item; CycleHours is nil without a
+	// merge. AssignedFrom says whether AssignedAt is the forge's assignment
+	// note or only the issue's creation time.
+	AssignedAt   *time.Time `json:"assigned_at,omitempty"`
+	AssignedFrom string     `json:"assigned_from,omitempty"`
+	MergedAt     *time.Time `json:"merged_at,omitempty"`
+	CycleHours   *float64   `json:"cycle_hours,omitempty"`
+	// Narrative is the optional AI paragraph on this parent (WithParentNarratives).
+	Narrative string `json:"narrative,omitempty"`
 }
 
 // EpicGroup is the sprint's scope under one epic (Premium).
@@ -107,6 +117,7 @@ type Review struct {
 	Epics     []EpicGroup  `json:"epics,omitempty"`
 	Burndown  []BurnPoint  `json:"burndown"`
 	Velocity  Velocity     `json:"velocity"`
+	Cycle     CycleSummary `json:"cycle"`
 	Narrative string       `json:"narrative,omitempty"`
 	// Warnings name timelines that could not be read; those items fall back to their creation date.
 	Warnings []string `json:"warnings,omitempty"`
@@ -132,6 +143,11 @@ type ReviewInput struct {
 	Now      time.Time
 	// Merged lists, per tracker issue, the MRs merged for it (refs, short form).
 	Merged map[forge.Ref][]string
+	// MergedAt is, per tracker issue, when its last MR merged; Assigned is when
+	// it was assigned, for the issues where the forge says (the rest fall back
+	// to their creation time). Both feed the cycle time.
+	MergedAt map[forge.Ref]time.Time
+	Assigned map[forge.Ref]time.Time
 }
 
 // PastSprint is a closed sprint with its issues, for velocity.
@@ -185,6 +201,13 @@ func BuildReview(in ReviewInput) Review {
 		if it.Done {
 			it.DoneAt = doneAt(is, in.Manifest, h)
 		}
+		if t, ok := in.MergedAt[is.Ref]; ok {
+			it.MergedAt = &t
+			it.AssignedAt, it.AssignedFrom = assignmentOf(is, in.Assigned)
+			if hrs, ok := cycleOf(it.AssignedAt, it.MergedAt); ok {
+				it.CycleHours = &hrs
+			}
+		}
 		r.Items = append(r.Items, it)
 	}
 	slices.SortStableFunc(r.Items, func(a, b ReviewItem) int {
@@ -203,11 +226,27 @@ func BuildReview(in ReviewInput) Review {
 			r.Carried.add(it.Weight)
 		}
 	}
+	var cycles []float64
+	for _, it := range r.Items {
+		if it.CycleHours != nil {
+			cycles = append(cycles, *it.CycleHours)
+		}
+	}
+	r.Cycle = CycleSummary{Items: len(cycles), MedianHours: median(cycles)}
 	r.Basis = basisOf(r.Committed.Weighted + r.Added.Weighted)
 	r.Epics = epicGroups(r.Items)
 	r.Burndown = burndown(r.Items, in, r.Basis)
 	r.Velocity = velocity(in.Past, in.Manifest)
 	return r
+}
+
+// assignmentOf is when is was assigned: the forge's note, else its creation.
+func assignmentOf(is forge.Issue, assigned map[forge.Ref]time.Time) (*time.Time, string) {
+	if t, ok := assigned[is.Ref]; ok {
+		return &t, AssignedFromNote
+	}
+	t := is.CreatedAt
+	return &t, AssignedFromCreated
 }
 
 func basisOf(weighted int) string {

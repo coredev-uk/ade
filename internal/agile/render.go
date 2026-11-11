@@ -133,6 +133,7 @@ func RenderReview(r Review, f Format) string {
 	w.bullet("Added mid-sprint: %s", FormatTotals(r.Added, r.Basis))
 	w.bullet("Done: %s", FormatTotals(r.Done, r.Basis))
 	w.bullet("Carried over: %s", FormatTotals(r.Carried, r.Basis))
+	w.bullet("Cycle time (assigned → merged): %s", cycleSummaryText(r.Cycle))
 
 	w.line("")
 	w.heading(2, "Velocity")
@@ -160,6 +161,11 @@ func RenderReview(r Review, f Format) string {
 	w.heading(2, "Items")
 	for _, it := range r.Items {
 		w.bullet("%s", itemLine(it))
+		if it.Narrative != "" && w.md { // per-parent AI narrative: a Markdown export feature
+			for _, l := range strings.Split(it.Narrative, "\n") {
+				w.line("  %s", strings.TrimSpace(l))
+			}
+		}
 	}
 	for _, warn := range r.Warnings {
 		w.line("")
@@ -187,7 +193,20 @@ func itemLine(it ReviewItem) string {
 	if len(it.MRs) > 0 {
 		line += " · merged " + strings.Join(it.MRs, ", ")
 	}
+	if it.CycleHours != nil {
+		line += " · cycle " + FormatCycle(*it.CycleHours)
+		if it.AssignedFrom == AssignedFromCreated {
+			line += " (from creation)"
+		}
+	}
 	return line
+}
+
+func cycleSummaryText(c CycleSummary) string {
+	if c.MedianHours == nil {
+		return "no merged item to measure"
+	}
+	return fmt.Sprintf("median %s over %s", FormatCycle(*c.MedianHours), plural(c.Items, "item"))
 }
 
 func renderVelocity(w *writer, v Velocity) {

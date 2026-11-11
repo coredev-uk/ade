@@ -20,6 +20,11 @@
 #              loading-diff, loading-ci (a fake that answers after 3 s)
 #   error      error-overview, error-threads (the forge is unreachable)
 #   confirm    confirm-merge (squash, delete branch)
+#   ai         ai-summary, ai-summary-raw (d), ai-thread-summary (s), ai-draft-reply
+#              (d on a thread: in the reply editor), ai-review-hint, ai-agent-done
+#              (A: drafts pending in Review), ai-agent-diff, ai-help; ai-summary-running,
+#              ai-agent-running, ai-summary-late, ai-agent-done-slow (a 5 s stub, the page
+#              stays usable); ai-off-* (ai.mode = off: no A, no d)
 #
 # The data comes from the in-process fake GitLab (scripts/verify/fakegl), never the
 # live forge: the sandbox has no CI and its threads change with every run. The
@@ -30,6 +35,11 @@
 build_ade
 go build -o "$VERIFY_TMP/fakegl" ./scripts/verify/fakegl
 go build -o "$VERIFY_TMP/seeddrafts" ./scripts/verify/seeddrafts
+# omp stubs for the AI states: scripts/verify/fakeomp answers each feature from canned text
+# (nothing is spent); omp-slow takes 5 s per answer to catch the running states.
+printf '#!/bin/sh\nexec "%s/scripts/verify/fakeomp" "$@"\n' "$REPO" >"$VERIFY_TMP/omp-ok"
+printf '#!/bin/sh\nFAKEOMP_DELAY=5 exec "%s/scripts/verify/fakeomp" "$@"\n' "$REPO" >"$VERIFY_TMP/omp-slow"
+chmod +x "$VERIFY_TMP/omp-ok" "$VERIFY_TMP/omp-slow"
 
 FAKE_PIDS=()
 trap 'kill "${FAKE_PIDS[@]}" 2>/dev/null || true; rm -rf "$VERIFY_TMP"' EXIT
@@ -72,6 +82,23 @@ root = "/tmp/ade-demo"
 [[projects]]
 source = "$REPO/scripts/sandbox/manifests/gitlab.ade.toml"
 EOF
+  if [[ -n ${AI_CMD:-} ]]; then
+    cat >>"$ADE_CONFIG" <<EOF
+[ai]
+mode = "${AI_MODE:-auto}"
+profile = "stub"
+[ai.profiles.stub]
+driver = "omp"
+command = "$AI_CMD"
+models = { explain = "claude-haiku-4-5", draft = "claude-haiku-4-5", review = "claude-haiku-4-5" }
+billing = { source = "omp", weekly_soft_usd = 10 }
+[ai.profiles.stub.prices.claude-haiku-4-5]
+input = 1.0
+output = 5.0
+[budget]
+daily_usd = 5.0
+EOF
+  fi
 }
 
 OUT="$REPO/.impeccable/review"
@@ -292,6 +319,85 @@ $(shot "$s" confirm-merge)
 EOF
 }
 
+# tape_ai: api!2 with AI on (an omp stub that answers at once): the Overview
+# summary and its raw-description toggle, a thread's summary, the draft reply
+# in the reply editor (never posted), and the finished agent review pass.
+tape_ai() { # SET
+  local s=$1
+  cat <<EOF
+Type "jjjjjjj"
+Enter
+Sleep 3500ms
+$(shot "$s" ai-summary)
+Type "d"
+Sleep 400ms
+$(shot "$s" ai-summary-raw)
+Type "d"
+Type "2"
+Sleep 1000ms
+Type "s"
+Sleep 1800ms
+$(shot "$s" ai-thread-summary)
+Type "d"
+Sleep 1800ms
+$(shot "$s" ai-draft-reply)
+$(esc)
+Type "4"
+Sleep 600ms
+$(shot "$s" ai-review-hint)
+Type "A"
+Sleep 2500ms
+$(shot "$s" ai-agent-done)
+Type "3"
+Sleep 800ms
+Enter
+Type "jj"
+$(shot "$s" ai-agent-diff)
+Type "?"
+Sleep 500ms
+$(shot "$s" ai-help)
+EOF
+}
+
+# tape_ai_slow: the stub takes 5 s: the summary and the agent pass while they
+# run (the page keeps answering keys), then the pass finishing.
+tape_ai_slow() { # SET
+  local s=$1
+  cat <<EOF
+Type "jjjjjjj"
+Enter
+Sleep 2500ms
+$(shot "$s" ai-summary-running)
+Type "4"
+Type "A"
+Sleep 1200ms
+$(shot "$s" ai-agent-running)
+Type "1"
+Sleep 6000ms
+$(shot "$s" ai-summary-late)
+Type "4"
+Sleep 6000ms
+$(shot "$s" ai-agent-done-slow)
+EOF
+}
+
+# tape_ai_off: ai.mode = off: raw description only, no A, no d, no AI hints.
+tape_ai_off() { # SET
+  local s=$1
+  cat <<EOF
+Type "jjjjjjj"
+Enter
+Sleep 2500ms
+$(shot "$s" ai-off-overview)
+Type "4"
+Sleep 500ms
+$(shot "$s" ai-off-review)
+Type "?"
+Sleep 500ms
+$(shot "$s" ai-off-help)
+EOF
+}
+
 # capture SET FONT NC TAPE SYNC_URL RUN_URL [SEED_MR]: sync a clean cache
 # against one fake, then run the dashboard against another (the slow or dead
 # one). SEED_MR stores the agent's review drafts on that MR before the run.
@@ -320,5 +426,9 @@ for spec in "desktop 14 " "narrow 30 " "nocolor 14 1"; do
   capture "$set" "$font" "$nc" tape_loading "$URL_premium" "$URL_slow"
   capture "$set" "$font" "$nc" tape_error "$URL_premium" "$DEAD_URL"
   capture "$set" "$font" "$nc" tape_confirm "$URL_free" "$URL_free"
+  # AI on the page: summary, thread summary, draft reply, agent pass (an omp stub, nothing is spent)
+  AI_CMD=$VERIFY_TMP/omp-ok capture "$set" "$font" "$nc" tape_ai "$URL_premium" "$URL_premium"
+  AI_CMD=$VERIFY_TMP/omp-slow capture "$set" "$font" "$nc" tape_ai_slow "$URL_premium" "$URL_premium"
+  AI_CMD=$VERIFY_TMP/omp-ok AI_MODE=off capture "$set" "$font" "$nc" tape_ai_off "$URL_premium" "$URL_premium"
 done
 ls "$OUT"/mr-*.png

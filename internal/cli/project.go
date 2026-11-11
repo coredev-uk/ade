@@ -17,9 +17,9 @@ func init() { register(newProjectCmd) }
 func newProjectCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "project",
-		Short: "Add, list, and inspect projects",
+		Short: "Add, list, inspect, and remove projects",
 	}
-	cmd.AddCommand(newProjectAddCmd(), newProjectListCmd(), newProjectStatusCmd())
+	cmd.AddCommand(newProjectAddCmd(), newProjectListCmd(), newProjectStatusCmd(), newProjectBootstrapCmd(), newProjectRemoveCmd())
 	return cmd
 }
 

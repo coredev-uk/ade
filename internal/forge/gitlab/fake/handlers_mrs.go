@@ -14,6 +14,7 @@ func (s *Server) mrRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v4/projects/{id}/merge_requests", s.projectMRs)
 	mux.HandleFunc("GET /api/v4/projects/{id}/merge_requests/{iid}", s.getMR)
 	mux.HandleFunc("GET /api/v4/projects/{id}/merge_requests/{iid}/approvals", s.mrApprovals)
+	mux.HandleFunc("GET /api/v4/projects/{id}/merge_requests/{iid}/reviewers", s.mrReviewers)
 	mux.HandleFunc("GET /api/v4/projects/{id}/merge_requests/{iid}/discussions", s.discussions(forge.KindMR))
 }
 

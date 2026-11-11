@@ -113,6 +113,8 @@ func (c *Client) MR(ctx context.Context, ref forge.Ref) (forge.MR, error) {
 		}
 	}
 	mr.Unresolved, mr.Resolved = threadCounts(ds)
+	mr.Threads = forge.ThreadStates(ds)
+	mr.ChangesRequestedBy = changesRequested(reviews)
 	return mr, nil
 }
 

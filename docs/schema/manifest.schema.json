@@ -1,0 +1,429 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "conventions": {
+      "additionalProperties": false,
+      "properties": {
+        "branch": {
+          "description": "Branch name template, e.g. {child_iid}-{slug}.",
+          "type": "string"
+        },
+        "child_body": {
+          "type": "string"
+        },
+        "child_issue": {
+          "description": "auto creates a child issue when the tracker project differs from the code repo.",
+          "enum": [
+            "auto",
+            "always",
+            "never"
+          ],
+          "type": "string"
+        },
+        "child_title": {
+          "type": "string"
+        },
+        "link": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "mr": {
+          "additionalProperties": false,
+          "properties": {
+            "closes": {
+              "type": "string"
+            },
+            "create": {
+              "description": "Whether start work creates the MR: ask, always or never.",
+              "enum": [
+                "ask",
+                "always",
+                "never"
+              ],
+              "type": "string"
+            },
+            "draft": {
+              "description": "Open the MR as a draft. Unset means true.",
+              "type": "boolean"
+            },
+            "mention": {
+              "type": "string"
+            },
+            "template": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "forge": {
+      "description": "Key into the user config's [forges].",
+      "type": "string"
+    },
+    "groups": {
+      "additionalProperties": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "description": "Named lists of nodes that workspaces run.",
+      "type": "object"
+    },
+    "labels": {
+      "additionalProperties": false,
+      "properties": {
+        "app": {
+          "additionalProperties": false,
+          "properties": {
+            "pattern": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "additionalProperties": false,
+          "properties": {
+            "pattern": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "workflow": {
+          "additionalProperties": false,
+          "properties": {
+            "done": {
+              "description": "Workflow value that marks an open tracker issue finished.",
+              "type": "string"
+            },
+            "pattern": {
+              "type": "string"
+            },
+            "stage": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Derived stage (started, draft, review, merged) to workflow label value.",
+              "type": "object"
+            },
+            "sync": {
+              "description": "Whether ADE moves the workflow label when the derived stage changes.",
+              "enum": [
+                "auto",
+                "ask",
+                "off"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "name": {
+      "description": "Project name; becomes the directory under the projects root.",
+      "type": "string"
+    },
+    "repos": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "App-label values routed to this repo.",
+            "items": {
+              "description": "App-label values routed to this repo.",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "default_branch": {
+            "type": "string"
+          },
+          "hooks": {
+            "additionalProperties": false,
+            "properties": {
+              "post_clone": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "post_worktree": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "path": {
+            "description": "Forge path, e.g. group/api.",
+            "type": "string"
+          },
+          "requires": {
+            "description": "Checkout dependencies (repo names).",
+            "items": {
+              "description": "Checkout dependencies (repo names).",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "tasks": {
+            "additionalProperties": {
+              "additionalProperties": false,
+              "properties": {
+                "cmd": {
+                  "type": "string"
+                },
+                "env": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "description": "Environment of the task; values may use {port}, {dir}, {state} and <node>.port templates.",
+                  "type": "object"
+                },
+                "keep": {
+                  "type": "boolean"
+                },
+                "kind": {
+                  "enum": [
+                    "service",
+                    "oneshot"
+                  ],
+                  "type": "string"
+                },
+                "port": {
+                  "oneOf": [
+                    {
+                      "const": "auto"
+                    },
+                    {
+                      "maximum": 65535,
+                      "minimum": 1,
+                      "type": "integer"
+                    }
+                  ]
+                },
+                "ready": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "http": {
+                      "type": "string"
+                    },
+                    "log": {
+                      "type": "string"
+                    },
+                    "tcp": {
+                      "type": "string"
+                    },
+                    "timeout": {
+                      "examples": [
+                        "10m",
+                        "90s"
+                      ],
+                      "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "requires": {
+                  "description": "Node references: \"<repo>.<task>\" or \"services.<name>\".",
+                  "items": {
+                    "description": "Node references: \"<repo>.<task>\" or \"services.<name>\".",
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "type": "object"
+            },
+            "description": "Run-graph nodes of this repo.",
+            "type": "object"
+          },
+          "url": {
+            "description": "Explicit clone URL; overrides forge + path.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "description": "Repositories of the project.",
+      "type": "object"
+    },
+    "services": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "cmd": {
+            "type": "string"
+          },
+          "env": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "keep": {
+            "type": "boolean"
+          },
+          "kind": {
+            "enum": [
+              "service",
+              "oneshot"
+            ],
+            "type": "string"
+          },
+          "port": {
+            "oneOf": [
+              {
+                "const": "auto"
+              },
+              {
+                "maximum": 65535,
+                "minimum": 1,
+                "type": "integer"
+              }
+            ]
+          },
+          "ready": {
+            "additionalProperties": false,
+            "properties": {
+              "http": {
+                "type": "string"
+              },
+              "log": {
+                "type": "string"
+              },
+              "tcp": {
+                "type": "string"
+              },
+              "timeout": {
+                "examples": [
+                  "10m",
+                  "90s"
+                ],
+                "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "requires": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "description": "Shared infrastructure nodes that are not repos.",
+      "type": "object"
+    },
+    "tracker": {
+      "additionalProperties": false,
+      "properties": {
+        "board": {
+          "type": "string"
+        },
+        "iterations": {
+          "additionalProperties": false,
+          "properties": {
+            "cadence": {
+              "type": "string"
+            },
+            "length": {
+              "type": "string"
+            },
+            "overlap": {
+              "description": "Working days around a boundary that show the adjacent sprint (default 1).",
+              "type": "integer"
+            },
+            "pattern": {
+              "type": "string"
+            },
+            "source": {
+              "description": "Where sprints come from.",
+              "enum": [
+                "auto",
+                "gitlab-iterations",
+                "milestones",
+                "labels",
+                "github-project",
+                "cadence"
+              ],
+              "type": "string"
+            },
+            "start": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "project": {
+          "description": "Forge path of the tracker project.",
+          "type": "string"
+        },
+        "weight": {
+          "additionalProperties": false,
+          "properties": {
+            "field": {
+              "type": "string"
+            },
+            "pattern": {
+              "type": "string"
+            },
+            "source": {
+              "description": "Where issue weights come from.",
+              "enum": [
+                "auto",
+                "gitlab",
+                "label",
+                "github-field",
+                "none"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "workspaces": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "layout": {
+            "description": "Zellij tab layout.",
+            "enum": [
+              "code",
+              "agent",
+              "review",
+              "manual"
+            ],
+            "type": "string"
+          },
+          "run": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "description": "Named workspaces: a layout and the run group to bring up.",
+      "type": "object"
+    }
+  },
+  "title": "ADE project manifest (*.ade.toml, *.ade.local.toml)",
+  "type": "object"
+}

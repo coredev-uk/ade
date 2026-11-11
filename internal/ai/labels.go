@@ -26,6 +26,10 @@ type ClassifyInput struct {
 	// KnownTypes accepts any plain value.
 	KnownTypes []string
 	KnownApps  []string
+	// Weight is the manifest's weight source and Samples the closed weighted
+	// issues a weight suggestion compares with (WeightSamples).
+	Weight  config.WeightSource
+	Samples []WeightSample
 }
 
 // Missing lists the facets the issue lacks: "type", "app".
@@ -88,6 +92,11 @@ type Suggestion struct {
 	Dropped []string `json:"dropped,omitempty"`
 	// Source is how it was made: "ai" or "keywords".
 	Source string `json:"source,omitempty"`
+	// Weight is the suggested weight for an unweighted issue: the median of
+	// the similar closed issues (never from the model); WeightReason says
+	// which, or why there is none.
+	Weight       *int   `json:"weight,omitempty"`
+	WeightReason string `json:"weight_reason,omitempty"`
 }
 
 var plainValue = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)

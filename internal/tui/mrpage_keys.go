@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"slices"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -82,6 +83,8 @@ func (m *model) mrKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 	case "S":
 		m.beginSubmit()
 		return nil, true
+	case "A":
+		return m.aiReviewKey(), true
 	}
 	switch p.tab {
 	case tabThreads:
@@ -156,6 +159,14 @@ func (m *model) overviewKey(ks string) tea.Cmd {
 	if d, ok := moveKey(ks); ok {
 		m.mr.ovTop = max(0, m.mr.ovTop+d)
 	}
+	if p := m.mr; p.tab == tabOverview && p.data != nil && m.aiOn() {
+		switch ks {
+		case "d":
+			p.rawDesc = !p.rawDesc
+		case "s":
+			return m.summaryKey()
+		}
+	}
 	return nil
 }
 
@@ -176,7 +187,9 @@ func (m *model) threadsKey(ks string) tea.Cmd {
 	case "h", "left":
 		p.thDetail = false
 	case "r":
-		p.modal = &mrModal{kind: modalReply, thread: sel.d.ID}
+		m.openReply(p.data, sel.d.ID, p.data.ai[aiKey{kind: aiReply, id: sel.d.ID}])
+	case "d", "s":
+		return m.threadAIKey(ks, sel)
 	case "x":
 		if !sel.d.Resolvable {
 			m.notice(events.Info, "A plain comment has no resolved state")
@@ -203,6 +216,8 @@ func (m *model) diffKey(ks string) tea.Cmd {
 		switch ks {
 		case "enter", "l", "right":
 			p.focusDiff = true
+		case "D":
+			return m.openPager()
 		}
 		return nil
 	}
@@ -223,6 +238,8 @@ func (m *model) diffKey(ks string) tea.Cmd {
 		p.lineCur = 0
 	case "c":
 		m.beginComment()
+	case "D":
+		return m.openPager()
 	case "y", "n", "e":
 		return m.inlineTriage(ks)
 	}
@@ -345,13 +362,16 @@ func (m model) mrFooter(w int) string {
 		tabKeys = []string{"j/k", "scroll"}
 	case p.tab == tabThreads:
 		tabKeys = []string{"j/k", "move", "r", "reply", "x", "resolve/reopen"}
+		if m.aiOn() {
+			tabKeys = append(tabKeys, "d", "AI reply", "s", "AI summary")
+		}
 		if narrow {
 			tabKeys = append(tabKeys, "enter", "open")
 		}
 	case p.tab == tabDiff && p.focusDiff:
-		tabKeys = []string{"j/k", "line", "c", "comment", "J/K", "file", "h", "files"}
+		tabKeys = []string{"j/k", "line", "c", "comment", "J/K", "file", "D", "delta", "h", "files"}
 	case p.tab == tabDiff:
-		tabKeys = []string{"j/k", "file", "enter", "open"}
+		tabKeys = []string{"j/k", "file", "enter", "open", "D", "delta"}
 	case p.tab == tabReview:
 		tabKeys = []string{"j/k", "move", "y", "accept", "n", "deny", "e", "edit", "s", "severity"}
 		if narrow {
@@ -363,10 +383,22 @@ func (m model) mrFooter(w int) string {
 		tabKeys = []string{"U", "reload"}
 	default:
 		tabKeys = []string{"j/k", "scroll"}
+		if m.aiOn() {
+			tabKeys = append(tabKeys, "d", "summary/raw", "s", "new summary")
+		}
 	}
 	act := []string{"a", "approve", "R", "ready/draft", "m", "merge", "S", "submit review"}
+	if m.aiOn() {
+		act = append(act, "A", "agent review")
+	}
+	if p.item != nil {
+		act = append(act, "P", "agents")
+	}
 	if p.data == nil {
 		act = nil
+		if p.item != nil {
+			act = []string{"P", "agents"}
+		}
 	}
 	return fitKeys(w, []string{"esc", "back", "?", "keys"}, tabKeys, []string{"tab", "tabs"}, act)
 }
@@ -400,8 +432,9 @@ func fitKeys(w int, keep []string, groups ...[]string) string {
 }
 
 // mrHelpView is terse on purpose: each row fits one line even at 60 columns,
-// and rows that do not fit the height are left out.
-func mrHelpView(w, h int, g glyphs) string {
+// and rows that do not fit the height are left out. The AI rows exist only
+// while AI is on.
+func mrHelpView(w, h int, g glyphs, ai bool) string {
 	rows := [][2]string{
 		{"tab", "next tab; 1-6 jump to one"},
 		{"[ ]", "another MR of the item"},
@@ -411,12 +444,20 @@ func mrHelpView(w, h int, g glyphs) string {
 		{"x", "resolve or reopen the thread"},
 		{"enter", "open thread, file or job log"},
 		{"c", "comment on the diff line"},
+		{"D", "Diff: open delta (or your pager)"},
 		{"y n e", "accept, deny, edit a draft"},
 		{"Y s d", "accept all, severity, delete"},
 		{"S", "submit the review as one batch"},
 		{"a R m", "approve, ready/draft, merge"},
+		{"P", "agent menu: plan, address comments"},
 		{"l", "CI: job log tail"},
 		{"U", "reload from the forge"},
+	}
+	if ai {
+		rows = slices.Insert(rows, 8,
+			[2]string{"A", "agent review pass, drafts in Review"},
+			[2]string{"d s", "Overview: raw/summary, new summary"},
+			[2]string{"d s", "Threads: AI draft reply, summary"})
 	}
 	l := []string{stBold.Render("Merge request page"), ""}
 	for _, r := range rows[:min(len(rows), max(1, h-6))] {

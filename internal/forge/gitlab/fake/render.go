@@ -196,6 +196,9 @@ func (s *Server) mrJSON(m *mr, ctx *project, single bool) object {
 		"detailed_merge_status": s.detailedStatus(m),
 		"pipeline":              s.pipelineJSON(m.Pipeline, m),
 	}
+	if m.MergedBy != nil {
+		o["merged_by"], o["merge_user"] = userJSON(m.MergedBy), userJSON(m.MergedBy)
+	}
 	if single {
 		o["head_pipeline"] = s.pipelineJSON(m.Pipeline, m)
 	}

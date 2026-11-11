@@ -624,6 +624,9 @@ func (c *Config) Validate() []Issue {
 	if !oneOf(c.Host.Mode, "auto", "zellij", "vscode", "plain") {
 		s.errorf("host.mode", "unknown value %q: want auto, zellij, vscode or plain", c.Host.Mode)
 	}
+	if !oneOf(c.Host.Editor, "auto", "nvim", "ade-nvim", "code", "$EDITOR") {
+		s.errorf("host.editor", "unknown value %q: want auto, nvim, ade-nvim, code or $EDITOR", c.Host.Editor)
+	}
 	if !oneOf(c.Host.Glyphs, "unicode", "nerd", "ascii") {
 		s.errorf("host.glyphs", "unknown value %q: want unicode, nerd or ascii", c.Host.Glyphs)
 	}

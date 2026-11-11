@@ -18,8 +18,9 @@ type user struct {
 }
 
 type project struct {
-	ID   int64
-	Path string
+	ID       int64
+	Path     string
+	Archived bool
 }
 
 type milestone struct {
@@ -104,13 +105,16 @@ type mr struct {
 	Assignees []*user
 	Reviewers []*user
 	Approved  []*user // approved_by
-	Pipeline  *pipeline
-	Closes    []*issue // issues the description closes
-	Mentions  []*issue // issues the description merely references
-	Labels    []string // set by create and quick actions
-	Created   time.Time
-	Updated   time.Time
-	Merged    *time.Time
+	// ReviewState is each reviewer's verdict by username (absent: unreviewed).
+	ReviewState map[string]string
+	MergedBy    *user
+	Pipeline    *pipeline
+	Closes      []*issue // issues the description closes
+	Mentions    []*issue // issues the description merely references
+	Labels      []string // set by create and quick actions
+	Created     time.Time
+	Updated     time.Time
+	Merged      *time.Time
 
 	Diff        *mrDiff        // latest version; nil until GitLab has computed one
 	Drafts      []*draftNote   // the sandbox user's unpublished review comments

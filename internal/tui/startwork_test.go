@@ -18,6 +18,7 @@ import (
 	"github.com/coredev-uk/ade/internal/audit"
 	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/domain"
+	hostedit "github.com/coredev-uk/ade/internal/editor"
 	"github.com/coredev-uk/ade/internal/events"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/forge/gitlab"
@@ -431,7 +432,7 @@ func TestCreateMRKey(t *testing.T) {
 func TestEditedBodyIsSent(t *testing.T) {
 	e := newSWEnv(t)
 	old := swEditorCmd
-	swEditorCmd = func(path string) *exec.Cmd {
+	swEditorCmd = func(_ hostedit.Editor, path string) *exec.Cmd {
 		return exec.Command("sh", "-c", `printf 'Closes `+startwork.ChildPlaceholder+`\n\nwritten by hand\n' > "$1"`, "sh", path)
 	}
 	t.Cleanup(func() { swEditorCmd = old })
@@ -665,7 +666,7 @@ func (e *swEnvT) runEdit() {
 	if err := os.WriteFile(path, []byte(tp.MRBody(forge.Ref{}, d.plan.Item)), 0o644); err != nil {
 		e.t.Fatal(err)
 	}
-	if out, err := swEditorCmd(path).CombinedOutput(); err != nil {
+	if out, err := swEditorCmd(hostedit.Editor{}, path).CombinedOutput(); err != nil {
 		e.t.Fatalf("editor: %v\n%s", err, out)
 	}
 	b, err := os.ReadFile(path)

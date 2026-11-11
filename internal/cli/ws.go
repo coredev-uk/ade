@@ -78,7 +78,7 @@ func newWsCmd() *cobra.Command {
 		Use:   "ws",
 		Short: "Workspaces: run graph, instances and tabs for a worktree",
 	}
-	cmd.AddCommand(newWsUpCmd(), newWsDownCmd(), newWsStatusCmd(), newWsLayoutCmd())
+	cmd.AddCommand(newWsUpCmd(), newWsDownCmd(), newWsStatusCmd(), newWsRestartCmd(), newWsLayoutCmd())
 	return cmd
 }
 
@@ -357,6 +357,66 @@ func printInstances(w io.Writer, rows []workspace.Row) {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\tsince %s\theld by %d\n", r.Node, state, port, r.Tree, r.StartedAt.Format(time.TimeOnly), len(r.Holders))
 	}
 	tw.Flush()
+}
+
+func newWsRestartCmd() *cobra.Command {
+	var tf treeFlags
+	cmd := &cobra.Command{
+		Use:   "restart <node> [worktree]",
+		Short: "Restart a node and everything that requires it",
+		Long: `Stops the node's instance and every instance of the workspace that requires it
+(dependents first), then starts them again in dependency order and waits until
+each is ready. Other instances keep running, and everyone holding the restarted
+instances still holds them. Use it on a node the services strip shows blocked:
+naming a blocked node's blocker restarts the whole subtree.
+
+Dependents that belong to another workspace's plan are not restarted from here.`,
+		Args: cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			trees, err := tf.options()
+			if err != nil {
+				return err
+			}
+			a := appFrom(cmd)
+			loc, err := workspace.Locate(a.Root, worktreeArg(args[1:]))
+			if err != nil {
+				return err
+			}
+			mgr, err := workspace.NewManager(a)
+			if err != nil {
+				return err
+			}
+			plan, err := mgr.Plan(cmd.Context(), loc, workspace.PlanOptions{Workspace: tf.workspace, Trees: trees})
+			if err != nil {
+				return err
+			}
+			w := cmd.OutOrStdout()
+			opts := workspace.UpOptions{Holder: loc.Tree}
+			if !jsonOut {
+				opts.Progress = func(r workspace.Result) { fmt.Fprintln(w, "  "+r.Describe()) }
+			}
+			results, err := mgr.Restart(cmd.Context(), plan, args[0], opts)
+			if jsonOut {
+				if results == nil {
+					results = []workspace.Result{}
+				}
+				if perr := printJSON(w, results); perr != nil {
+					return perr
+				}
+			}
+			if err != nil {
+				return err
+			}
+			for _, r := range results {
+				if r.Outcome != workspace.OutcomeReady {
+					return withCode(1, fmt.Errorf("%s did not come back: %s", r.Node, r.Detail))
+				}
+			}
+			return nil
+		},
+	}
+	tf.add(cmd)
+	return cmd
 }
 
 func newWsLayoutCmd() *cobra.Command {

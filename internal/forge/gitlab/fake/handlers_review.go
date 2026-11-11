@@ -428,7 +428,7 @@ func (s *Server) mergeMR(w http.ResponseWriter, r *http.Request) {
 		m.AutoMerge = true
 	default:
 		now := s.st.clock
-		m.State, m.Merged = "merged", &now
+		m.State, m.Merged, m.MergedBy = "merged", &now, s.st.me
 	}
 	m.Updated = s.st.clock
 	writeJSON(w, http.StatusOK, s.mrJSON(m, m.Project, true))

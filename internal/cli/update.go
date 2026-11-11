@@ -50,9 +50,15 @@ Exits 2 when any repo failed.`,
 	}
 }
 
+// isTerminal reports whether f is a character device that is not /dev/null
+// (which is one too, and is what `</dev/null` hands a script).
 func isTerminal(f *os.File) bool {
 	fi, err := f.Stat()
-	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+	if err != nil || fi.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+	null, err := os.Stat(os.DevNull)
+	return err != nil || !os.SameFile(fi, null)
 }
 
 // finishReport prints rep and maps a failed run to exit code 2.

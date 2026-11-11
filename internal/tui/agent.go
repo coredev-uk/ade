@@ -12,10 +12,11 @@ import (
 
 	"github.com/coredev-uk/ade/internal/agent"
 	"github.com/coredev-uk/ade/internal/domain"
+	hostedit "github.com/coredev-uk/ade/internal/editor"
 	"github.com/coredev-uk/ade/internal/forge"
 )
 
-// The agent surfaces (PLAN 6.6): `a` on a Home item (`A` on the MR page) opens
+// The agent surfaces (PLAN 6.6): `a` on a Home item (`P` on the MR page) opens
 // the agent menu for that item: start a plan, address the MR's comments, and
 // the item's runs. Home's `A` lists every run. Runs show state, spend and
 // elapsed time; a plan awaiting approval opens the plan review dialog, a run
@@ -55,6 +56,11 @@ type agentDialog struct {
 	busy string // what a command is doing, in words
 	warn string
 	err  error
+
+	// notes is the item's notes (empty: none); noNotes leaves them out of
+	// the runs started from this dialog (n toggles).
+	notes   string
+	noNotes bool
 }
 
 // --- messages -----------------------------------------------------------------
@@ -92,16 +98,7 @@ type (
 // Tests replace these: no real agent, editor or lazygit is ever started.
 var (
 	agentOpen = agent.ForApp
-	agEditor  = func(path string) *exec.Cmd {
-		ed := os.Getenv("VISUAL")
-		if ed == "" {
-			ed = os.Getenv("EDITOR")
-		}
-		if ed == "" {
-			ed = "vi"
-		}
-		return exec.Command("sh", "-c", ed+` "$1"`, "sh", path)
-	}
+	agEditor  = func(ed hostedit.Editor, path string) *exec.Cmd { return ed.Command(path, 0, true) }
 	agLazygit = func(worktree string) tea.Cmd {
 		cmd := agent.LazygitCmd(worktree, os.Getenv("ZELLIJ") != "")
 		if os.Getenv("ZELLIJ") != "" {
@@ -131,6 +128,7 @@ func (m model) openAgent(item *domain.WorkItem, all bool) (model, tea.Cmd) {
 		d.item = nil
 	}
 	if d.item != nil {
+		d.notes = m.itemNotes(d.item)
 		for i := range d.item.MRs {
 			if mr := &d.item.MRs[i]; mr.State == "opened" && mr.Unresolved > 0 {
 				d.mr = mr
@@ -231,7 +229,7 @@ func (m model) agentUpdate(msg tea.Msg) (model, tea.Cmd, bool) {
 		return m, nil, true
 	case tea.KeyPressMsg:
 		if k := msg.String(); m.agt == nil {
-			if k == "A" && m.mr != nil && m.mr.modal == nil {
+			if k == "P" && m.mr != nil && m.mr.modal == nil {
 				if m.mr.item == nil {
 					return m, nil, false
 				}
@@ -286,6 +284,11 @@ func (m model) agStart(d *agentDialog, kind agent.Kind) tea.Cmd {
 		c, err := agent.Gather(ctx, fg, t)
 		if err != nil {
 			return agStartedMsg{d: d, err: err}
+		}
+		if d.notes != "" && !d.noNotes {
+			if err := agentNotes(&c, a, t); err != nil {
+				return agStartedMsg{d: d, err: err}
+			}
 		}
 		// The pre-flight's confirmation is the dialog itself: the user
 		// pressed p, and the run is capped.
@@ -380,6 +383,10 @@ func (m model) agListKey(d *agentDialog, ks string) (model, tea.Cmd) {
 		default:
 			return m, m.agStart(d, agent.KindAddress)
 		}
+	case "n":
+		if d.item != nil && d.notes != "" {
+			d.noNotes = !d.noNotes
+		}
 	case "enter", "l", "right":
 		if d.sel < len(d.runs) {
 			d.cur = d.runs[d.sel]
@@ -416,7 +423,7 @@ func (m model) agPlanKey(d *agentDialog, ks string) (model, tea.Cmd) {
 			d.warn = "approved: editing the plan voids the approval; x discards the run"
 		}
 		path := filepath.Join(d.mgr.Store.Dir(d.cur), agent.FilePlan)
-		return m, tea.ExecProcess(agEditor(path), func(error) tea.Msg { return agEditMsg{d} })
+		return m, tea.ExecProcess(agEditor(m.hostEditor(), path), func(error) tea.Msg { return agEditMsg{d} })
 	case "enter", "y":
 		if d.busy != "" {
 			return m, nil

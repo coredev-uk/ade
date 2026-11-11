@@ -133,6 +133,7 @@ func (s *Server) routes() http.Handler {
 	s.pullRoutes(mux)
 	s.reviewRoutes(mux)
 	s.checkRoutes(mux)
+	s.discoverRoutes(mux)
 	mux.HandleFunc("POST /api/graphql", s.graphql)
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { notFound(w) })
 	return http.HandlerFunc(s.serve(mux))

@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -58,7 +60,72 @@ func newAuditCmd() *cobra.Command {
 	cmd.Flags().StringVar(&f.Item, "item", "", "only entries for this item reference")
 	cmd.Flags().StringVar(&f.Project, "project", "", "only entries for this project")
 	cmd.Flags().IntVar(&f.Limit, "limit", 0, "show at most the newest N entries (0 = all)")
+	cmd.AddCommand(newAuditTailCmd())
 	return cmd
+}
+
+// auditPoll is how often `audit tail --follow` looks for new lines.
+const auditPoll = 250 * time.Millisecond
+
+func newAuditTailCmd() *cobra.Command {
+	var (
+		f      audit.Filter
+		lines  int
+		follow bool
+	)
+	cmd := &cobra.Command{
+		Use:   "tail",
+		Short: "Show the newest audit entries, optionally following new ones",
+		Long: "Prints the newest entries (default 10) oldest-first, one per line. With --follow it keeps\n" +
+			"running and prints entries as any ade process appends them, until interrupted. With --json\n" +
+			"every entry is one JSON object per line (JSONL).",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			l := appFrom(cmd).Audit
+			w := cmd.OutOrStdout()
+			print := func(e audit.Entry) error {
+				if jsonOut {
+					return json.NewEncoder(w).Encode(e)
+				}
+				_, err := fmt.Fprintln(w, auditLine(e))
+				return err
+			}
+			if lines > 0 { // Query's limit 0 would mean everything
+				f.Limit = lines
+				entries, err := l.Query(f)
+				if err != nil {
+					return fmt.Errorf("read audit log: %w", err)
+				}
+				for _, e := range entries {
+					if err := print(e); err != nil {
+						return err
+					}
+				}
+			}
+			if !follow {
+				return nil
+			}
+			f.Limit = 0
+			var werr error
+			err := l.Follow(cmd.Context(), f, auditPoll, func(e audit.Entry) {
+				if werr == nil {
+					werr = print(e)
+				}
+			})
+			return errors.Join(err, werr)
+		},
+	}
+	cmd.Flags().IntVarP(&lines, "lines", "n", 10, "how many of the newest entries to print first")
+	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "keep running and print new entries as they are appended")
+	cmd.Flags().StringVar(&f.Action, "action", "", "action glob, e.g. 'forge.*'")
+	cmd.Flags().StringVar(&f.Item, "item", "", "only entries for this item reference")
+	cmd.Flags().StringVar(&f.Project, "project", "", "only entries for this project")
+	return cmd
+}
+
+// auditLine is one entry as a single line.
+func auditLine(e audit.Entry) string {
+	return strings.Join([]string{e.TS.Local().Format("2006-01-02 15:04:05"), e.Actor, e.Action, auditSubject(e), auditOutcome(e)}, "  ")
 }
 
 func auditSubject(e audit.Entry) string {

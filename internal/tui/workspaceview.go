@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // serviceLines is the Services strip of an item's preview (PLAN 2.1):
@@ -20,33 +21,7 @@ func (m model) serviceLines(ref string, w int) []string {
 	g := m.g
 	parts := make([]string, 0, len(chips))
 	for _, c := range chips {
-		var s string
-		switch c.state {
-		case "starting":
-			s = c.node + " " + stWarn.Render(g.Ahead) + " starting"
-		case "stopped":
-			s = c.node + " " + stBad.Render(g.Bad) + " stopped"
-		case "blocked":
-			s = c.node + " " + stWarn.Render(g.Warn) + " blocked by " + c.blocker
-		case "failed":
-			s = c.node + " " + stBad.Render(g.Bad) + " failed"
-		default:
-			s = c.node + " " + stOK.Render(g.Done)
-			if c.port > 0 {
-				s += fmt.Sprintf(" %d", c.port)
-			}
-		}
-		var tags []string
-		if c.feature {
-			tags = append(tags, "feature tree")
-		}
-		if c.shared {
-			tags = append(tags, "shared")
-		}
-		if len(tags) > 0 {
-			s += stFaint.Render(" (" + strings.Join(tags, ", ") + ")")
-		}
-		parts = append(parts, s)
+		parts = append(parts, m.chipText(c))
 	}
 	// Chips never break across lines: fill lines greedily, continuation lines
 	// aligned under the first chip. Chips that need attention come first and a
@@ -69,6 +44,47 @@ func (m model) serviceLines(ref string, w int) []string {
 		}
 	}
 	return append(lines, line)
+}
+
+// chipText is one service: name, a glyph and a word or port, and its tags.
+func (m model) chipText(c svcChip) string {
+	g := m.g
+	var s string
+	switch c.state {
+	case "starting":
+		s = c.node + " " + stWarn.Render(g.Ahead) + " starting"
+	case "stopped":
+		s = c.node + " " + stBad.Render(g.Bad) + " stopped"
+	case "blocked":
+		s = c.node + " " + stWarn.Render(g.Warn) + " blocked by " + c.blocker
+	case "failed":
+		s = c.node + " " + stBad.Render(g.Bad) + " failed"
+	default:
+		s = c.node + " " + stOK.Render(g.Done)
+		if c.port > 0 {
+			s += fmt.Sprintf(" %d", c.port)
+		}
+	}
+	var tags []string
+	if c.feature {
+		tags = append(tags, "feature tree")
+	}
+	if c.shared {
+		tags = append(tags, "shared")
+	}
+	if len(tags) > 0 {
+		s += stFaint.Render(" (" + strings.Join(tags, ", ") + ")")
+	}
+	return s
+}
+
+// serviceChipLines lists chips one per line, attention first, for the rail.
+func (m model) serviceChipLines(chips []svcChip, w int) []string {
+	var out []string
+	for _, c := range attentionFirst(chips) {
+		out = append(out, ansi.Truncate(m.chipText(c), w, "…"))
+	}
+	return out
 }
 
 // attentionFirst orders chips by what needs a look: failed, blocked, stopped,

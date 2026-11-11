@@ -1,0 +1,18 @@
+// ADE's zellij config for sessions started inside a VS Code terminal.
+//
+// It is the "unlock-first" keybinding preset: the session starts locked, so
+// every key (Ctrl-p, Ctrl-t, Ctrl-o, Ctrl-s ... and everything neovim, lazygit
+// and VS Code itself bind) reaches the program in the focused pane. Ctrl-g
+// unlocks zellij's own bindings for one command; Ctrl-g again locks it.
+//
+// Everything else is zellij's default configuration.
+default_mode "locked"
+
+keybinds {
+    locked {
+        bind "Ctrl g" { SwitchToMode "Normal"; }
+    }
+}
+
+show_startup_tips false
+show_release_notes false

@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/coredev-uk/ade/internal/config"
+	hostedit "github.com/coredev-uk/ade/internal/editor"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/startwork"
 )
@@ -115,17 +116,9 @@ type (
 	}
 )
 
-// swEditorCmd builds the editor invocation for the MR body; tests replace it.
-var swEditorCmd = func(path string) *exec.Cmd {
-	ed := os.Getenv("VISUAL")
-	if ed == "" {
-		ed = os.Getenv("EDITOR")
-	}
-	if ed == "" {
-		ed = "vi"
-	}
-	return exec.Command("sh", "-c", ed+` "$1"`, "sh", path)
-}
+// swEditorCmd builds the editor invocation for the MR body (host.editor
+// resolved by the caller); it waits until the file is closed. Tests replace it.
+var swEditorCmd = func(ed hostedit.Editor, path string) *exec.Cmd { return ed.Command(path, 0, true) }
 
 // --- opening -----------------------------------------------------------------
 
@@ -546,7 +539,7 @@ func (m model) swEdit(d *startDialog) (model, tea.Cmd) {
 		d.warn = werr.Error()
 		return m, nil
 	}
-	return m, tea.ExecProcess(swEditorCmd(path), func(err error) tea.Msg {
+	return m, tea.ExecProcess(swEditorCmd(m.hostEditor(), path), func(err error) tea.Msg {
 		defer os.Remove(path) //nolint:errcheck // a temp file
 		if err != nil {
 			return swEditedMsg{d: d, err: err}

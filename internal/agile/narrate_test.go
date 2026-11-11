@@ -70,3 +70,21 @@ func TestAINarratorReviewAndFailures(t *testing.T) {
 		t.Fatalf("nil narrator: %q %v", got.Narrative, err)
 	}
 }
+
+func TestParentNarrativeJobIsKeyedByTheFactsAndFiledUnderTheParent(t *testing.T) {
+	r := BuildReview(cycleFixture())
+	it := r.Items[0]
+	a := ai.SprintParentJob(r.Project, r.Sprint.Title, it.Ref, parentFacts(r, it))
+	if a.Feature != "sprint-parent" || a.Forge != ai.SprintForge || a.Ref.IID != it.Ref.IID || a.Ref.Project != r.Project || a.System == "" {
+		t.Fatalf("job = %+v", a)
+	}
+	// An unchanged parent is the same call (a cache hit); a changed cycle time is a new one.
+	if b := ai.SprintParentJob(r.Project, r.Sprint.Title, it.Ref, parentFacts(r, it)); b.Prompt != a.Prompt || b.Name != a.Name {
+		t.Error("the same facts must give the same job")
+	}
+	h := 1.0
+	it.CycleHours = &h
+	if c := ai.SprintParentJob(r.Project, r.Sprint.Title, it.Ref, parentFacts(r, it)); c.Prompt == a.Prompt {
+		t.Error("a changed cycle time must change the prompt")
+	}
+}

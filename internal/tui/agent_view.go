@@ -94,6 +94,13 @@ func (m model) agListView(d *agentDialog, inner, h int) ([]string, string) {
 		default:
 			l = append(l, stFaint.Render("c address comments    no open MR with unresolved threads"))
 		}
+		if d.notes != "" {
+			state, tog := stOK.Render(g.OK+" included"), "leave out"
+			if d.noNotes {
+				state, tog = stFaint.Render(g.Info+" left out"), "include"
+			}
+			l = append(l, ansi.Truncate(stBold.Render("n")+" your notes           "+state+stFaint.Render(" · press n to "+tog), inner, "…"))
+		}
 		l = append(l, "")
 		hint = keys("p", "plan", "c", "address", "enter", "open", "x", "cancel", "esc", "close")
 	}

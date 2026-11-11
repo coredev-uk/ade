@@ -230,25 +230,15 @@ func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
 // ReadNotes returns the user's text after the "## Notes" heading, or "" when
 // the record or heading does not exist.
 func (s *Store) ReadNotes(forgeName string, ref forge.Ref) (string, error) {
-	data, err := os.ReadFile(filepath.Join(s.ItemDir(forgeName, ref), ItemFile))
+	data, err := os.ReadFile(s.ItemPath(forgeName, ref))
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", nil
 	}
 	if err != nil {
 		return "", fmt.Errorf("read notes: %w", err)
 	}
-	_, body, _ := parseFrontmatter(string(data))
-	if _, post, ok := splitAround(body); ok {
-		body = post
-	}
-	for off := 0; off < len(body); {
-		line, _, _ := strings.Cut(body[off:], "\n")
-		off += len(line) + 1
-		if strings.TrimRight(line, " \r") == notesHeader {
-			return strings.TrimPrefix(body[min(off, len(body)):], "\n"), nil
-		}
-	}
-	return "", nil
+	_, notes, _ := notesSplit(string(data))
+	return notes, nil
 }
 
 // writeAtomic writes via a temp file and rename so readers never see a
