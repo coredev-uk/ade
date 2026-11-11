@@ -31,7 +31,7 @@ Forge TUIs (`glab`, `gh-dash`, lazygit) each cover one slice. ADE models the *wo
 - **Tracker-project pattern:** planning issues and boards live in a dedicated tracker project. When someone takes a tracker issue, a child issue is created in the affected code project, and the MR/PR is opened from that child. Today teams link parent and child inconsistently, so ADE establishes and enforces the convention.
 - Iterations/sprints come from different sources per team: GitLab iterations, milestones, labels, GitHub Projects iteration fields, or a configured cadence.
 - Agile rituals: daily standup (previous working day + today), sprint review.
-- Environments: local Linux/macOS terminals; remote CDEs reached through VS Code Remote-SSH or a browser terminal; Nix available in the environment image.
+- Environments: local Linux/macOS terminals; remote CDEs reached through VS Code Remote-SSH or a browser terminal; Nix available in the environment image. Work and personal use run on different machines, each with its own user config (forges, AI profiles, budgets). Shared manifests travel through git; records stay on their machine.
 - AI access varies per user: Claude subscription via an agent CLI (omp, Claude Code), direct provider API keys (Anthropic, OpenAI, Moonshot/Kimi), or an OpenAI-compatible gateway (e.g. LiteLLM) that mixes providers and enforces spend limits.
 - Companion tools: zellij, lazygit, Neovim or VS Code as the editor, agent CLIs (omp, claude, codex).
 
@@ -42,7 +42,8 @@ Forge TUIs (`glab`, `gh-dash`, lazygit) each cover one slice. ADE models the *wo
 - Every terminal action must also work when ADE runs inside VS Code's integrated terminal (key conflicts, `code` CLI as editor) and without zellij (plain host, VS Code tasks).
 - Every non-TUI command offers machine-readable output (`--json`) so scripts and VS Code tasks can drive it.
 - Everything ADE does is recorded locally: an append-only audit log of every forge write, AI call (with model, tokens, and cost), and agent run, plus a per-work-item record (forge snapshot, AI outputs, plans, run records, personal notes) kept as plain Markdown. AI output is durable, so paid work is never lost or bought twice. These records hold real work data and never live inside a repository.
-- Some projects are commercially sensitive. Every project has a sensitivity level (`public` / `internal` / `confidential`; unclassified = confidential). The level decides which fields may leave the machine, which AI profiles are cleared to receive them, and whether agents may run. Team manifests set the ceiling, and personal config can only tighten it. Every egress is previewed, redacted, and audited. ADE has no telemetry.
+- AI budgets come from each provider's own billing source: LiteLLM key spend and budget, Moonshot balance, OpenRouter key limits, and Anthropic/OpenAI admin cost reports where an admin key exists. ADE merges these with locally metered per-request cost. Subscriptions without a quota API (Claude via omp) use list-price usage against a soft cap.
+- There is no per-project data-sensitivity policy: work runs in closed environments, and AI egress is whatever each machine's profiles point at (user decision). ADE has no telemetry and records where every AI call went.
 - GitLab support is built from the official API docs; no paid instance is available for development. Paid-tier features are capability-probed at runtime and degrade cleanly on Free.
 - Privacy: committed code, fixtures, and docs contain no real organisation, host, project, or person data. Test data is synthetic.
 - Undecided: authoritative remaining-quota reporting for subscription-based AI (only usage is observable today); GitHub parity timing.

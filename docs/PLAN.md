@@ -50,6 +50,8 @@ flowchart LR
 
 Two layers. Secrets never live in either file.
 
+**One config per machine.** Work and personal use run on different machines. Each machine has its own user config: the work machine has the GitLab forge and the gateway AI profile, and the personal machine has GitHub and the Claude subscription. Manifests are shared through git. Records and the audit log stay on the machine that produced them and are never synced.
+
 | Layer | Location | Shared? | Holds |
 |---|---|---|---|
 | User config | `~/.config/ade/config.toml` | never | identity, forges + credential *commands*, AI profiles, budgets, host/editor prefs, keymap |
@@ -81,18 +83,15 @@ source = "~/code/side-project/side.ade.toml"
 mode    = "ask"            # off | ask | auto
 profile = "claude-sub"
 
-[ai.profiles.claude-sub]
-driver      = "omp"
-cleared_for = ["public"]                       # personal subscription: never internal/confidential data
+[ai.profiles.claude-sub]                       # personal machine
+driver  = "omp"
+billing = { source = "omp", weekly_soft_usd = 10 }   # no quota API: list-price usage vs a soft cap
 
-[ai.profiles.gateway]
-driver      = "openai-compat"
-base_url    = "https://llm.example.com/v1"     # org-approved gateway
-key_cmd     = "pass show ade/llm"
-cleared_for = ["public", "internal", "confidential"]
-
-[redact]
-terms_file = "~/.config/ade/redact.txt"        # customer/product names → placeholders before egress
+[ai.profiles.gateway]                          # work machine
+driver   = "openai-compat"
+base_url = "https://llm.example.com/v1"
+key_cmd  = "pass show ade/llm"
+billing  = { source = "litellm" }              # cost headers + /key/info
 
 [budget]
 daily_usd        = 2.00
@@ -115,7 +114,6 @@ snapshot_comments = 20                     # latest comments copied into item.md
 # acme.ade.toml (shareable)
 name  = "acme"
 forge = "work"
-sensitivity = "internal"   # public | internal | confidential; unset = confidential
 
 [tracker]
 project    = "acme/tracker"
@@ -129,14 +127,6 @@ route  = ["svc::api", "backend"]      # tracker labels that suggest this repo
 [[repos]]
 path        = "acme/web"
 route       = ["svc::web", "frontend"]
-[[repos]]
-path        = "acme/billing"
-route       = ["svc::billing"]
-sensitivity = "confidential"          # per-repo override
-
-[policy.confidential]                 # omit to keep the default: no AI, no agents
-ai_send = ["title", "labels"]         # fields allowed to leave; code and diffs stay local
-agents  = false
 
 [conventions]
 branch      = "{child_iid}-{slug}"
@@ -183,12 +173,15 @@ stateDiagram-v2
 
 - **WorkItem** = tracker issue + 0..n child issues + their MRs + pipelines + discussions. The stage is *derived* from forge data. ADE never stores it as truth.
 - **Ball in court** is computed per item: `you` (unresolved threads addressed to you, red pipeline, requested changes), `reviewers`, `ci`, `nobody`. This is the scan column that answers "what do I touch next".
-- **Child linking:** GitLab cannot make one issue the hierarchy child of another (only issue → task, same project). So ADE writes a cross‑project `relates_to` issue link (Free tier) *and* a description reference (`Parent: acme/tracker#128`). When reading, it accepts any of: link, description reference, work‑item hierarchy, or MR `Closes`/mentions, so inconsistent historical data still resolves. See [gitlab-api/README.md](gitlab-api/README.md).
+- **Child linking:**
+  - **GitLab** cannot make one issue the hierarchy child of another (only issue → task, same project). So ADE writes a cross‑project `relates_to` issue link (Free tier) *and* a description reference (`Parent: acme/tracker#128`).
+  - **GitHub** supports real cross‑repo sub‑issues. This was verified on the sandbox, so ADE uses them plus the same description reference.
+  - **Reading** accepts any of: link, sub‑issue/hierarchy, description reference, or MR/PR `Closes`/mentions, so inconsistent historical data still resolves. See [gitlab-api/README.md](gitlab-api/README.md).
 - **Iteration window:** show the current iteration. Within `overlap` (default 1 working day) of its end, also show the next. Within `overlap` of its start, also show the previous. Working days come from `user.workdays`. Iteration sources implement one interface: `Current(now)`, `Adjacent(n)`, `Issues(it)`.
 
 ---
 
-## 4. Local records, audit, and data sensitivity
+## 4. Local records and audit
 
 ADE keeps three stores. They are split by what losing each one costs.
 
@@ -270,42 +263,13 @@ Free-form. ADE never edits outside the snapshot block.
 - **`ade item <ref>`** prints the record path, and `ade item <ref> --edit` opens `item.md` in the configured editor. In the TUI, `n` opens notes.
 - **Privacy:** these directories hold real work data, and they live outside every repository. `ade doctor` warns if `records.dir` resolves inside a git work tree. On remote CDEs, point `records.dir` at the persistent home volume.
 
-### 4.3 Sensitive projects
+### 4.3 Data handling
 
-Some projects are commercially sensitive. Every AI or agent call is an *egress decision*, and that decision is made before any prompt is built.
+There is no per‑project sensitivity policy. Work runs inside closed environments, and AI goes wherever that machine's profiles point (decided 2026‑11‑11). These cheap protections stay:
 
-- **Levels:** `public`, `internal`, `confidential`.
-  - Set per manifest, overridable per repo.
-  - A work item takes the **most sensitive** level among its tracker project and every linked child repo.
-  - Anything unclassified is treated as `confidential`.
-- **Precedence:** the shared manifest sets the ceiling, and user config can only tighten it. A teammate's local config cannot loosen team policy.
-- **Defaults per level:**
-
-| Level | Fields that may leave | Agent runs | Profiles allowed |
-|---|---|---|---|
-| public | all (title, description, comments, diffs, code) | yes | any |
-| internal | all | yes | profiles whose `cleared_for` includes `internal` |
-| confidential | none, unless `[policy.confidential].ai_send` grants fields | only if `agents = true` | profiles whose `cleared_for` includes `confidential` |
-
-- **Gate order:**
-  1. `ai.mode`
-  2. item level → allowed fields and agent permission
-  3. the profile's `cleared_for`
-  4. budget
-  5. redaction
-  6. pre-flight preview
-  7. send
-
-  A refusal names the rule, e.g. "confidential (acme/billing): AI not permitted by acme manifest". The action stays visible but disabled. Nothing is silently hidden.
-- **Redaction:** before anything is sent, terms from the local `redact.terms_file` (customer, product, and codenames) plus built‑in patterns (emails, internal hostnames, key‑shaped strings) are replaced by stable placeholders (`⟨TERM_3⟩`). Output is re‑hydrated locally. The mapping lives only in memory, and the terms file is user‑local and never committed.
-- **Pre-flight preview** shows the destination host, the profile and model, the exact fields, the byte count, and the redacted prompt.
-- **Egress audit:** every AI audit event records `dest_host`, `profile`, `fields`, `bytes`, and `input_hash`. `ade audit --action 'ai.*' --item …` answers "what left this machine about X".
-- **Agents:**
-  - Agent runs receive `--session-dir <item record>/runs/<id>`, so transcripts stay in the records store instead of the agent's global history. Explain calls use `--no-session`.
-  - The tool set is restricted with `--tools` (no web fetch/search) for internal and confidential items. These omp flags are verified.
-  - Drivers that cannot constrain sessions or tools are refused above `public`. Claude Code and codex equivalents are checked in Phase 6.
-- **No other egress:** ADE has no telemetry. It talks only to configured forges, AI profiles, and manifest sources. `--debug-http` logs method, path, status, and timing, never bodies. Crash reports carry no payloads. ADE never starts `zellij web`.
-- **Visible state:** every item shows its level as glyph + text in the list row and preview, so the user always knows which rules apply.
+- AI audit events record `dest_host` and `bytes`, so "what left this machine" is always answerable.
+- Agent runs get `--session-dir <item record>/runs/<id>`, so transcripts land in the records store, not the agent's global history. Explain calls use `--no-session`.
+- ADE has no telemetry. `--debug-http` logs method, path, status, and timing, never bodies. ADE never starts `zellij web`.
 
 ## 5. Forge layer
 
@@ -335,7 +299,7 @@ type Forge interface {
   - An optional Free sandbox (`-tags live`).
   - `ade doctor --probe`: a read‑only *shape* check against real instances that reports field and status mismatches, never values.
 - **Capabilities, not tiers:** each gated feature (iterations, cadences, approval rules, `blocks` links, scoped labels, epics) is probed and cached. The UI degrades per capability: "approved by 2" instead of "2 of 3 required", milestones instead of iterations.
-- **GitHub second** via `google/go-github` + `shurcooL/githubv4` (Projects v2 iteration fields, sub‑issues, review threads).
+- **GitHub second** via `google/go-github` + `shurcooL/githubv4` (Projects v2 iteration fields, sub‑issues via `POST /repos/{o}/{r}/issues/{n}/sub_issues`, review threads).
 - **Rate limits:** honour `RateLimit-*` headers when present and `Retry-After` on 429, with at most 4 concurrent requests per host. Incremental sync uses `updated_after`, because ETags are undocumented for `/api/v4`. Sync status is shown in the header, never as a modal.
 - **Activity:** user events omit MR events, so standup and review data combine user events, MR lists (`updated_after`, author/reviewer), and project events.
 - **Fixtures** are synthetic and doc‑derived. No captured real traffic is ever committed.
@@ -426,11 +390,21 @@ One confirm screen shows every write before it happens. It is idempotent: re‑r
 ### 6.5 Budget (core function 3)
 
 - **Ledger:** derived from `ai` audit events (4.1). Each entry holds the timestamp, feature, profile, driver, model, tokens (in/out/cache), cost, cost source (`reported` | `computed` | `gateway`), cache hit, and item ref.
-- **Cost sources:**
-  - omp print mode (`--mode json`) reports `usage.cost.total` per turn. This was verified locally; it is list‑price equivalent even on a subscription.
-  - Direct APIs: tokens × configured price table.
-  - LiteLLM: response‑cost header plus `/key/info` spend and max budget [to verify in Phase 4].
-- **Controls:** daily, weekly, and per‑sprint caps. Each action gets a pre‑flight estimate, with a confirm above `confirm_over_usd`. Agent runs get a hard cap (`--max-cost`). `ai.mode=off` gives a global kill switch. Sensitivity policy (4.3) is checked before budget, so a confidential item never even produces an estimate unless policy allows it.
+- **Billing sources:** each profile names a `billing.source`. Endpoints, auth, and gaps are pinned in [docs/billing/](billing/README.md).
+
+| Source | Authoritative call | Key needed | Gives | ADE computes |
+|---|---|---|---|---|
+| `litellm` | per request: `x-litellm-response-cost`, `x-litellm-key-spend`; poll `GET /key/info` every 60 s, falling back to `/team/info` / `/user/info` when the key has no `max_budget` | the user's own virtual key | spend, `max_budget`, `budget_duration`, `budget_reset_at`, `soft_budget` | remaining, burn rate, time to reset; stream cost from the final `usage` chunk; pre‑flight prices from `/model_group/info` |
+| `anthropic` | `GET /v1/organizations/analytics/cost` (beta header), reconciled daily | Admin key (optional) | org cost, 4–24 h lag | per‑request cost from usage × prices (primary) |
+| `openai` | `GET /v1/organization/costs`, reconciled daily | Admin key (optional) | daily cost buckets | per‑request cost from usage × prices (primary) |
+| `moonshot` | `GET /v1/users/me/balance` every 5 min | normal key | available, voucher, and cash balance (USD) | spend since the last snapshot |
+| `openrouter` | `GET /api/v1/key` every 60 s | normal key | usage, `limit_remaining` | — |
+| `omp` (subscription) | none documented | — | per‑turn `usage.cost.total` (list‑price equivalent, verified) | usage vs `weekly_soft_usd` |
+
+- **Merge rule:** displayed spend = last authoritative snapshot + local ledger since that snapshot's `as_of`.
+  - Provider stop errors are the hard backstop and become `budget.stop` audit events. Classify them by body, not status: LiteLLM returns `budget_exceeded` / "Budget has been exceeded" with a status that varies by version, and Anthropic returns `enforced_spend_limit_reached`.
+  - The undocumented Claude subscription quota endpoint is not used.
+- **Controls:** daily, weekly, and per‑sprint caps are enforced locally against the merged figure, next to the provider's own cap ("gateway $31.20 of $50 · resets 1 Dec"). Each action gets a pre‑flight estimate, with a confirm above `confirm_over_usd`. Agent runs get a hard cap (`--max-cost`). `ai.mode=off` gives a global kill switch.
 - **Spend avoidance:** results are cached by `hash(prompt version, model, input content)`, and the cache is backed by durable artifacts (4.2). Unchanged issues and threads are never re‑summarised, even after a cache reset. Prompts are trimmed (thread diffs clipped, quoted replies collapsed). Explain calls use a minimal system prompt and no tools: omp's default prompt alone costs ~2.2k input tokens per call (observed), so ADE passes `--system-prompt` and `--no-tools`.
 - **Page:** spend by day, feature, and model; remaining headroom; top costly items; the active profile with per‑role models.
 
@@ -510,13 +484,13 @@ Verification:
 | # | Phase | Delivers | Acceptance |
 |---|---|---|---|
 | 0 | Foundations | flake (done), Go module, cobra skeleton, config load + `ade doctor`, audit writer + `ade audit`, zellij launcher (`ade` attaches/creates session `ade`), **visual‑world round → DESIGN.md** | `ade` opens a zellij session with a placeholder dashboard pane; `ade doctor --json` reports tools, config, and token checks; every command leaves an audit line |
-| 1 | Read‑only home | GitLab forge (issues, links, MRs, pipelines, milestones, iterations read), capability probe + `ade doctor --probe`, fake GitLab (free/premium), committed GraphQL schema + query validation, sync + cache, item records (`item.md` snapshots), iteration sources (`auto`, milestones, labels, cadence, GitLab iterations), sensitivity resolution + badges, stage/court derivation, Home page + preview | Fake‑server tests pass in both tier modes; every GraphQL document validates against the schema; on the Free sandbox, assigned tracker issues show correct child, MR, stage, court, and milestone‑based iteration window; navigation never waits on network; notes below the snapshot survive re‑sync |
+| 1 | Read‑only home | GitLab forge (issues, links, MRs, pipelines, milestones, iterations read), capability probe + `ade doctor --probe`, fake GitLab (free/premium), committed GraphQL schema + query validation, sync + cache, item records (`item.md` snapshots), iteration sources (`auto`, milestones, labels, cadence, GitLab iterations), stage/court derivation, Home page + preview | Fake‑server tests pass in both tier modes; every GraphQL document validates against the schema; on the GitLab sandbox (`scripts/sandbox/gitlab-seed.sh`), assigned tracker issues show correct child, MR, stage, court, and milestone‑based iteration window; navigation never waits on network; notes below the snapshot survive re‑sync |
 | 2 | MR page | threads, diff, CI tabs; reply, resolve, approve, ready, merge, retry | Full review round‑trip on a sandbox MR without the web UI |
 | 3 | Start work + workspaces | child issue/link/branch/MR/worktree flow, layouts, tasks, VS Code host + tasks.json export, ade-nvim | `s` on a tracker issue yields linked child + draft MR + worktree + tab; re‑run is idempotent; same flow works in VS Code terminal without zellij |
-| 4 | AI explain + budget | drivers (omp, anthropic, openai‑compat), sensitivity gate + redaction + egress audit, AI artifacts + result cache, ledger over audit, caps, pre‑flight, budget page, Log page + History tab, profiles, summaries/classify/draft reply | Second summary of an unchanged MR costs $0 (cache hit), also after deleting `cache.db` and running `ade reindex`; a confidential item refuses AI with the rule named and sends zero bytes; a `public`‑only profile is refused on an internal item; redacted terms never appear in captured outbound requests; cap breach blocks with a clear message; `ai.mode=off` hides nothing essential |
+| 4 | AI explain + budget | drivers (omp, anthropic, openai‑compat), billing sources (litellm, omp first; anthropic, openai, moonshot, openrouter), AI artifacts + result cache, ledger over audit, caps, pre‑flight, budget page, Log page + History tab, profiles, summaries/classify/draft reply | Second summary of an unchanged MR costs $0 (cache hit), also after deleting `cache.db` and running `ade reindex`; against a local LiteLLM proxy (`nix develop .#gateway`) with a budgeted virtual key, the budget page matches `/key/info` and an over‑budget call is classified as `budget.stop`; cap breach blocks with a clear message; `ai.mode=off` hides nothing essential |
 | 5 | Agile | standup, sprint review (deterministic + AI narrative), exports, OSC 52 copy | Standup over a Monday correctly uses Friday; review totals match forge data on the sandbox |
-| 6 | Agents | plan/run/address‑comments via omp (claude/codex drivers), session dir + tool restriction per sensitivity, run tracking, cost caps, lazygit integration | Plan → approve → run → review → push completes on a sandbox issue within `agent_run_usd`; the transcript lands only in the item record; agent actions on a confidential item are refused unless the manifest sets `agents = true` |
-| 7 | GitHub + team | GitHub forge parity, `ade init` onboarding, shared manifest docs, release (goreleaser + flake package) | Same Home/MR/Start flows on a GitHub sandbox repo; a teammate goes from zero to dashboard via `ade init` |
+| 6 | Agents | plan/run/address‑comments via omp (claude/codex drivers), session dir in item record, run tracking, cost caps, lazygit integration | Plan → approve → run → review → push completes on a sandbox issue within `agent_run_usd`; the transcript lands only in the item record |
+| 7 | GitHub + team | GitHub forge parity (sub‑issues as the child link), `ade init` onboarding, shared manifest docs, release (goreleaser + flake package) | Same Home/MR/Start flows on the GitHub sandbox (`scripts/sandbox/github-seed.sh`); a teammate goes from zero to dashboard via `ade init` |
 
 ---
 
@@ -525,7 +499,7 @@ Verification:
 - **No paid GitLab instance during development.** Premium paths (iterations, cadences, approval rules, `blocks` links) are built from the docs and the fake server alone, and confirmed later by `ade doctor --probe` (read‑only, shape‑only) on a real instance. Remaining doc gaps are listed in [gitlab-api/README.md](gitlab-api/README.md#open-questions-need-a-real-instance).
 - **Subscription quota is not observable.** omp reports list‑price usage only, so subscription budgets are soft caps on that figure until a quota endpoint exists.
 - **VS Code key capture.** Some chords never reach the terminal. The keymap avoids Ctrl+Shift chords and documents `commandsToSkipShell`.
-- **Data egress.** AI and agent calls can send issue, MR, and code text off the machine. The controls are sensitivity levels, profile clearance, redaction, the pre‑flight preview, and the egress audit (4.3). Unclassified means confidential.
-- **Local data sensitivity.** Records and audit hold real work content in plain files. They stay outside repos, are created `0700`, and are excluded from any sync ADE performs. Backups are the user's call.
+- **Data egress** is governed only by which AI profiles each machine has configured. There is no per‑project policy, by decision; see 4.3.
+- **Local records** hold real work content in plain files. They stay outside repos, are created `0700`, and are never synced between machines. Backups are the user's call.
 - **Writes are irreversible‑ish.** Every forge write goes through a preview/confirm, and `--dry-run` is available on every write command.
 - Open: diff rendering inside the TUI vs always delegating to delta (decide after the Phase 2 spike); whether run tracking needs a socket once agents run in parallel.

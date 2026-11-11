@@ -58,12 +58,18 @@
           }
         );
 
-        # Adds a local LiteLLM proxy for exercising the OpenAI-compatible
-        # gateway driver, mixed-provider routing, and spend reporting.
+        # Adds a local LiteLLM proxy (+ Postgres, which LiteLLM budgets need)
+        # for exercising the gateway driver, key budgets, and spend reporting.
         gateway = pkgs.mkShell (
           goEnv
           // {
-            packages = runtimeTools pkgs ++ devTools pkgs ++ [ pkgs.litellm ];
+            packages =
+              runtimeTools pkgs
+              ++ devTools pkgs
+              ++ [
+                pkgs.litellm
+                pkgs.postgresql
+              ];
           }
         );
       });
