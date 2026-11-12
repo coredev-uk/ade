@@ -548,9 +548,10 @@ func (m *Manager) Push(ctx context.Context, id string, o PushOpts) (Run, error) 
 
 // commitPrefix is the commit prefix of the run's item: the worktree's git
 // config first (written at start work and workspace open), else the project
-// manifest's template expanded for the run's issues. known is false when that
-// cannot be told (no readable manifest, an invalid template, or a {child}
-// template without the child), so a prompt does not claim there is none.
+// manifest's template expanded for the run's issues and branch (a run that
+// recorded no child issue takes {child} from the branch's leading number, else
+// the tracker iid). known is false when that cannot be told (no readable
+// manifest or an invalid template), so a prompt does not claim there is none.
 func (m *Manager) commitPrefix(ctx context.Context, r Run) (prefix string, known bool) {
 	if p := commitprefix.Read(ctx, r.Worktree); p != "" {
 		return p, true
@@ -566,18 +567,14 @@ func (m *Manager) commitPrefix(ctx context.Context, r Run) (prefix string, known
 	if err != nil {
 		return "", false
 	}
-	tmpl := mf.Conventions.CommitPrefix
-	if tmpl == "" {
+	if mf.Conventions.CommitPrefix == "" {
 		return "", true
 	}
 	child := 0
 	if r.Child != nil {
 		child = r.Child.IID
 	}
-	if child == 0 && strings.Contains(tmpl, commitmsg.PlaceholderChild) {
-		return "", false
-	}
-	prefix = commitprefix.ForIssues(mf, r.Tracker.IID, child)
+	prefix = commitprefix.ForBranch(mf, r.Tracker.IID, child, r.Branch)
 	return prefix, prefix != ""
 }
 

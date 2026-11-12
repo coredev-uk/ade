@@ -187,10 +187,11 @@ ade                       # attach to (or create) the zellij session "ade" with 
 1. **Home** shows your issues and MRs by stage. Move with the arrow keys or `j`/`k`; `?` lists every key; `/` searches.
 2. **`s` start work** on an item: pick repos, branch/MR mode, child issue behaviour (`b` on a repo row names its branch when a sibling repo carries a second set of changes). ADE creates the branch, a worktree and a zellij tab.
 3. **The tab** has your main pane (editor, or an `omp` agent, depending on `host.layout`), the item's live overview, lazygit, a shell, and one pane per task of the workspace itself. Task panes wait: press **Enter** in a pane to start it; Ctrl-C stops it. The first time a workspace opens, ADE also creates an unfocused `<tab> · services` tab: it installs the repos' dependencies first (`hooks.install`), then starts the services in dependency order, each waiting for what it requires (a service others require, with a `port`, counts as ready once the port accepts connections). A waiting pane reports every 30 seconds, stops with the reason if what it waits for failed, and gives up after 10 minutes. `hooks.install` commands run with ADE's environment inside the dev shell, with the trust of `post_worktree`. `services = "manual"` on the workspace skips that tab and keeps the services in the strip, waiting for Enter. `ade ws restart <node>` restarts one with its dependents.
-4. **`N`** leaves a dated note on the item (what blocks it, what you did last); the side panel shows the newest ones and a blocked item is marked on its row. `ade note <ref> <text> [--blocked]` does the same from a shell. Notes stay on your machine.
-5. **`v`** opens a multi-root VS Code workspace for the item (all repos of the project).
-6. **Enter** on an MR opens the MR page: threads, diff, CI; reply, resolve, approve, mark ready, merge. `ade review <group/project!N>` opens someone else's MR in a review tab; collected line comments go out as one review batch.
-7. **Clean up** with `ade gc`, which removes worktrees of merged or closed MRs when they are clean and pushed.
+4. **`cd "$(ade cd 412)"`** takes a shell to the item's worktree (`ade cd 412 --repo web` for another repo, `ade cd api` for a repo's baseline). As a shell function that cds only when `ade cd` succeeded (a bare `cd ""` succeeds, so `cd "$(ade cd 412)"` alone stays put on failure): `adecd() { d=$(ade cd "$@") && cd "$d"; }`.
+5. **`N`** leaves a dated note on the item (what blocks it, what you did last); the side panel shows the newest ones and a blocked item is marked on its row. `ade note <ref> <text> [--blocked]` does the same from a shell. Notes stay on your machine.
+6. **`v`** opens a multi-root VS Code workspace for the item (all repos of the project).
+7. **Enter** on an MR opens the MR page: threads, diff, CI; reply, resolve, approve, mark ready, merge. `ade review <group/project!N>` opens someone else's MR in a review tab; collected line comments go out as one review batch.
+8. **Clean up** with `ade gc`, which removes worktrees of merged or closed MRs when they are clean and pushed.
 
 ### Moving work from another tool
 
@@ -308,11 +309,11 @@ ade setup --warm --session
 
 What one run does, in order (each step prints one line; `--json` prints the summary on stdout):
 
-1. **Config.** With no user config it creates one like `ade init --yes` from flags or `ADE_SETUP_*` variables (below), or copies a team template with `--config-from <path|https-url>` (validated first). An existing config is validated and never overwritten.
+1. **Config.** With no user config it creates one like `ade init --yes` from flags or `ADE_SETUP_*` variables (below), or copies a team template with `--config-from <path|https-url>` (validated first). An existing config is validated and never rewritten; a manifest from `--project` / `ADE_SETUP_PROJECT` that it does not list yet is picked up in step 3 (so adding a manifest to the template's variables reaches existing workspaces on their next start).
 2. **Token.** Every configured forge's token is resolved and checked. An empty or rejected token skips the forge steps, says so, and the run exits 3. Setup never waits for input.
-3. **Projects.** `project add` for each configured project (clone, baseline worktrees, `post_worktree` hooks; a repeat only fills gaps), then `update` (fetch and fast-forward), then the first `sync`.
+3. **Projects.** A `--project` manifest the existing config does not list is registered first (a `[[projects]]` block appended, as `ade project add` does), but only once the token check of step 2 passed: with a missing or rejected token nothing is registered, and the step says which sources are "not registered yet" so the rerun after the fix does it. The sources it registered are the `registered` array of the `--json` summary (omitted when none). Then `project add` for each configured project (clone, baseline worktrees, `post_worktree` hooks; a repeat only fills gaps), then `update` (fetch and fast-forward), then the first `sync`.
 4. **Dotfiles.** For each project whose manifest has a `[dotfiles]` table, clones or pulls the repo and runs its install script, or symlinks its dotfiles into `$HOME` (details: [manifest.md](manifest.md#team-dotfiles)). A failure exits 3 and does not stop the steps after it. `ade dotfiles` does the same on demand (`--dry-run` to preview).
-5. **Machine.** Writes the zellij unlock-first preset next to the config, checks git, zellij, lazygit, direnv, nix, omp and the VS Code remote `code` CLI, and prints what is missing with one `nix profile install nixpkgs#...` line. `--warm` pre-builds each repo's baseline dev shell (`nix develop <repo>/<default-branch> -c true`, or `direnv allow` then `direnv exec` for a `.envrc`: asking for `--warm` is asking to trust those repos' `.envrc` files) so the first work tab opens fast.
+5. **Machine.** Writes the zellij unlock-first preset next to the config, checks git, zellij, lazygit, direnv, nix, omp and the VS Code remote `code` CLI, and prints what is missing with one `nix profile install nixpkgs#...` line. `--warm` pre-builds each project's shell (`.ade/shell true`, once per project, when the manifest sets `[project] packages`) and each repo's baseline dev shell (`nix develop <repo>/<default-branch> -c true`, or `direnv allow` then `direnv exec` for a `.envrc`: asking for `--warm` is asking to trust those repos' `.envrc` files) so the first work tab opens fast.
 6. **Session.** `--session` starts the detached zellij session with the dashboard layout when it is not running (a resurrectable one is resurrected), so the VS Code remote terminal or web tty only attaches. `--session-name` picks another name (default `ade`).
 7. **Doctor.** A final `ade doctor` summary, informational: it never changes the exit code.
 
@@ -409,6 +410,8 @@ max_concurrency = 4                                       # in-flight API reques
 ### Dev shells (direnv / nix)
 
 A worktree with an `.envrc` (and direnv on PATH) runs its editor, omp and shell panes and its `ade task run` tasks through `direnv exec <dir>`; else a `flake.nix` with a devShell through `nix develop <dir> -c`. Per repo in the manifest: `repos.<r>.devshell = "auto" | "direnv" | "nix" | "none"` (default auto). Allow the `.envrc` once with `direnv allow`.
+
+Repos without a flake or `.envrc`: the manifest's `[project] packages = ["nodejs_22", "pnpm"]` puts nixpkgs packages on PATH for every pane, task and service of the project through the generated `<root>/<project>/.ade/shell` (needs nix; a repo's own dev shell is entered inside it and wins on conflicts; `~/ade/acme/.ade/shell make test` works by hand). The same table can write a project `AGENTS.md`: [manifest.md](manifest.md#project-wide-setup).
 
 ## 6. Try it offline
 

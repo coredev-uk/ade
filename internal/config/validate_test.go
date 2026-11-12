@@ -68,6 +68,14 @@ func TestManifestValidate(t *testing.T) {
 		{"commit prefix", header + "[conventions]\ncommit_prefix = \"GL-{parent}\"\n", nil},
 		{"commit prefix unknown placeholder", header + "[conventions]\ncommit_prefix = \"GL-{parnt}\"\n", []string{"error: conventions.commit_prefix: unknown placeholder {parnt}"}},
 		{"commit prefix with whitespace", header + "[conventions]\ncommit_prefix = \"GL-{parent} \"\n", []string{"error: conventions.commit_prefix:", "whitespace"}},
+		{"reviewer group", header + "[conventions]\nmr = { reviewer_group = \"acme/reviewers\" }\n", nil},
+		{"reviewer group top level", header + "[conventions]\nmr = { reviewer_group = \"reviewers\" }\n", nil},
+		{"reviewer group subgroup", header + "[conventions]\nmr = { reviewer_group = \"acme/platform/reviewers\" }\n", nil},
+		{"reviewer group at sign", header + "[conventions]\nmr = { reviewer_group = \"@acme/reviewers\" }\n", []string{"error: conventions.mr.reviewer_group:", "without the leading @"}},
+		{"reviewer group whitespace", header + "[conventions]\nmr = { reviewer_group = \"acme/review ers\" }\n", []string{"error: conventions.mr.reviewer_group:", "whitespace"}},
+		{"reviewer group leading slash", header + "[conventions]\nmr = { reviewer_group = \"/acme/reviewers\" }\n", []string{"error: conventions.mr.reviewer_group:", "leading, trailing or doubled /"}},
+		{"reviewer group trailing slash", header + "[conventions]\nmr = { reviewer_group = \"acme/reviewers/\" }\n", []string{"error: conventions.mr.reviewer_group:", "leading, trailing or doubled /"}},
+		{"reviewer group doubled slash", header + "[conventions]\nmr = { reviewer_group = \"acme//reviewers\" }\n", []string{"error: conventions.mr.reviewer_group:", "leading, trailing or doubled /"}},
 		{"missing name", "forge = \"work\"\n", []string{"error: name: required"}},
 		{"unsafe name", "name = \"../x\"\nforge = \"work\"\n", []string{"error: name:", "not path-safe"}},
 		{"missing forge with forge-path repo", "name = \"p\"\n[repos.a]\npath = \"g/a\"\n", []string{"error: forge: required"}},
@@ -283,5 +291,72 @@ func TestHasErrors(t *testing.T) {
 	}
 	if !HasErrors([]Issue{{Severity: SeverityWarn}, {Severity: SeverityError}}) {
 		t.Error("error not detected")
+	}
+}
+
+func TestProjectSetupValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want []string
+	}{
+		{"complete", header + `[project]
+agents = "docs/AGENTS.md"
+packages = ["nodejs_22", "pnpm", "python3Packages.pip"]
+nixpkgs = "github:NixOS/nixpkgs/nixos-25.05"
+`, nil},
+		{"agents escapes the manifest", header + "[project]\nagents = \"../AGENTS.md\"\n", []string{"error: project.agents"}},
+		{"agents absolute", header + "[project]\nagents = \"/etc/passwd\"\n", []string{"error: project.agents"}},
+		{"package with a space", header + "[project]\npackages = [\"node js\"]\n", []string{"error: project.packages[0]"}},
+		{"package starting with a dash", header + "[project]\npackages = [\"-v\"]\n", []string{"error: project.packages[0]"}},
+		{"nixpkgs with whitespace", header + "[project]\npackages = [\"go\"]\nnixpkgs = \"github:NixOS/nixpkgs foo\"\n", []string{"error: project.nixpkgs"}},
+		{"nixpkgs without packages", header + "[project]\nnixpkgs = \"nixpkgs\"\n", []string{"warn: project.nixpkgs"}},
+		{"unknown key", header + "[project]\nshell = \"x\"\n", []string{"warn: project.shell: unknown key"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertIssues(t, mustManifest(t, tt.src).Validate(testCfg), tt.want...)
+		})
+	}
+}
+
+func TestProjectAgentsNeedsAFileBesideTheManifest(t *testing.T) {
+	m, err := ParseManifest([]byte(header+"[project]\nagents = \"AGENTS.md\"\n"), "https://example.com/acme/p.ade.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertIssues(t, m.Validate(testCfg), "warn: project.agents: cannot be read from an https manifest source")
+}
+
+// The generated files live next to the repos, so a repo may not take their names.
+func TestReservedRepoNames(t *testing.T) {
+	for _, name := range []string{".ade", "AGENTS.md"} {
+		m := mustManifest(t, header+"[repos.\""+name+"\"]\nurl = \"https://example.com/a.git\"\n")
+		assertIssues(t, m.Validate(testCfg), "error: repos."+name+": invalid repo name")
+	}
+}
+
+func TestRepoGroupValidation(t *testing.T) {
+	repos := header + "[repos.web]\nurl = \"https://example.com/web.git\"\n[repos.admin]\nurl = \"https://example.com/admin.git\"\n"
+	tests := []struct {
+		name string
+		src  string
+		want []string
+	}{
+		{"complete", repos + "[repo_groups.frontend]\nrepos = [\"web\", \"admin\"]\nworkspace = \"acme-frontend\"\n[repo_groups.apps]\nrepos = [\"web\"]\n", nil},
+		{"unknown repo", repos + "[repo_groups.frontend]\nrepos = [\"web\", \"nope\"]\n", []string{"error: repo_groups.frontend.repos[1]: unknown repo"}},
+		{"empty repos", repos + "[repo_groups.frontend]\nworkspace = \"fe\"\n", []string{"error: repo_groups.frontend.repos: must list"}},
+		{"repo listed twice", repos + "[repo_groups.frontend]\nrepos = [\"web\", \"web\"]\n", []string{"error: repo_groups.frontend.repos[1]: repo \"web\" is listed twice"}},
+		{"workspace not path-safe", repos + "[repo_groups.frontend]\nrepos = [\"web\"]\nworkspace = \"../fe\"\n", []string{"error: repo_groups.frontend.workspace"}},
+		{"workspace with a space", repos + "[repo_groups.frontend]\nrepos = [\"web\"]\nworkspace = \"my fe\"\n", []string{"error: repo_groups.frontend.workspace"}},
+		{"workspace collides with a repo", repos + "[repo_groups.frontend]\nrepos = [\"web\"]\nworkspace = \"admin\"\n", []string{"error: repo_groups.frontend.workspace: \"admin\" collides"}},
+		{"workspace shared by two groups", repos + "[repo_groups.a]\nrepos = [\"web\"]\nworkspace = \"fe\"\n[repo_groups.b]\nrepos = [\"admin\"]\nworkspace = \"fe\"\n", []string{"error: repo_groups.b.workspace: \"fe\" is already the workspace of group \"a\""}},
+		{"group name", repos + "[repo_groups.\"front end\"]\nrepos = [\"web\"]\n", []string{"error: repo_groups.front end: invalid group name"}},
+		{"unknown key", repos + "[repo_groups.frontend]\nrepos = [\"web\"]\nname = \"x\"\n", []string{"warn: repo_groups.frontend.name: unknown key"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertIssues(t, mustManifest(t, tt.src).Validate(testCfg), tt.want...)
+		})
 	}
 }

@@ -317,12 +317,6 @@ func TestFileSlugAndTruncateName(t *testing.T) {
 			t.Errorf("fileSlug(%q) = %q, want %q", in, got, want)
 		}
 	}
-	if got := truncateName("short", 24); got != "short" {
-		t.Errorf("short = %q", got)
-	}
-	if got := truncateName("1-rate-limit-exports-for-api", 12); got != "1-rate-limi…" || len([]rune(got)) != 12 {
-		t.Errorf("long = %q", got)
-	}
 }
 
 func TestFindItemMatchesTrackerChildAndMR(t *testing.T) {

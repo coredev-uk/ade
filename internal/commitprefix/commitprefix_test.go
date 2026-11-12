@@ -86,6 +86,39 @@ func TestWriteWorktreeConfig(t *testing.T) {
 	}
 }
 
+func TestForMRUsesSourceBranchWithoutChild(t *testing.T) {
+	m := &config.Manifest{Name: "acme", Repos: map[string]config.Repo{"api": {Path: "g/api"}}}
+	m.Conventions.CommitPrefix = "GL-{child}"
+	wi := domain.WorkItem{
+		Ref: forge.Ref{Project: "g/tracker", IID: 412, Kind: forge.KindIssue},
+		MRs: []forge.MR{
+			{Ref: forge.Ref{Project: "g/api", IID: 3, Kind: forge.KindMR}, SourceBranch: "57-fix-export"},
+			{Ref: forge.Ref{Project: "g/api", IID: 4, Kind: forge.KindMR}, SourceBranch: "cleanup"},
+		},
+	}
+	if got := ForMR(m, wi, wi.MRs[0].Ref); got != "GL-57" {
+		t.Errorf("MR on a numbered branch = %q, want GL-57", got)
+	}
+	if got := ForMR(m, wi, wi.MRs[1].Ref); got != "GL-412" {
+		t.Errorf("MR on an unnumbered branch = %q, want the parent's GL-412", got)
+	}
+	wi.Children = []forge.Issue{{Ref: forge.Ref{Project: "g/api", IID: 17, Kind: forge.KindIssue}}}
+	if got := ForMR(m, wi, wi.MRs[0].Ref); got != "GL-17" {
+		t.Errorf("MR with a child issue = %q, want GL-17", got)
+	}
+}
+
+func TestForIssuesKeepsParentFallback(t *testing.T) {
+	m := &config.Manifest{Name: "acme"}
+	m.Conventions.CommitPrefix = "{parent}/{child}"
+	if got := ForIssues(m, 412, 0); got != "412/412" {
+		t.Errorf("ForIssues without child = %q", got)
+	}
+	if got := ForBranch(m, 412, 0, "57-x"); got != "412/57" {
+		t.Errorf("ForBranch = %q", got)
+	}
+}
+
 func TestExpandPrefix(t *testing.T) {
 	m := &config.Manifest{Name: "acme", Repos: map[string]config.Repo{"api": {Path: "g/api"}}}
 	m.Conventions.CommitPrefix = "{project}-{parent}/{child}"
@@ -94,11 +127,20 @@ func TestExpandPrefix(t *testing.T) {
 		Children: []forge.Issue{{Ref: forge.Ref{Project: "g/api", IID: 17, Kind: forge.KindIssue}}},
 		MRs:      []forge.MR{{Ref: forge.Ref{Project: "g/api", IID: 3, Kind: forge.KindMR}}},
 	}
-	if got := ExpandPrefix(m, wi, "api"); got != "acme-412/17" {
+	if got := ExpandPrefix(m, wi, "api", ""); got != "acme-412/17" {
 		t.Errorf("got %q", got)
 	}
-	if got := ExpandPrefix(m, wi, "web"); got != "acme-412/412" {
+	if got := ExpandPrefix(m, wi, "api", "99-other"); got != "acme-412/17" {
+		t.Errorf("the child issue lost to the branch: %q", got)
+	}
+	if got := ExpandPrefix(m, wi, "web", ""); got != "acme-412/412" {
 		t.Errorf("repo without child: %q", got)
+	}
+	if got := ExpandPrefix(m, wi, "web", "57-fix-export"); got != "acme-412/57" {
+		t.Errorf("repo without child on a numbered branch: %q", got)
+	}
+	if got := ExpandPrefix(m, wi, "web", "fix-export"); got != "acme-412/412" {
+		t.Errorf("repo without child on an unnumbered branch: %q", got)
 	}
 	if got := ForMR(m, wi, wi.MRs[0].Ref); got != "acme-412/17" {
 		t.Errorf("ForMR = %q", got)
@@ -107,7 +149,7 @@ func TestExpandPrefix(t *testing.T) {
 		t.Error("Owns wrong")
 	}
 	m.Conventions.CommitPrefix = ""
-	if got := ExpandPrefix(m, wi, "api"); got != "" {
+	if got := ExpandPrefix(m, wi, "api", ""); got != "" {
 		t.Errorf("unset template gave %q", got)
 	}
 }

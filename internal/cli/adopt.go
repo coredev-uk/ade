@@ -192,7 +192,7 @@ func runAdopt(cmd *cobra.Command, f adoptFlags, projectName, repo, branch string
 	prefix := ""
 	if wi != nil {
 		ad.out.Parent = wi.Ref.IID
-		prefix = commitprefix.ExpandPrefix(m, *wi, repo)
+		prefix = commitprefix.ExpandPrefix(m, *wi, repo, branch)
 	}
 	ad.out.Prefix, ad.out.Target = prefix, target
 	ad.step("write ade.parent=%d ade.commitPrefix=%q ade.target=%s in %s", ad.out.Parent, prefix, target, ad.out.Worktree)

@@ -221,3 +221,18 @@ func TestLayoutPrecedenceExplicitThenUserThenManifestThenCode(t *testing.T) {
 		t.Fatal("DefaultLayout")
 	}
 }
+
+func TestRenderSkillCarriesProjectGuidanceBeforeTheRepoRules(t *testing.T) {
+	in := skillInput()
+	in.ProjectGuidance = "Every service logs JSON."
+	got := RenderSkill(in)
+	project := strings.Index(got, `<project-guidance file="AGENTS.md">`)
+	repo := strings.Index(got, "<repository-rules")
+	if project < 0 || repo < 0 || project > repo || !strings.Contains(got, "Every service logs JSON.") {
+		t.Errorf("project guidance must precede the repository rules:\n%s", got)
+	}
+	in.ProjectGuidance = ""
+	if strings.Contains(RenderSkill(in), "project-guidance") {
+		t.Error("no project AGENTS.md, no section")
+	}
+}

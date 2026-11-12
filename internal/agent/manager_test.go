@@ -641,6 +641,32 @@ func TestStoreRebuildsFromRunDirs(t *testing.T) {
 	}
 }
 
+func TestCommitPrefixFromManifestUsesRunBranch(t *testing.T) {
+	e := newEnv(t)
+	root := t.TempDir()
+	e.m.Cfg.Paths.Root = root
+	dir := filepath.Join(root, "demo")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	man := "name = \"demo\"\nforge = \"gl\"\n[tracker]\nproject = \"g/tracker\"\n" +
+		"[repos.api]\npath = \"g/api\"\n[conventions]\ncommit_prefix = \"GL-{child}\"\n"
+	if err := os.WriteFile(filepath.Join(dir, ".project.toml"), []byte("source = \"test\"\nmanifest = '''\n"+man+"'''\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := e.newRun(KindPlan, e.ctx())
+	r.Worktree = e.wt // no ade.commitPrefix written: the manifest is expanded
+	for _, tc := range []struct{ branch, want string }{
+		{"57-fix-export", "GL-57"},
+		{"fix-export", "GL-42"}, // no number: the tracker iid
+	} {
+		r.Branch = tc.branch
+		if got, _ := e.m.commitPrefix(context.Background(), r); got != tc.want {
+			t.Errorf("branch %q: prefix = %q, want %q", tc.branch, got, tc.want)
+		}
+	}
+}
+
 func TestCommitPrefixFromWorktreeConfig(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
@@ -733,7 +759,7 @@ func TestCommitPrefixFromTheManifest(t *testing.T) {
 		{"manifest sets none", "", nil, "", true},
 		{"parent template", "GL-{parent}", nil, "GL-42", true},
 		{"child template with the child", "GL-{child}", &child, "GL-7", true},
-		{"child template without the child", "GL-{child}", nil, "", false},
+		{"child template without the child: the tracker iid", "GL-{child}", nil, "GL-42", true},
 		{"invalid template", "GL-{nope}", nil, "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

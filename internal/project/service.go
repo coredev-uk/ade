@@ -245,14 +245,21 @@ func (s *Service) syncRuns(ctx context.Context, runs []*run, m mode) (Report, er
 	if err := ctx.Err(); err != nil {
 		return Report{Results: results}, err
 	}
+	rep := Report{Results: results}
+	for _, r := range runs {
+		setup := s.syncSetup(ctx, r)
+		if len(setup.Written)+len(setup.Removed)+len(setup.Warnings) > 0 {
+			rep.Setup = append(rep.Setup, setup)
+		}
+	}
 	for _, r := range runs {
 		if !r.stale {
 			if err := writeSnapshotFor(r, time.Now().UTC()); err != nil {
-				return Report{Results: results}, fmt.Errorf("write %s: %w", snapshotFile, err)
+				return rep, fmt.Errorf("write %s: %w", snapshotFile, err)
 			}
 		}
 	}
-	return Report{Results: results}, nil
+	return rep, nil
 }
 
 // writeSnapshotFor stores the run's manifest; a zero lastUpdate keeps the

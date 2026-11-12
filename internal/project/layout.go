@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -97,6 +99,15 @@ func snapshots(root string) (map[string]*snapshot, error) {
 		out[e.Name()] = sn
 	}
 	return out, nil
+}
+
+// Cloned returns the names of the projects cloned under root, sorted.
+func Cloned(root string) ([]string, error) {
+	all, err := snapshots(root)
+	if err != nil {
+		return nil, err
+	}
+	return slices.Sorted(maps.Keys(all)), nil
 }
 
 // findSnapshot locates the project that was cloned from source.

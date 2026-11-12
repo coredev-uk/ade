@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/coredev-uk/ade/internal/app"
+	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/forgesync"
 	"github.com/coredev-uk/ade/internal/project"
@@ -87,8 +88,17 @@ func newItemCmd() *cobra.Command {
 }
 
 // itemRef parses an issue or MR ref; a bare number is an issue of the only
-// registered project's tracker.
+// registered project's tracker, read from its manifest as of the last update
+// (fetched only when nothing is cached).
 func itemRef(cmd *cobra.Command, arg string) (forge.Ref, error) {
+	return itemRefFrom(cmd, arg, func(a *app.App, ref config.ProjectRef) (*config.Manifest, error) {
+		return project.CachedManifest(cmd.Context(), a, ref)
+	})
+}
+
+// itemRefFrom is itemRef with the manifest of a bare number's project supplied
+// by load.
+func itemRefFrom(cmd *cobra.Command, arg string, load func(*app.App, config.ProjectRef) (*config.Manifest, error)) (forge.Ref, error) {
 	arg = strings.TrimSpace(arg)
 	n, err := strconv.Atoi(strings.TrimPrefix(arg, "#"))
 	if err != nil {
@@ -98,7 +108,7 @@ func itemRef(cmd *cobra.Command, arg string) (forge.Ref, error) {
 	if len(a.Config.Projects) != 1 {
 		return forge.Ref{}, fmt.Errorf("%q is ambiguous with %d projects registered: use group/project#N", arg, len(a.Config.Projects))
 	}
-	m, err := project.FetchManifest(cmd.Context(), a, a.Config.Projects[0])
+	m, err := load(a, a.Config.Projects[0])
 	if err != nil {
 		return forge.Ref{}, err
 	}

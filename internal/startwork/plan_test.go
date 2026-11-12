@@ -355,3 +355,40 @@ func TestValidBranchName(t *testing.T) {
 		}
 	}
 }
+
+func TestMRStepNamesTheReviewerGroup(t *testing.T) {
+	m := manifest(t, manifestTOML)
+	m.Conventions.MR.ReviewerGroup = "acme/reviewers"
+	item := domain.WorkItem{Ref: issueRef(tracker, 3), Issue: forge.Issue{Ref: issueRef(tracker, 3), Title: "T"}}
+	alice, bob, me := forge.User{ID: 1, Username: "alice"}, forge.User{ID: 2, Username: "bob"}, forge.User{ID: 9, Username: "jdoe"}
+	for _, tc := range []struct {
+		name  string
+		found startwork.Found
+		want  string
+	}{
+		{"unresolved", startwork.Found{}, ""},
+		{"team", startwork.Found{ReviewerTeam: true}, ", request review from team acme/reviewers"},
+		{"members without me", startwork.Found{ReviewerMembers: []forge.User{me, alice, bob}}, ", request review from acme/reviewers: alice, bob (3 members, you excluded)"},
+		{"members, I am not one", startwork.Found{ReviewerMembers: []forge.User{alice, bob}}, ", request review from acme/reviewers: alice, bob (2 members)"},
+		{"only me", startwork.Found{ReviewerMembers: []forge.User{me}}, ", no review request: you are the only member of acme/reviewers"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := startwork.BuildPlan(startwork.PlanInput{
+				Item: item, Manifest: m, Root: "/r", Me: me, Found: map[string]startwork.Found{"api": tc.found},
+				Choices: startwork.Choices{Repos: []string{"api"}, Mode: startwork.ModeDraft},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var text string
+			for _, s := range p.Steps {
+				if s.Kind == startwork.StepMR {
+					text = s.Text
+				}
+			}
+			if got := strings.TrimPrefix(text, "open draft MR "+p.Targets[0].Branch+" → "+p.Targets[0].MR.Target); got != tc.want {
+				t.Errorf("MR step tail = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

@@ -15,6 +15,7 @@ import (
 	"github.com/coredev-uk/ade/internal/forge/gitlab/fake"
 	"github.com/coredev-uk/ade/internal/git"
 	"github.com/coredev-uk/ade/internal/startwork"
+	"github.com/coredev-uk/ade/internal/startwork/swtest"
 )
 
 var tiers = []fake.Tier{fake.Free, fake.Premium}
@@ -570,6 +571,54 @@ func TestCrossRepoItemGetsAChildInEach(t *testing.T) {
 	links, _ := h.forge.Links(context.Background(), issueRef(tracker, 8))
 	if len(links) != 2 {
 		t.Errorf("links = %+v, want one per child", links)
+	}
+}
+
+func TestNoChildPrefixUsesBranchNumber(t *testing.T) {
+	h := newHarness(t, fake.Free)
+	h.m.Conventions.CommitPrefix = "GL-{parent}/{child}"
+	h.m.Conventions.Branch = "57-{slug}" // a leading number that is not the tracker iid
+	ch := draftApi()
+	ch.Child = startwork.ChildNever
+	_, res, err := h.start(4, ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := target(t, res, "api")
+	if api.Child != nil || !strings.HasPrefix(api.Branch, "57-") {
+		t.Fatalf("target = %+v", api)
+	}
+	if got := commitprefix.Read(context.Background(), api.Worktree); got != "GL-4/57" {
+		t.Errorf("worktree ade.commitPrefix = %q, want GL-4/57", got)
+	}
+}
+
+// draftRecorder keeps the MR drafts start work hands to the forge.
+type draftRecorder struct {
+	*swtest.Mirror
+	drafts []forge.MRDraft
+}
+
+func (r *draftRecorder) CreateMR(ctx context.Context, d forge.MRDraft) (forge.MR, error) {
+	r.drafts = append(r.drafts, d)
+	return r.Mirror.CreateMR(ctx, d)
+}
+
+// The prefix handed to the forge for MR creation follows the
+// same {child} rule as the worktree's: no child issue, so the branch's number.
+func TestNoChildMRDraftCarriesTheBranchNumberPrefix(t *testing.T) {
+	h := newHarness(t, fake.Free)
+	rec := &draftRecorder{Mirror: h.forge}
+	h.env.Forge = rec
+	h.m.Conventions.CommitPrefix = "GL-{parent}/{child}"
+	h.m.Conventions.Branch = "57-{slug}"
+	ch := draftApi()
+	ch.Child = startwork.ChildNever
+	if _, _, err := h.start(4, ch); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.drafts) != 1 || rec.drafts[0].CommitPrefix != "GL-4/57" {
+		t.Errorf("MR drafts = %+v, want one with CommitPrefix GL-4/57", rec.drafts)
 	}
 }
 

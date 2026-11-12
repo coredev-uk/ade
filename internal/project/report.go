@@ -33,6 +33,9 @@ type RepoResult struct {
 // Report is the outcome of an Add or Update run.
 type Report struct {
 	Results []RepoResult `json:"repos"`
+	// Setup lists the generated project-wide files (AGENTS.md, .ade/shell) this
+	// run wrote or removed, and what stopped it writing others.
+	Setup []SetupResult `json:"setup,omitempty"`
 	// Invalid lists manifest errors; the last good snapshot stayed in use.
 	Invalid []string `json:"invalid_manifests,omitempty"`
 }
@@ -48,10 +51,16 @@ func (r Report) Failed() bool {
 }
 
 // Changed reports whether the run did anything worth recording: a clone, a
-// fast-forward, a skip, a failure, or a rejected manifest.
+// fast-forward, a skip, a failure, a generated file written or removed, or a
+// rejected manifest. Setup warnings do not count: they repeat on every run.
 func (r Report) Changed() bool {
 	if len(r.Invalid) > 0 {
 		return true
+	}
+	for _, su := range r.Setup {
+		if len(su.Written)+len(su.Removed) > 0 {
+			return true
+		}
 	}
 	for _, res := range r.Results {
 		if res.Cloned || len(res.Pulled) > 0 || len(res.Skipped) > 0 || len(res.Failures) > 0 {
@@ -61,13 +70,13 @@ func (r Report) Changed() bool {
 	return false
 }
 
-// Severity is Error when anything failed, Warn when anything was skipped or a
-// manifest was rejected, else Success.
+// Severity is Error when anything failed, Warn when anything was skipped, a
+// project-wide setup step warned or a manifest was rejected, else Success.
 func (r Report) Severity() events.Severity {
 	switch {
 	case r.Failed():
 		return events.Error
-	case len(r.Invalid) > 0 || r.count(func(res RepoResult) int { return len(res.Skipped) }) > 0:
+	case len(r.Invalid) > 0 || r.count(func(res RepoResult) int { return len(res.Skipped) }) > 0 || r.setupCount(func(su SetupResult) int { return len(su.Warnings) }) > 0:
 		return events.Warn
 	}
 	return events.Success
@@ -77,6 +86,14 @@ func (r Report) count(f func(RepoResult) int) int {
 	n := 0
 	for _, res := range r.Results {
 		n += f(res)
+	}
+	return n
+}
+
+func (r Report) setupCount(f func(SetupResult) int) int {
+	n := 0
+	for _, su := range r.Setup {
+		n += f(su)
 	}
 	return n
 }
@@ -107,6 +124,12 @@ func (r Report) Title() string {
 	}
 	if len(failed) > 0 {
 		parts = append(parts, fmt.Sprintf("%d failed (%s)", len(failed), listed(failed)))
+	}
+	if n := r.setupCount(func(su SetupResult) int { return len(su.Written) + len(su.Removed) }); n > 0 {
+		parts = append(parts, "updated "+plural(n, "project file"))
+	}
+	if n := r.setupCount(func(su SetupResult) int { return len(su.Warnings) }); n > 0 {
+		parts = append(parts, plural(n, "setup warning"))
 	}
 	if len(r.Invalid) > 0 {
 		parts = append(parts, plural(len(r.Invalid), "manifest")+" invalid")

@@ -471,6 +471,17 @@ func (s *Server) createMR(w http.ResponseWriter, r *http.Request) {
 	if l := str(p, "labels"); l != "" {
 		m.Labels = splitLabels(l)
 	}
+	if ids, _ := p["reviewer_ids"].([]any); len(ids) > 0 {
+		for _, raw := range ids {
+			f, _ := raw.(float64)
+			u := s.userByID(int64(f))
+			if u == nil {
+				badRequest(w, "reviewer_ids is invalid")
+				return
+			}
+			m.Reviewers = append(m.Reviewers, u)
+		}
+	}
 	m.Desc = s.runQuickActions(m, str(p, "description"))
 	s.linkReferences(m)
 	s.st.mrs = append(s.st.mrs, m)
@@ -506,7 +517,11 @@ func (s *Server) runQuickActions(m *mr, desc string) string {
 		case "assign":
 			m.Assignees = append(m.Assignees, s.usersNamed(args)...)
 		case "assign_reviewer", "reviewer":
-			m.Reviewers = append(m.Reviewers, s.usersNamed(args)...)
+			for _, u := range s.usersNamed(args) {
+				if !slices.Contains(m.Reviewers, u) {
+					m.Reviewers = append(m.Reviewers, u)
+				}
+			}
 		}
 	}
 	return strings.TrimSpace(strings.Join(kept, "\n"))

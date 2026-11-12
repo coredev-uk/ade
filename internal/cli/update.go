@@ -98,6 +98,17 @@ func printRepoResults(w io.Writer, rep project.Report) {
 			fmt.Fprintf(w, "%s  FAILED %s: %s\n", name, f.Op, f.Reason)
 		}
 	}
+	for _, su := range rep.Setup {
+		for _, f := range su.Written {
+			fmt.Fprintf(w, "%s  wrote %s\n", su.Project, f)
+		}
+		for _, f := range su.Removed {
+			fmt.Fprintf(w, "%s  removed %s\n", su.Project, f)
+		}
+		for _, msg := range su.Warnings {
+			fmt.Fprintf(w, "%s  warning: %s\n", su.Project, msg)
+		}
+	}
 	for _, msg := range rep.Invalid {
 		fmt.Fprintf(w, "manifest rejected (last good copy in use): %s\n", msg)
 	}

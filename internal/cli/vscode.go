@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -9,7 +10,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/coredev-uk/ade/internal/audit"
 	"github.com/coredev-uk/ade/internal/forgesync"
+	"github.com/coredev-uk/ade/internal/project"
 	"github.com/coredev-uk/ade/internal/workspace"
 )
 
@@ -102,12 +105,14 @@ func relTo(dir, path string) string {
 
 func newVSCodeWorkspaceCmd() *cobra.Command {
 	var (
-		open bool
-		ws   string
+		open    bool
+		ws      string
+		group   string
+		project string
 	)
 	cmd := &cobra.Command{
-		Use:   "workspace <item-ref|worktree>",
-		Short: "Write a multi-root VS Code workspace for a work item (--open starts VS Code)",
+		Use:   "workspace [item-ref|worktree]",
+		Short: "Write a multi-root VS Code workspace for a work item or a repo group (--open starts VS Code)",
 		Long: `Writes <name>.code-workspace into the item's records directory (outside every git
 tree) and prints its path. The workspace has one folder per repo of the project:
 the work item's own worktree where it has one, the repo's baseline (the
@@ -121,12 +126,29 @@ too: its item is found from its branch; a baseline tree has no item, so every
 folder is a baseline. Existing files are regenerated; other top-level keys
 (extensions, launch), your settings and your own tasks are kept.
 
+--group <name> names a [repo_groups] entry of the manifest. Alone (with
+--project when several projects are cloned) it regenerates that group's
+<workspace>.code-workspace in the project directory, the file "ade update"
+keeps, and prints its path: one folder per repo of the group, each at its
+baseline. Together with an item ref or worktree, the item's file holds only the
+group's repos (item worktrees where it has them) and is named
+<item>-<group>.code-workspace.
+
 --open runs "code <file>" when code is on PATH; otherwise the path is printed
 with a hint.`,
-		Example: "  ade vscode workspace acme/tracker#15 --open\n  ade vscode workspace ~/ade/demo/api/15-rate-limit --json",
-		Args:    cobra.ExactArgs(1),
+		Example: "  ade vscode workspace acme/tracker#15 --open\n  ade vscode workspace ~/ade/demo/api/15-rate-limit --json\n  ade vscode workspace --group frontend --open\n  ade vscode workspace acme/tracker#15 --group frontend",
+		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a := appFrom(cmd)
+			if len(args) == 0 {
+				if group == "" {
+					return errors.New("name a work item or worktree, or a repo group with --group")
+				}
+				return runGroupWorkspace(cmd, project, group, open)
+			}
+			if project != "" {
+				return errors.New("--project only applies to --group without an item ref or worktree")
+			}
 			st, err := a.Cache()
 			if err != nil {
 				return err
@@ -139,7 +161,7 @@ with a hint.`,
 			if err != nil {
 				return err
 			}
-			req.Workspace, req.Open = ws, open
+			req.Workspace, req.Group, req.Open = ws, group, open
 			res, err := workspace.CodeWorkspaceFor(cmd.Context(), a, req)
 			if err != nil {
 				return err
@@ -160,7 +182,70 @@ with a hint.`,
 	}
 	cmd.Flags().BoolVar(&open, "open", false, "open the workspace in VS Code (needs code on PATH)")
 	cmd.Flags().StringVar(&ws, "workspace", "", "[workspaces.<name>] whose run group becomes the tasks (default \"default\")")
+	cmd.Flags().StringVar(&group, "group", "", "[repo_groups] entry: write its workspace file, or limit an item's file to its repos")
+	cmd.Flags().StringVar(&project, "project", "", "ADE project of --group (default: the only one)")
 	return cmd
+}
+
+// runGroupWorkspace regenerates the workspace file of a repo group in its
+// project directory and prints (or opens) it.
+func runGroupWorkspace(cmd *cobra.Command, projectName, group string, open bool) error {
+	a := appFrom(cmd)
+	if projectName == "" {
+		names, err := project.Cloned(a.Root)
+		if err != nil {
+			return err
+		}
+		switch len(names) {
+		case 0:
+			return errors.New("no projects cloned yet (run `ade project add`)")
+		case 1:
+			projectName = names[0]
+		default:
+			return fmt.Errorf("several projects are cloned (%s): pick one with --project", strings.Join(names, ", "))
+		}
+	}
+	dir := filepath.Join(a.Root, projectName)
+	mf, err := project.LoadManifest(dir)
+	if err != nil {
+		return fmt.Errorf("project %s: %w (run `ade project add`)", projectName, err)
+	}
+	path, folders, _, err := project.WriteGroupWorkspace(cmd.Context(), dir, mf, group)
+	res := workspace.CodeOutcome{CodeResult: workspace.CodeResult{Path: path}}
+	for _, f := range folders {
+		res.Folders = append(res.Folders, workspace.CodeFolder{Name: f.Name, Path: f.Path, Source: workspace.FolderBaseline})
+	}
+	if err == nil && open {
+		res.Opened, res.Hint, err = workspace.OpenCodeWorkspace(cmd.Context(), path)
+	}
+	// Audited like the item workspace (workspace.vscode), with the group as target.
+	entry := audit.Entry{
+		Action: "workspace.vscode", Target: "repo_groups." + group, Project: projectName, Outcome: "ok",
+		Params: map[string]any{"file": path, "folders": len(res.Folders), "opened": res.Opened},
+	}
+	if err != nil {
+		entry.Outcome, entry.Error = "error", err.Error()
+	}
+	if a.Audit != nil {
+		if aerr := a.Audit.Append(entry); aerr != nil && err == nil {
+			err = aerr
+		}
+	}
+	if err != nil {
+		return err
+	}
+	w := cmd.OutOrStdout()
+	if jsonOut {
+		return printCodeJSON(w, res)
+	}
+	fmt.Fprintln(w, res.Path)
+	for _, f := range res.Folders {
+		fmt.Fprintf(w, "  %-9s %s\n", f.Source, f.Name)
+	}
+	if res.Hint != "" {
+		fmt.Fprintln(w, res.Hint)
+	}
+	return nil
 }
 
 // codeRequest resolves the argument: a ref (#, !, or a bare issue number) names

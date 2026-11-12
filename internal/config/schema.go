@@ -242,6 +242,10 @@ var schemaDocs = map[string]string{
 	"manifest:dotfiles.branch":            "Branch to check out (default: the repository's default branch).",
 	"manifest:dotfiles.install":           "Script inside the repo to run, overriding the search for install.sh, install, bootstrap.sh, bootstrap, setup.sh, setup, script/install.sh, script/install, script/bootstrap.sh, script/bootstrap, script/setup.sh and script/setup.",
 	"manifest:dotfiles.symlink":           "Link the repo's dotfiles into $HOME when no install script is found (default true).",
+	"manifest:project":                    "Project-wide setup ADE generates under <root>/<project>/ on every add and update: agent guidance, a nix shell wrapper.",
+	"manifest:project.agents":             "File relative to the manifest, written as <root>/<project>/AGENTS.md (the project's agent guidance). Needs a local or git+ manifest source.",
+	"manifest:project.packages":           "nixpkgs attributes put on PATH for every pane, task and service of the project through <root>/<project>/.ade/shell (needs nix on PATH).",
+	"manifest:project.nixpkgs":            "Flake reference the packages come from (default: the registry's \"nixpkgs\").",
 	"manifest:repos":                      "Repositories of the project.",
 	"manifest:repos.*.path":               "Forge path, e.g. group/api.",
 	"manifest:repos.*.url":                "Explicit clone URL; overrides forge + path.",
@@ -252,16 +256,22 @@ var schemaDocs = map[string]string{
 	"manifest:repos.*.tasks":              "Run-graph nodes of this repo.",
 	"manifest:repos.*.tasks.*.requires":   "Node references: \"<repo>.<task>\" or \"services.<name>\".",
 	"manifest:repos.*.tasks.*.env":        "Environment of the task; values may use {port}, {dir}, {state} and <node>.port templates.",
+	"manifest:repo_groups":                "Display-only repo groups: `ade project status` lists repos under them and each group with a workspace gets a .code-workspace file. They never change routing, checkouts or the run graph.",
+	"manifest:repo_groups.*.repos":        "Repo names in the group; a repo may be in several groups.",
+	"manifest:repo_groups.*.workspace":    "File stem of <root>/<project>/<workspace>.code-workspace, a VS Code multi-root workspace of the group's repos (baseline worktrees).",
 	"manifest:services":                   "Shared infrastructure nodes that are not repos.",
 	"manifest:conventions.branch":         "Branch name template, e.g. {child_iid}-{slug}.",
 	"manifest:conventions.child_issue":    "auto creates a child issue when the tracker project differs from the code repo.",
-	"manifest:conventions.commit_prefix":  "Prefix for the first commit of an MR (and a squash merge message) that ADE makes, e.g. \"GL-{parent}\". Placeholders: {parent} (tracker issue iid), {child} (child issue iid, the parent's if none), {project}.",
+	"manifest:conventions.commit_prefix":  "Prefix for the first commit of an MR (and a squash merge message) that ADE makes, e.g. \"GL-{parent}\". Placeholders: {parent} (tracker issue iid), {child} (child issue iid, else the branch's leading number, else the parent's), {project}.",
 	"manifest:conventions.mr.create":      "Whether start work creates the MR: ask, always or never.",
 	"manifest:conventions.mr.draft":       "Open the MR as a draft. Unset means true.",
 	"manifest:groups":                     "Named lists of nodes that workspaces run.",
 	"manifest:workspaces":                 "Named workspaces: a layout and the run group to bring up.",
 	"manifest:workspaces.*.layout":        "Zellij tab layout.",
 	"manifest:workspaces.*.services":      "background (default) starts the run group's services in a tab of their own, after the install hooks, when the workspace first opens; manual keeps them in the workspace tab's strip, each waiting for Enter.",
+
+	// Its own alignment block: the longer key would realign the whole table.
+	"manifest:conventions.mr.reviewer_group": "Group whose members start work asks to review the MR: a GitLab group path (acme/reviewers) or, on GitHub, org/team-slug of the repository's owner. Empty requests nobody.",
 }
 
 // schemaHasKey reports whether the schema of the kind in key ("config:a.b.*")

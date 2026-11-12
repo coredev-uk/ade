@@ -9,6 +9,10 @@ import (
 // that name, an open MR for the same source branch).
 var ErrExists = errors.New("already exists")
 
+// ErrReviewersNotRequested marks a CreateMR whose merge request exists but
+// whose reviewers could not be requested. CreateMR returns the MR next to it.
+var ErrReviewersNotRequested = errors.New("reviewers not requested")
+
 // IssueDraft is a new issue. Milestone and Weight are optional: the zero
 // value leaves them unset, and a forge that does not license weight ignores
 // it, so callers gate it on Caps.Weight.
@@ -36,6 +40,13 @@ type MRDraft struct {
 	// CommitPrefix is the prefix for any commit the forge must create to open
 	// the MR (GitHub's empty start commit); empty means none.
 	CommitPrefix string
+	// ReviewerIDs are the users asked to review, for forges that take
+	// reviewers at create time (GitLab). Forges that do not ignore it.
+	ReviewerIDs []int64
+	// ReviewerTeam is a team asked to review as "org/team-slug", for forges
+	// that request teams after the create (GitHub). Forges that do not ignore
+	// it. The org must be the project's owner.
+	ReviewerTeam string
 }
 
 // Branch is a created branch.
@@ -75,6 +86,17 @@ type IssueWriter interface {
 	// ListFiles lists the file paths directly inside dir at ref; a missing
 	// directory is empty, not an error.
 	ListFiles(ctx context.Context, project, ref, dir string) ([]string, error)
+}
+
+// ReviewerGroupReader lists who is behind a reviewer group, on forges whose
+// MRs take reviewers as users (GitLab). Forges that request a team by name
+// (GitHub) do not implement it.
+type ReviewerGroupReader interface {
+	// ReviewerGroupMembers returns the group's active human members, those
+	// inherited from parent groups included, in a stable order. The group is a
+	// path ("acme/reviewers"). ErrNotFound when it does not exist or is not
+	// visible.
+	ReviewerGroupMembers(ctx context.Context, group string) ([]User, error)
 }
 
 // WeightWriter sets an issue's weight field, on forges that license one

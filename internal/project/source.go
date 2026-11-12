@@ -123,23 +123,38 @@ func (s *Service) fetchRaw(ctx context.Context, source string) ([]byte, error) {
 	return os.ReadFile(source)
 }
 
+// splitGitSpec separates a "<url>#<path>" git source into the repository URL
+// and the manifest's path inside it.
+func splitGitSpec(spec string) (repoURL, file string, err error) {
+	i := strings.LastIndex(spec, "#")
+	if i < 0 || i == len(spec)-1 {
+		return "", "", fmt.Errorf("git source %q needs #<path-in-repo>", spec)
+	}
+	repoURL, file = spec[:i], spec[i+1:]
+	if !filepath.IsLocal(filepath.FromSlash(file)) {
+		return "", "", fmt.Errorf("manifest path %q escapes the repository", file)
+	}
+	return repoURL, file, nil
+}
+
+// manifestCacheDir is the shallow clone of a git manifest source's repository.
+func (s *Service) manifestCacheDir(repoURL string) string {
+	sum := sha256.Sum256([]byte(repoURL))
+	return filepath.Join(s.App.Paths.CacheDir, "manifests", hex.EncodeToString(sum[:6]))
+}
+
 // fetchGit reads <path> from a shallow clone of the repo in spec ("<url>#<path>"),
 // cached under <cache>/manifests/ so later updates only fetch.
 func (s *Service) fetchGit(ctx context.Context, spec string) ([]byte, error) {
-	i := strings.LastIndex(spec, "#")
-	if i < 0 || i == len(spec)-1 {
-		return nil, fmt.Errorf("git source %q needs #<path-in-repo>", spec)
-	}
-	repoURL, file := spec[:i], spec[i+1:]
-	if !filepath.IsLocal(filepath.FromSlash(file)) {
-		return nil, fmt.Errorf("manifest path %q escapes the repository", file)
+	repoURL, file, err := splitGitSpec(spec)
+	if err != nil {
+		return nil, err
 	}
 	c, err := s.client(ctx, "", repoURL)
 	if err != nil {
 		return nil, err
 	}
-	sum := sha256.Sum256([]byte(repoURL))
-	dir := filepath.Join(s.App.Paths.CacheDir, "manifests", hex.EncodeToString(sum[:6]))
+	dir := s.manifestCacheDir(repoURL)
 	if exists(filepath.Join(dir, ".git")) {
 		if s.cached {
 			return os.ReadFile(filepath.Join(dir, filepath.FromSlash(file)))
@@ -245,4 +260,23 @@ func CachedManifest(ctx context.Context, a *app.App, ref config.ProjectRef) (*co
 	}
 	m, _, err := s.fetchParsed(ctx, canon)
 	return m, err
+}
+
+// SnapshotManifest reads the last good manifest snapshot of a registered
+// project from disk. It never touches the network, not even for a source that
+// was never fetched: such a project has no snapshot and is an error.
+func SnapshotManifest(a *app.App, ref config.ProjectRef) (*config.Manifest, error) {
+	s := New(a, "")
+	canon, err := s.canonical(ref.Source)
+	if err != nil {
+		return nil, err
+	}
+	_, sn, err := findSnapshot(a.Root, canon)
+	if err != nil {
+		return nil, err
+	}
+	if sn == nil {
+		return nil, fmt.Errorf("project %s is not cloned: run `ade update`", ref.Source)
+	}
+	return sn.parse()
 }

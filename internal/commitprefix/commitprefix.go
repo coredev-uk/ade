@@ -30,10 +30,17 @@ const (
 // It returns "" when no prefix is configured, the template does not validate
 // or parent is unknown.
 func ForIssues(m *config.Manifest, parent, child int) string {
+	return ForBranch(m, parent, child, "")
+}
+
+// ForBranch is ForIssues for work on branch: without a child issue, {child}
+// is the branch's leading number (commitmsg.BranchNumber) before it falls back
+// to parent.
+func ForBranch(m *config.Manifest, parent, child int, branch string) string {
 	if m == nil || m.Conventions.CommitPrefix == "" || parent <= 0 {
 		return ""
 	}
-	p, err := commitmsg.Expand(m.Conventions.CommitPrefix, commitmsg.Vars{Parent: parent, Child: child, Project: m.Name})
+	p, err := commitmsg.Expand(m.Conventions.CommitPrefix, commitmsg.Vars{Parent: parent, Child: child, Branch: branch, Project: m.Name})
 	if err != nil {
 		return ""
 	}
@@ -51,19 +58,28 @@ func ChildIn(wi domain.WorkItem, repoPath string) int {
 	return 0
 }
 
-// ExpandPrefix is the prefix for work on wi in the manifest's repo named repo
-// ("" when none is configured).
-func ExpandPrefix(m *config.Manifest, wi domain.WorkItem, repo string) string {
+// ExpandPrefix is the prefix for work on wi in the manifest's repo named repo,
+// on branch ("" when none is configured). {child} is the item's child issue in
+// that repo, else the branch's leading number, else the tracker issue's iid.
+func ExpandPrefix(m *config.Manifest, wi domain.WorkItem, repo, branch string) string {
 	if m == nil {
 		return ""
 	}
-	return ForIssues(m, wi.Ref.IID, ChildIn(wi, m.Repos[repo].Path))
+	return ForBranch(m, wi.Ref.IID, ChildIn(wi, m.Repos[repo].Path), branch)
 }
 
-// ForMR is the prefix for the MR ref when it belongs to wi: the child is the
-// item's child issue in the MR's project. "" when none applies.
+// ForMR is the prefix for the MR ref when it belongs to wi: {child} is the
+// item's child issue in the MR's project, else the leading number of the MR's
+// source branch. "" when none applies.
 func ForMR(m *config.Manifest, wi domain.WorkItem, ref forge.Ref) string {
-	return ForIssues(m, wi.Ref.IID, ChildIn(wi, ref.Project))
+	var branch string
+	for _, mr := range wi.MRs {
+		if strings.EqualFold(mr.Ref.Project, ref.Project) && mr.Ref.IID == ref.IID {
+			branch = mr.SourceBranch
+			break
+		}
+	}
+	return ForBranch(m, wi.Ref.IID, ChildIn(wi, ref.Project), branch)
 }
 
 // Owns reports whether ref is one of wi's merge requests.

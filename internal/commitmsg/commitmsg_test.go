@@ -23,6 +23,52 @@ func TestExpand(t *testing.T) {
 	}
 }
 
+func TestExpandChildFallsBackToBranchNumber(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		v    Vars
+		want string
+	}{
+		{"child issue wins over the branch", Vars{Parent: 412, Child: 17, Branch: "57-fix-export"}, "17"},
+		{"branch number without a child", Vars{Parent: 412, Branch: "57-fix-export"}, "57"},
+		{"parent when the branch has no number", Vars{Parent: 412, Branch: "fix-export"}, "412"},
+		{"parent without a branch", Vars{Parent: 412}, "412"},
+	} {
+		if got, err := Expand("{child}", tc.v); err != nil || got != tc.want {
+			t.Errorf("%s: Expand = %q, %v; want %q", tc.name, got, err, tc.want)
+		}
+	}
+	if got, _ := Expand("GL-{parent}", Vars{Parent: 412, Branch: "57-fix"}); got != "GL-412" {
+		t.Errorf("{parent} followed the branch: %q", got)
+	}
+}
+
+func TestBranchNumber(t *testing.T) {
+	for _, tc := range []struct {
+		branch string
+		want   int
+	}{
+		{"57-fix-export", 57},
+		{"57_fix", 57},
+		{"57/fix", 57},
+		{"57.fix", 57},
+		{"57", 57},
+		{"007-pad", 7},
+		{"2024-cleanup", 2024}, // any leading number counts
+		{"fix-57", 0},
+		{"v2-x", 0},
+		{"57x-fix", 0},
+		{"57+fix", 0},
+		{"main", 0},
+		{"", 0},
+		{"99999999999999999999-x", 0}, // does not fit an int
+	} {
+		if got := BranchNumber(tc.branch); got != tc.want {
+			t.Errorf("BranchNumber(%q) = %d, want %d", tc.branch, got, tc.want)
+		}
+	}
+}
+
 func TestValidate(t *testing.T) {
 	for _, ok := range []string{"", "GL-{parent}", "{project}/{child}", "no placeholders"} {
 		if err := Validate(ok); err != nil {

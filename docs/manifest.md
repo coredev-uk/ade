@@ -169,7 +169,7 @@ child_title = "{parent_title}"
 child_body  = "templates/child.md"       # relative to the manifest
 link        = ["relates_to", "description"]
 child_issue = "auto"                      # auto | always | never
-mr          = { create = "ask", template = "Default", draft = true, closes = "child", mention = "parent" }
+mr          = { create = "ask", template = "Default", draft = true, closes = "child", mention = "parent", reviewer_group = "acme/reviewers" }
 ```
 
 - `child_issue`: `auto` creates a child issue in the code repo when the tracker is a different project, and none
@@ -197,6 +197,19 @@ mr          = { create = "ask", template = "Default", draft = true, closes = "ch
   `.gitlab/merge_request_templates/<name>.md`, GitHub `.github/pull_request_template.md`). ADE shows the
   rendered body, and lists any quick actions in it (`/assign`, `/label`, ...) so they can be kept or stripped
   before anything is sent.
+- `mr.reviewer_group`: the group whose members review the MR, so it does not depend on each repo's template
+  carrying `/assign_reviewer @group`. On GitLab it is a group path (`acme/reviewers`, subgroups allowed, no
+  leading `@`); ADE reads the group's active members (inherited ones included; blocked users, pending invitations
+  and bots are left out), drops you, and creates the MR with them as reviewers. GitLab Free keeps one reviewer
+  per MR, Premium takes several; ADE does not probe the tier, so on Free GitLab decides which one stays. On
+  GitHub it is `org/team-slug`, the org must be the repository's owner, and ADE requests the team after the
+  pull request is created (ADE does not read team members there, so the confirm screen names the team
+  only). The dry run and the confirm screen show the request ("request review from acme/reviewers: alice, bob (3
+  members, you excluded)"), and the `forge.mr.create` audit entry records the group and the usernames. A group
+  that cannot be read (missing, not visible, no active members, another GitHub org) is a warning and the MR is
+  opened without that request. A template's `/assign_reviewer` keeps working; both apply. An MR that already
+  exists is not touched. Without the key nothing changes. A value with whitespace, a leading `@` or an empty path
+  segment (`/acme`, `acme//x`) is an error (`conventions.mr.reviewer_group`).
 - `commit_prefix`: a prefix for the first commit of the MR (and a squash merge message), e.g.
   `"GL-{parent}"`. See [Commit prefix](#commit-prefix).
 
@@ -207,8 +220,13 @@ mr          = { create = "ask", template = "Default", draft = true, closes = "ch
 commit_prefix = "GL-{parent}"   # GL-412 Rate-limit the export endpoint
 ```
 
-Placeholders: `{parent}` is the tracker issue's iid, `{child}` the child issue's iid in the code repo (the
-parent's when the item has none) and `{project}` the ADE project name. Unknown placeholders, a multi-line value
+Placeholders: `{parent}` is the tracker issue's iid, `{child}` the child issue's iid in the code repo
+(when the item has none there: the branch's leading number, else the parent's) and `{project}` the ADE project
+name. The branch's leading number is the run of digits at the start of the branch name when it ends the name or is
+followed by `-`, `_`, `/` or `.` (`57-fix-export`, `57_fix`, `57/fix` and `57` give 57; `fix-57` and `v2-x` give
+none; any leading number counts, so `2024-cleanup` gives 2024). That is the repo issue number a team's history uses
+when the MR closes the tracker issue directly (`child_issue = "never"`) or the branch was made by hand. The branch
+is the worktree's, the MR's source branch, or the one start work creates. Unknown placeholders, a multi-line value
 or leading/trailing whitespace are errors (`conventions.commit_prefix`); ADE adds the separating space itself.
 Without the key nothing changes.
 
@@ -365,6 +383,34 @@ default = { layout = "code", run = "dev", services = "background" }   # or "manu
 `services = "manual"` skips the services tab: services and the `services` (start all) pane stay in the strip, each
 waiting for Enter, and `ade ws up --no-zellij` still runs the install hooks first. Strip tasks wait for the install
 too (`--after-install`): run `ade ws install` or `ade ws up` first, or the pane says so and waits.
+### Repo groups
+
+```toml
+[repo_groups.frontend]
+repos     = ["web", "admin"]
+workspace = "acme-frontend"     # optional: <root>/<project>/acme-frontend.code-workspace
+```
+
+Repo groups are **display only**: they never change routing, checkouts, the run graph or what `ade start` does (the
+run-graph `[groups]` above is a different table). `ade project status` lists repos under their group headings, sorted
+by group name, then the repos in no group; a repo may be in several groups; `--json` adds `groups` to each repo and a
+`repo_groups` list to the project.
+
+A group with `workspace` also gets a VS Code multi-root workspace file, written by `ade project add` and every
+`ade update` when its content changed: one folder per repo of the group, each at its baseline worktree (named after
+the default branch) as an absolute path, with the same `settings` as the per-item workspace of `ade vscode workspace`
+(`.bare` hidden, git limited to the folders, the `commandsToSkipShell` list). Regeneration keeps the other top-level
+keys (extensions, launch) and your own settings. The file carries an `"ade": {"repo_group": "<name>", "file":
+"<file name>"}` key; ADE only rewrites or removes a file that has it under that same name, so a file of your own with
+that name, or a copy of the generated one saved under another name, is left alone (the first with a warning), and the
+file goes away when the group or its `workspace` key does. VS Code allows comments in the file, ADE's merge does not:
+a generated file you added comments to is reported and left as it is. A group whose repos are not all cloned yet gets
+no file (a warning names the missing baseline) until they are. `ade vscode workspace --group frontend [--open]`
+regenerates and prints it by hand.
+
+Validation: every repo of a group must exist and be listed once, `repos` must not be empty, `workspace` must be a
+path-safe file name (letters, digits, `.`, `_`, `-`), unique across groups and not the name of a repo, and a group
+name uses letters, digits, `_` and `-`.
 
 ### Dev shell per repo
 
@@ -377,7 +423,37 @@ devshell = "auto"     # auto | direnv | nix | none
 `repos.<r>.devshell` decides how ADE runs the editor, omp and shell panes and the tasks and services of that repo:
 `direnv` (`direnv exec`, needs an allowed `.envrc`), `nix` (`nix develop` of the repo's flake) or `none`. `auto` (the
 default) picks direnv for a repo with an `.envrc`, else `nix develop` for a flake with a `devShell`, else none.
-Services that belong to no repo are never wrapped. Details: [setup.md](setup.md#dev-shells-direnv--nix).
+Services that belong to no repo are not wrapped by a repo shell; the [project shell](#project-wide-setup) wraps
+them when the project declares `packages`. Details: [setup.md](setup.md#dev-shells-direnv--nix).
+
+### Project-wide setup
+
+Repos with no flake or `.envrc` of their own, a project AGENTS.md: the `[project]` table
+holds setup that belongs to the project as a whole.
+
+```toml
+[project]
+agents   = "AGENTS.md"                                # relative to the manifest: the project's agent guidance
+packages = ["nodejs_22", "pnpm", "postgresql_16"]     # nixpkgs attributes on PATH for every repo and service
+nixpkgs  = "github:NixOS/nixpkgs/nixos-25.05"         # optional flake ref the packages come from (default "nixpkgs")
+```
+
+`ade project add` and every `ade update` generate, in `<root>/<project>/` (not a git tree; repos are the
+directories beside them), and only write a file when its content changed:
+
+| Key | Generated | Notes |
+|---|---|---|
+| `agents` | `AGENTS.md` | the file's content behind a one-line HTML comment (generated by ADE, edit the source). Agent CLIs that read AGENTS.md from parent directories pick it up in every worktree; ADE also adds it to the implement skill ("Project guidance", before the repo's rules) and to agent plan/run prompts. The path must be local (no absolute path, no `..`). It is resolved beside a local manifest, or inside the clone of a `git+…#path` manifest; an `https://` manifest has no file beside it: a warning (also in `ade config check`) and nothing written. |
+| `packages`, `nixpkgs` | `.ade/shell` | an executable POSIX sh script: no arguments starts `$SHELL`, otherwise it runs its arguments inside `nix shell <nixpkgs>#<pkg>… --command`. Try it by hand: `~/ade/acme/.ade/shell make test`. Entries must be nixpkgs attribute paths (`[A-Za-z0-9_][A-Za-z0-9_+.-]*`, so no spaces, `#`, quotes or leading `-`). `nixpkgs` must not contain whitespace, `#` or quotes, and must not start with `-` (empty means the registry's `nixpkgs`); `nixpkgs` without `packages` is a warning. |
+
+Removing a key removes its generated file (`AGENTS.md`, `.ade/shell`); a file ADE did not generate is never
+overwritten or deleted. ADE runs every pane (editor, omp, shell), every
+`ade task run` task and every service of the project through `.ade/shell`, **outermost**: `.ade/shell direnv exec
+<dir> argv…`, so a repo's own dev shell wins on conflicts. `[services.*]`, which belong to no repo, get the
+project shell too (that is where postgres comes from). Without nix on PATH nothing is wrapped and one warning
+says so (`ade project status`, `ade project add`, `ade update`). `ade project status` shows the project-level
+parts: the agents file and the shell with its packages. The
+names `.ade` and `AGENTS.md` cannot be repo names.
 
 ### Team dotfiles
 
@@ -547,8 +623,12 @@ A `*.local.toml` beside a manifest (`acme.ade.toml` → `acme.ade.local.toml`) h
 
 ```sh
 ade config check                 # validates the user config and every registered manifest
+ade config check --manifest acme.ade.toml   # only this file, no fetching; works before any user config exists
 ade doctor --probe               # read-only: confirms the forge exposes what the manifest relies on
 ```
+
+Without a user config (a team lead's draft, a CDE image build), `--manifest` checks everything except the
+`forge` name, which only a user config can resolve: it is reported as a warning and the check still passes.
 
 `ade config check` reports unknown keys, cross-references that do not resolve, dependency cycles and bad enum
 values with the path of the offending key. A manifest that fails validation is rejected before ADE touches the

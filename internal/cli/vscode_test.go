@@ -18,6 +18,7 @@ import (
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/forgesync"
 	"github.com/coredev-uk/ade/internal/paths"
+	"github.com/coredev-uk/ade/internal/project"
 )
 
 // codeEnv is a project "demo" on disk (api with a 3-add-limit worktree, web
@@ -59,7 +60,8 @@ func newCodeEnv(t *testing.T) *codeEnv {
 			git(filepath.Join(dir, ".bare"), "worktree", "add", "-q", "-b", b, filepath.Join(dir, b), "main")
 		}
 	}
-	manifest := "name = \"demo\"\n[repos.api]\npath = \"g/api\"\ndefault_branch = \"main\"\n[repos.web]\npath = \"g/web\"\ndefault_branch = \"main\"\n"
+	manifest := "name = \"demo\"\n[repos.api]\npath = \"g/api\"\ndefault_branch = \"main\"\n[repos.web]\npath = \"g/web\"\ndefault_branch = \"main\"\n" +
+		"[repo_groups.apps]\nrepos = [\"web\", \"api\"]\nworkspace = \"demo-apps\"\n[repo_groups.web-only]\nrepos = [\"web\"]\n"
 	snap := "source = \"x\"\nmanifest = '''\n" + manifest + "'''\n"
 	if err := os.WriteFile(filepath.Join(root, "demo", ".project.toml"), []byte(snap), 0o644); err != nil {
 		t.Fatal(err)
@@ -199,5 +201,102 @@ func TestVSCodeWorkspaceUnknownRef(t *testing.T) {
 	}
 	if _, err := e.run("g/tracker#x"); err == nil {
 		t.Error("malformed ref accepted")
+	}
+}
+
+func TestVSCodeWorkspaceGroupWritesIntoTheProjectDir(t *testing.T) {
+	e := newCodeEnv(t)
+	out, err := e.run("--group", "apps")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	want := filepath.Join(e.root, "demo", "demo-apps.code-workspace")
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if lines[0] != want || len(lines) != 3 || !strings.Contains(lines[1], "web (main)") || !strings.Contains(lines[2], "api (main)") {
+		t.Fatalf("out:\n%s", out)
+	}
+	data, err := os.ReadFile(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"repo_group": "apps"`) || !strings.Contains(string(data), "git.openRepositoryInParentFolders") {
+		t.Errorf("file:\n%s", data)
+	}
+}
+
+func TestVSCodeWorkspaceGroupJSONAndErrors(t *testing.T) {
+	e := newCodeEnv(t)
+	jsonOut = true
+	t.Cleanup(func() { jsonOut = false })
+	out, err := e.run("--group", "apps", "--project", "demo")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var got codeJSON
+	if err := json.Unmarshal([]byte(out), &got); err != nil || len(got.Folders) != 2 || got.Folders[0].Source != "baseline" {
+		t.Fatalf("%v %+v", err, got)
+	}
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--group", "nope"}, "no repo group"},
+		{[]string{"--group", "web-only"}, "no workspace name"},
+		{[]string{"--group", "apps", "--project", "other"}, "other"},
+		{nil, "--group"},
+		{[]string{"g/tracker#15", "--project", "demo"}, "--project only applies"},
+	} {
+		if _, err := e.run(tc.args...); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%v: err = %v, want %q", tc.args, err, tc.want)
+		}
+	}
+}
+
+func TestVSCodeWorkspaceItemLimitedToGroup(t *testing.T) {
+	e := newCodeEnv(t)
+	out, err := e.run("g/tracker#15", "--group", "web-only")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if want := filepath.Join(e.rec, "items", "sandbox", "g", "tracker", "15", "15-rate-limit-exports-web-only.code-workspace"); lines[0] != want {
+		t.Errorf("path = %q, want %q", lines[0], want)
+	}
+	if len(lines) != 2 || !strings.Contains(lines[1], "web (main)") {
+		t.Errorf("only the group's repos belong in the file:\n%s", out)
+	}
+	// Without --group the same item still gets every repo, in its own file.
+	if out, err = e.run("g/tracker#15"); err != nil || len(strings.Split(strings.TrimSpace(out), "\n")) != 3 {
+		t.Errorf("full file: %v\n%s", err, out)
+	}
+}
+
+func TestPrintProjectStatusGroupsRepos(t *testing.T) {
+	ps := project.ProjectStatus{
+		Name: "demo", Dir: "/r/demo",
+		Repos: []project.RepoStatus{
+			{Name: "admin", Present: true, InManifest: true, Groups: []string{"frontend"}},
+			{Name: "api", Present: true, InManifest: true},
+			{Name: "web", Present: true, InManifest: true, Groups: []string{"frontend", "shared"}},
+		},
+		RepoGroups: []project.GroupStatus{
+			{Name: "frontend", Repos: []string{"web", "admin"}, Workspace: "fe", File: "/r/demo/fe.code-workspace", Written: true},
+			{Name: "shared", Repos: []string{"web"}},
+		},
+	}
+	var b bytes.Buffer
+	printProjectStatus(&b, ps)
+	want := "demo  /r/demo\n" +
+		"  [frontend]  fe.code-workspace\n    web\n    admin\n" +
+		"  [shared]\n    web\n" +
+		"  [ungrouped]\n    api\n"
+	if b.String() != want {
+		t.Errorf("got:\n%s\nwant:\n%s", b.String(), want)
+	}
+	ps.RepoGroups = nil
+	b.Reset()
+	printProjectStatus(&b, ps)
+	if strings.Contains(b.String(), "[") {
+		t.Errorf("no groups, no headings:\n%s", b.String())
 	}
 }

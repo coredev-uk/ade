@@ -3,9 +3,13 @@ package devshell
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/coredev-uk/ade/internal/config"
 )
 
 // finder serves files from a map keyed by absolute path and finds only the
@@ -130,5 +134,117 @@ func TestDetectOnDisk(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	if got := Detect(d, ""); got.Kind != None {
 		t.Fatalf("without direnv on PATH, Detect = %+v", got)
+	}
+}
+
+func TestWithProjectComposesOutermost(t *testing.T) {
+	const proj = "/ws/acme"
+	script := proj + "/.ade/shell"
+	setup := config.ProjectSetup{Packages: []string{"nodejs_22"}}
+	argv := []string{"sh", "-c", "npm test"}
+
+	f := finder(map[string]string{script: "#!/bin/sh\n"}, "nix", "direnv")
+	repo := f.Detect(dir, "direnv")
+	if repo.Kind != None { // no .envrc in the fake tree
+		t.Fatalf("setup: %+v", repo)
+	}
+	inRepo := Shell{Kind: Direnv, Dir: dir}
+
+	tests := []struct {
+		name  string
+		f     Finder
+		shell Shell
+		setup config.ProjectSetup
+		want  []string
+		note  bool
+	}{
+		{
+			"repo shell inside the project shell", f, inRepo, setup,
+			[]string{script, "direnv", "exec", dir, "sh", "-c", "npm test"},
+			false,
+		},
+		{
+			"a tree without a dev shell still gets the project shell", f,
+			Shell{},
+			setup,
+			[]string{script, "sh", "-c", "npm test"},
+			false,
+		},
+		{
+			"no packages: nothing added", f, inRepo,
+			config.ProjectSetup{},
+			[]string{"direnv", "exec", dir, "sh", "-c", "npm test"},
+			false,
+		},
+		{
+			"script not generated yet", finder(nil, "nix"), inRepo, setup,
+			[]string{"direnv", "exec", dir, "sh", "-c", "npm test"},
+			false,
+		},
+		{
+			"no nix on PATH: nothing wrapped and a note says so", finder(map[string]string{script: "x"}, "direnv"), inRepo, setup,
+			[]string{"direnv", "exec", dir, "sh", "-c", "npm test"},
+			true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.f.WithProject(tt.shell, proj, tt.setup)
+			if w := got.Wrap(append([]string(nil), argv...)); !reflect.DeepEqual(w, tt.want) {
+				t.Errorf("Wrap = %q, want %q", w, tt.want)
+			}
+			if (got.Note != "") != tt.note {
+				t.Errorf("Note = %q, want one: %v", got.Note, tt.note)
+			}
+		})
+	}
+	if s := f.WithProject(Shell{}, proj, setup); !s.Active() || s.String() != "none+project" {
+		t.Errorf("the project shell alone is an active shell: %+v %s", s, s)
+	}
+	if got := WarmProjectArgv(proj); !reflect.DeepEqual(got, []string{script, "true"}) {
+		t.Errorf("WarmProjectArgv = %q", got)
+	}
+}
+
+func TestProjectScript(t *testing.T) {
+	got := ProjectScript("", []string{"nodejs_22", "pnpm"})
+	for _, want := range []string{
+		"#!/bin/sh\n" + ProjectShellMarker + "\n",
+		`set -- "${SHELL:-/bin/sh}"`,
+		`'nixpkgs#nodejs_22' 'nixpkgs#pnpm' --command "$@"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("script lacks %q:\n%s", want, got)
+		}
+	}
+	if pinned := ProjectScript("github:NixOS/nixpkgs/nixos-25.05", []string{"go"}); !strings.Contains(pinned, `'github:NixOS/nixpkgs/nixos-25.05#go'`) {
+		t.Errorf("pinned script:\n%s", pinned)
+	}
+	if q := shellQuote("a'b"); q != `'a'\''b'` {
+		t.Errorf("shellQuote = %s", q)
+	}
+}
+
+// The script is usable by hand: with a stand-in nix that records its argv, it
+// runs its arguments, or $SHELL when it has none.
+func TestProjectScriptRuns(t *testing.T) {
+	bin := t.TempDir()
+	fakeNix := "#!/bin/sh\nwhile [ \"$1\" != --command ]; do shift; done\nshift\nexec \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "nix"), []byte(fakeNix), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(t.TempDir(), "shell")
+	if err := os.WriteFile(script, []byte(ProjectScript("", []string{"hello"})), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+	out, err := exec.Command(script, "echo", "from", "project").CombinedOutput()
+	if err != nil || string(out) != "from project\n" {
+		t.Fatalf("with arguments: %q, %v", out, err)
+	}
+	t.Setenv("SHELL", "echo")
+	out, err = exec.Command(script).CombinedOutput()
+	if err != nil || string(out) != "\n" {
+		t.Fatalf("without arguments it must start $SHELL: %q, %v", out, err)
 	}
 }

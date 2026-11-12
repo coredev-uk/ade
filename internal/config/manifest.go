@@ -34,8 +34,10 @@ type Manifest struct {
 	Name        string               `toml:"name"`
 	Forge       string               `toml:"forge"` // key into Config.Forges
 	Tracker     Tracker              `toml:"tracker"`
+	Project     ProjectSetup         `toml:"project"`
 	Labels      Labels               `toml:"labels"`
 	Repos       map[string]Repo      `toml:"repos"`
+	RepoGroups  map[string]RepoGroup `toml:"repo_groups"`
 	Services    map[string]Task      `toml:"services"`
 	Conventions Conventions          `toml:"conventions"`
 	Groups      map[string][]string  `toml:"groups"`
@@ -48,6 +50,21 @@ type Manifest struct {
 	// Overlay is the local override merged into this manifest, when ReadManifestFile
 	// or the project service applied one.
 	Overlay string `toml:"-"`
+}
+
+// ProjectSetup is the manifest's [project] table: setup that belongs to the
+// project as a whole rather than to one repo. ADE generates files from it
+// under <root>/<project>/ on every `ade project add` and `ade update`.
+type ProjectSetup struct {
+	// Agents is the project's agent guidance, a file relative to the manifest;
+	// ADE writes it as <root>/<project>/AGENTS.md.
+	Agents string `toml:"agents"`
+	// Packages are nixpkgs attributes put on PATH for every pane, task and
+	// service of the project (<root>/<project>/.ade/shell).
+	Packages []string `toml:"packages"`
+	// Nixpkgs is the flake reference Packages come from; empty is the
+	// registry's "nixpkgs".
+	Nixpkgs string `toml:"nixpkgs"`
 }
 
 type Tracker struct {
@@ -121,6 +138,15 @@ func (d Dotfiles) Configured() bool { return d.Repo != "" }
 
 // SymlinkFallback is Symlink with the default applied.
 func (d Dotfiles) SymlinkFallback() bool { return d.Symlink == nil || *d.Symlink }
+
+// RepoGroup is a display-only set of repos: `ade project status` lists them
+// under the group, and Workspace, when set, names a generated VS Code
+// multi-root workspace file in the project directory. It never changes
+// routing, checkouts or the run graph (see Manifest.Groups for those).
+type RepoGroup struct {
+	Repos     []string `toml:"repos"`
+	Workspace string   `toml:"workspace"` // file stem of <root>/<project>/<workspace>.code-workspace
+}
 
 // Repo is one repository in a project.
 type Repo struct {
@@ -205,6 +231,10 @@ type MRConv struct {
 	Draft    *bool  `toml:"draft"`    // unset: true. A pointer tells "false" from "not said".
 	Closes   string `toml:"closes"`
 	Mention  string `toml:"mention"`
+	// ReviewerGroup is the group or team whose members start work asks to
+	// review the MR: a GitLab group path (subgroups allowed) or, on GitHub,
+	// "org/team-slug". Empty requests nobody.
+	ReviewerGroup string `toml:"reviewer_group"`
 }
 
 // DraftMR reports whether start work opens the MR as a draft: true unless the

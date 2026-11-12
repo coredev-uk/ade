@@ -21,6 +21,7 @@ import (
 	"github.com/coredev-uk/ade/internal/editor"
 	"github.com/coredev-uk/ade/internal/host"
 	"github.com/coredev-uk/ade/internal/host/zellij"
+	"github.com/coredev-uk/ade/internal/project"
 	"github.com/coredev-uk/ade/internal/records"
 )
 
@@ -123,7 +124,7 @@ func Open(ctx context.Context, a *app.App, project, repo, worktree string, opts 
 	if p.item != nil {
 		// The worktree tells commit-msg hooks and the user's own git what the ticket is.
 		target := commitprefix.TargetBranch(ctx, p.item.Item, loc.Manifest.Repos[loc.Repo].Path, loc.Tree)
-		cfgErr := commitprefix.WriteWorktreeConfig(ctx, loc.Tree, p.item.Item.Ref.IID, commitprefix.ExpandPrefix(loc.Manifest, p.item.Item, loc.Repo), target)
+		cfgErr := commitprefix.WriteWorktreeConfig(ctx, loc.Tree, p.item.Item.Ref.IID, commitprefix.ExpandPrefix(loc.Manifest, p.item.Item, loc.Repo, BranchOf(ctx, loc)), target)
 		if cfgErr != nil {
 			res.Warnings = append(res.Warnings, "worktree git config: "+cfgErr.Error())
 		}
@@ -267,10 +268,11 @@ func prepare(ctx context.Context, a *app.App, project, repo, worktree string, op
 // agentFor gathers what the implement skill says about the item.
 func agentFor(ctx context.Context, a *app.App, p *prepared) *agentFiles {
 	loc, it := p.loc, *p.item
+	branch := BranchOf(ctx, loc)
 	in := SkillInput{
-		Item: it, Manifest: loc.Manifest, Repo: loc.Repo, Branch: BranchOf(ctx, loc), Worktree: loc.Tree,
+		Item: it, Manifest: loc.Manifest, Repo: loc.Repo, Branch: branch, Worktree: loc.Tree,
 		OtherTrees:   map[string]string{},
-		CommitPrefix: commitprefix.ExpandPrefix(loc.Manifest, it.Item, loc.Repo),
+		CommitPrefix: commitprefix.ExpandPrefix(loc.Manifest, it.Item, loc.Repo, branch),
 	}
 	for repo, tree := range p.cfg.trees.ItemTrees {
 		if repo != loc.Repo {
@@ -278,6 +280,7 @@ func agentFor(ctx context.Context, a *app.App, p *prepared) *agentFiles {
 		}
 	}
 	in.AgentsMD, in.AgentsPath = agentsDoc(loc.Tree)
+	in.ProjectGuidance = project.ReadAgents(loc.ProjectDir)
 	if rec, err := records.New(a.RecordsDir).Read(it.Forge, it.Item.Ref); err == nil {
 		in.Notes = rec.Notes
 	}
@@ -499,7 +502,8 @@ func openTab(ctx context.Context, run zellijRunner, session, tab, layoutFile str
 // run-graph node.
 func layoutSpec(ctx context.Context, p *prepared) LayoutSpec {
 	spec := LayoutSpec{Layout: p.res.Layout, Tab: p.res.Tab, Dir: p.loc.Tree, Tools: DetectTools(p.ade, p.editor, p.loc.Tree), BaseRef: p.cfg.baseRef}
-	spec.Devshell = p.cfg.devshell.Detect(p.loc.Tree, p.loc.Manifest.Repos[p.loc.Repo].Devshell)
+	spec.Devshell = p.cfg.devshell.WithProject(
+		p.cfg.devshell.Detect(p.loc.Tree, p.loc.Manifest.Repos[p.loc.Repo].Devshell), p.loc.ProjectDir, p.loc.Manifest.Project)
 	if p.item != nil {
 		spec.Overview = []string{"item", p.item.Item.Ref.String(), "--watch"}
 	}

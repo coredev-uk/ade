@@ -145,8 +145,41 @@ func (e *Env) discoverTarget(ctx context.Context, item domain.WorkItem, m *confi
 		if err := e.findTemplate(ctx, m, ch, t, &f); err != nil {
 			return f, err
 		}
+		e.findReviewers(ctx, m, t, &f)
 	}
 	return f, nil
+}
+
+// findReviewers reads who conventions.mr.reviewer_group stands for. A group
+// that cannot be read is a warning, not an error: the MR opens without
+// reviewers rather than not at all.
+func (e *Env) findReviewers(ctx context.Context, m *config.Manifest, t Target, f *Found) {
+	group := m.Conventions.MR.ReviewerGroup
+	if group == "" {
+		return
+	}
+	reader, ok := e.Forge.(forge.ReviewerGroupReader)
+	if !ok {
+		// A forge that requests a team by name (GitHub) needs the team in the
+		// repository's own organisation.
+		org, _, _ := strings.Cut(group, "/")
+		owner, _, _ := strings.Cut(t.Project, "/")
+		if !strings.Contains(group, "/") || !strings.EqualFold(org, owner) {
+			f.Warnings = append(f.Warnings, fmt.Sprintf("%s: reviewer group %s is not a team of %s: the MR is opened without reviewers", t.Project, group, owner))
+			return
+		}
+		f.ReviewerTeam = true
+		return
+	}
+	members, err := reader.ReviewerGroupMembers(ctx, group)
+	switch {
+	case err != nil:
+		f.Warnings = append(f.Warnings, fmt.Sprintf("%s: reviewer group %s could not be read (%v): the MR is opened without reviewers", t.Project, group, err))
+	case len(members) == 0:
+		f.Warnings = append(f.Warnings, fmt.Sprintf("%s: reviewer group %s has no active members: the MR is opened without reviewers", t.Project, group))
+	default:
+		f.ReviewerMembers = members
+	}
 }
 
 func (e *Env) localDefault(ctx context.Context, m *config.Manifest, t Target, bare string, cloned bool) string {

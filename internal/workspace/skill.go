@@ -35,6 +35,8 @@ type SkillInput struct {
 	OtherTrees map[string]string
 	// Notes are the user's own notes from the item record.
 	Notes string
+	// ProjectGuidance is the project's AGENTS.md (the manifest's project.agents), "" when it has none.
+	ProjectGuidance string
 	// AgentsMD is the repo's AGENTS.md (or CLAUDE.md) text and AgentsPath its file name.
 	AgentsMD   string
 	AgentsPath string
@@ -148,12 +150,21 @@ func RenderSkill(in SkillInput) string {
 			line("- The merge request closes the child issue and mentions the parent; ADE manages them, do not edit the MR or the issues.")
 		}
 	}
+	if in.ProjectGuidance != "" {
+		line("- The project's guidance (it applies to every repo of the project) comes first, then the repository's own rules.")
+	}
 	if in.AgentsMD != "" {
 		line("- The repository's own rules (`%s`) follow; they apply fully.", in.AgentsPath)
 	} else {
 		line("- The repository has no AGENTS.md: follow what the existing code does.")
 	}
 	line("")
+	if in.ProjectGuidance != "" {
+		line("<project-guidance file=%q>", "AGENTS.md")
+		line("%s", clip(strings.TrimSpace(in.ProjectGuidance), maxAgentsMD))
+		line("</project-guidance>")
+		line("")
+	}
 	if in.AgentsMD != "" {
 		line("<repository-rules file=%q>", in.AgentsPath)
 		line("%s", clip(strings.TrimSpace(in.AgentsMD), maxAgentsMD))

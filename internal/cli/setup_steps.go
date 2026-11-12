@@ -62,14 +62,25 @@ func checkForgeToken(ctx context.Context, a *app.App, name string, fg config.For
 
 // runSetupProjects is step 3: add (clone + baseline worktrees + hooks),
 // update (fetch / fast-forward), first sync.
-func runSetupProjects(ctx context.Context, say io.Writer, a *app.App, res *setupResult) {
+// newSources are --project manifests the config does not list yet: Add
+// registers them in the config (appending, never rewriting it).
+func runSetupProjects(ctx context.Context, say io.Writer, a *app.App, newSources []string, res *setupResult) {
 	svc := project.New(a, "ade:setup")
+	sources := make([]string, 0, len(a.Config.Projects)+len(newSources))
 	for _, p := range a.Config.Projects {
-		rep, err := svc.Add(ctx, p.Source)
+		sources = append(sources, p.Source)
+	}
+	sources = append(sources, newSources...)
+	for i, src := range sources {
+		rep, err := svc.Add(ctx, src)
 		if err != nil {
-			step(say, "projects", "add %s: FAILED: %v", p.Source, err)
-			res.problem(exitSetupPartial, "add %s: %v", p.Source, err)
+			step(say, "projects", "add %s: FAILED: %v", src, err)
+			res.problem(exitSetupPartial, "add %s: %v", src, err)
 			continue
+		}
+		if i >= len(sources)-len(newSources) {
+			res.Registered = append(res.Registered, src)
+			step(say, "projects", "registered %s in %s", src, a.Config.File)
 		}
 		res.Add = append(res.Add, rep)
 		step(say, "projects", "%s", rep.Title())
@@ -107,8 +118,48 @@ func runSetupProjects(ctx context.Context, say io.Writer, a *app.App, res *setup
 	}
 }
 
-// warmShells pre-builds the dev shell of every repo's baseline worktree.
+// unregisteredSources returns the --project sources cfg does not list yet,
+// in order and without duplicates, as they will be stored (local paths made
+// absolute). A local path and a remote URL are compared as written, after
+// resolving local paths the way the config does.
+func unregisteredSources(cfg *config.Config, flagged []string) ([]string, error) {
+	have := map[string]bool{}
+	canon := func(src string) (string, error) {
+		if strings.Contains(src, "://") || strings.HasPrefix(src, "git+") {
+			return src, nil
+		}
+		return cfg.ResolvePath(src)
+	}
+	for _, p := range cfg.Projects {
+		c, err := canon(p.Source)
+		if err != nil {
+			continue // reported by `project add` for that entry
+		}
+		have[c] = true
+	}
+	var out []string
+	for _, src := range flagged {
+		norm, err := project.NormalizeSource(src)
+		if err != nil {
+			return nil, fmt.Errorf("--project %s: %w", src, err)
+		}
+		c, err := canon(norm)
+		if err != nil {
+			return nil, fmt.Errorf("--project %s: %w", src, err)
+		}
+		if have[c] {
+			continue
+		}
+		have[c] = true
+		out = append(out, norm)
+	}
+	return out, nil
+}
+
+// warmShells pre-builds the dev shell of every repo's baseline worktree, and
+// the project shell (`[project] packages`) once per project.
 func warmShells(ctx context.Context, say io.Writer, a *app.App, res *setupResult) {
+	warmProjectShells(ctx, say, a, res)
 	var dirs []string
 	sts, _ := project.New(a, "ade:setup").Status(ctx, "")
 	for _, ps := range sts {
@@ -155,6 +206,40 @@ func warmShells(ctx context.Context, say io.Writer, a *app.App, res *setupResult
 		} else {
 			w.Status = "warmed"
 			step(say, "warm", "%s (%s): ready", rel, string(sh.Kind))
+		}
+		res.Warm = append(res.Warm, w)
+	}
+}
+
+// warmProjectShells realises every generated project shell with `.ade/shell true`.
+func warmProjectShells(ctx context.Context, say io.Writer, a *app.App, res *setupResult) {
+	scripts, _ := filepath.Glob(devshell.ProjectShellPath(filepath.Join(a.Root, "*")))
+	for _, script := range scripts {
+		projectDir := filepath.Dir(filepath.Dir(script))
+		w := setupWarm{Dir: projectDir, Kind: "project"}
+		rel, _ := filepath.Rel(a.Root, projectDir)
+		if _, err := exec.LookPath("nix"); err != nil {
+			w.Status = "skipped"
+			res.Warm = append(res.Warm, w)
+			step(say, "warm", "%s (project): skipped, nix is not on PATH", rel)
+			continue
+		}
+		argv := devshell.WarmProjectArgv(projectDir)
+		wctx, cancel := context.WithTimeout(ctx, warmTimeout)
+		cmd := exec.CommandContext(wctx, argv[0], argv[1:]...)
+		cmd.Dir = projectDir
+		out, err := cmd.CombinedOutput()
+		cancel()
+		if err != nil {
+			w.Status, w.Error = "failed", strings.TrimSpace(tail(string(out), 300))
+			if w.Error == "" {
+				w.Error = err.Error()
+			}
+			step(say, "warm", "%s (project): FAILED: %s", rel, w.Error)
+			res.problem(exitSetupPartial, "warm %s (project): %s", rel, w.Error)
+		} else {
+			w.Status = "warmed"
+			step(say, "warm", "%s (project): ready", rel)
 		}
 		res.Warm = append(res.Warm, w)
 	}

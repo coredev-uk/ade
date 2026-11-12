@@ -164,3 +164,40 @@ func TestServicesOutsideReposAreNotWrapped(t *testing.T) {
 		}
 	}
 }
+
+// With project.packages, every node of the project, services outside any repo
+// included, runs through the project shell; a repo's own shell goes inside it.
+func TestProjectShellWrapsRepoTasksAndServices(t *testing.T) {
+	manifest := strings.Replace(appManifest, `[groups]`, "[services.cache]\ncmd = \"WS_HELPER=http {{HELPER}}\"\nport = \"auto\"\n\n[groups]", 1)
+	manifest = strings.Replace(manifest, `requires = ["api.build"]`, `requires = ["api.build", "services.cache"]`, 1)
+	manifest = strings.Replace(manifest, `name = "demo"`, "name = \"demo\"\n[project]\npackages = [\"postgresql_16\"]", 1)
+	f := newFixture(t, manifest, "api/main", "web/main")
+	projectDir := filepath.Join(f.root, "demo")
+	script := devshell.ProjectShellPath(projectDir)
+	if err := os.MkdirAll(filepath.Dir(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(script, []byte(devshell.ProjectScript("", []string{"postgresql_16"})), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "api", "main", ".envrc"), []byte("export X=1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.mgr.Devshell = devshell.Finder{LookPath: func(string) (string, error) { return "/bin/tool", nil }}
+	plan, err := f.mgr.Plan(context.Background(), f.loc("api/main"), PlanOptions{Nodes: []string{"api.dev"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, in := range plan.Instances {
+		if in.Devshell.Project != script {
+			t.Errorf("%s: project shell = %q, want %q", in.Node.ID, in.Devshell.Project, script)
+		}
+		argv := in.Devshell.Wrap([]string{"sh", "-c", "x"})
+		switch {
+		case in.Node.Repo == "api" && (argv[0] != script || argv[1] != "direnv"):
+			t.Errorf("%s: repo shell must sit inside the project shell: %q", in.Node.ID, argv)
+		case in.Node.Repo == "" && (argv[0] != script || argv[1] != "sh"):
+			t.Errorf("%s: a service of no repo gets the project shell: %q", in.Node.ID, argv)
+		}
+	}
+}

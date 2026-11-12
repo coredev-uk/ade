@@ -241,7 +241,7 @@ func (e *Env) run(ctx context.Context, p Plan, m *config.Manifest, rt *runtime, 
 	case StepBranch:
 		err = e.createBranch(ctx, p, m, rt, sr)
 	case StepMR:
-		err = e.createMR(ctx, p, m, rt, sr)
+		err = e.createMR(ctx, p, m, rt, sr, res)
 	case StepWorktree:
 		err = e.addWorktree(ctx, p, m, rt, sr)
 	case StepWorkspace:
@@ -388,28 +388,52 @@ func (e *Env) createBranch(ctx context.Context, p Plan, m *config.Manifest, rt *
 	return err
 }
 
-func (e *Env) createMR(ctx context.Context, p Plan, m *config.Manifest, rt *runtime, sr *StepResult) error {
+func (e *Env) createMR(ctx context.Context, p Plan, m *config.Manifest, rt *runtime, sr *StepResult, res *Result) error {
 	if rt.branch == "" {
 		return errors.New("no branch to open the MR from")
 	}
 	d := forge.MRDraft{
 		Project: rt.tp.Target.Project, Source: rt.branch, Target: rt.tp.Base, Title: rt.tp.MR.Title,
 		Description: rt.tp.MRBody(rt.child, p.Item), Draft: rt.tp.MR.Draft,
-		CommitPrefix: commitprefix.ForIssues(m, p.Item.IID, rt.child.IID),
+		CommitPrefix: commitprefix.ForBranch(m, p.Item.IID, rt.child.IID, rt.branch),
+	}
+	spec := rt.tp.MR
+	reviewers := make([]string, len(spec.ReviewerUsers))
+	for i, u := range spec.ReviewerUsers {
+		d.ReviewerIDs = append(d.ReviewerIDs, u.ID)
+		reviewers[i] = u.Username
+	}
+	if spec.ReviewerGroup != "" && spec.ReviewerMembers == 0 {
+		d.ReviewerTeam = spec.ReviewerGroup
 	}
 	mr, err := e.Forge.CreateMR(ctx, d)
+	var reviewerErr error
+	if errors.Is(err, forge.ErrReviewersNotRequested) {
+		// The MR exists; only the review request failed.
+		reviewerErr, err = err, nil
+	}
 	if errors.Is(err, forge.ErrExists) {
 		mrs, lerr := e.Forge.ListMRs(ctx, forge.MRQuery{Project: d.Project, SourceBranch: d.Source})
 		if found := pickMR(mrs); lerr == nil && found != nil {
 			mr, err, sr.Outcome = *found, nil, OutcomeExists
 		}
 	}
-	e.audit(p, "forge.mr.create", mr.Ref.String(), map[string]any{
+	params := map[string]any{
 		"source": d.Source, "target": d.Target, "draft": d.Draft, "template": rt.tp.MR.Template,
 		"stripped": rt.tp.MR.Stripped, "quick_actions": len(rt.tp.MR.Actions), "outcome": sr.Outcome,
-	}, mr.WebURL, err)
+	}
+	if spec.ReviewerGroup != "" && sr.Outcome != OutcomeExists {
+		params["reviewer_group"], params["reviewers"] = spec.ReviewerGroup, reviewers
+		if reviewerErr != nil {
+			params["reviewers_error"] = reviewerErr.Error()
+		}
+	}
+	e.audit(p, "forge.mr.create", mr.Ref.String(), params, mr.WebURL, err)
 	if err != nil {
 		return err
+	}
+	if reviewerErr != nil {
+		res.Notes = append(res.Notes, fmt.Sprintf("review not requested from %s on %s: %v", spec.ReviewerGroup, mr.Ref, reviewerErr))
 	}
 	rt.mr = &mr
 	rt.result.MR, rt.result.MRURL = &mr.Ref, mr.WebURL
@@ -484,7 +508,7 @@ func (e *Env) recordWorktree(ctx context.Context, p Plan, m *config.Manifest, rt
 	if browse {
 		return
 	}
-	prefix := commitprefix.ForIssues(m, p.Item.IID, rt.child.IID)
+	prefix := commitprefix.ForBranch(m, p.Item.IID, rt.child.IID, rt.branch)
 	if err := commitprefix.WriteWorktreeConfig(ctx, rt.worktree, p.Item.IID, prefix, rt.tp.Base); err != nil {
 		e.audit(p, "git.worktree.config", rt.worktree, nil, "", err)
 	}

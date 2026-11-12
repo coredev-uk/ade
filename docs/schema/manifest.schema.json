@@ -25,7 +25,7 @@
           "type": "string"
         },
         "commit_prefix": {
-          "description": "Prefix for the first commit of an MR (and a squash merge message) that ADE makes, e.g. \"GL-{parent}\". Placeholders: {parent} (tracker issue iid), {child} (child issue iid, the parent's if none), {project}.",
+          "description": "Prefix for the first commit of an MR (and a squash merge message) that ADE makes, e.g. \"GL-{parent}\". Placeholders: {parent} (tracker issue iid), {child} (child issue iid, else the branch's leading number, else the parent's), {project}.",
           "type": "string"
         },
         "link": {
@@ -54,6 +54,10 @@
               "type": "boolean"
             },
             "mention": {
+              "type": "string"
+            },
+            "reviewer_group": {
+              "description": "Group whose members start work asks to review the MR: a GitLab group path (acme/reviewers) or, on GitHub, org/team-slug of the repository's owner. Empty requests nobody.",
               "type": "string"
             },
             "template": {
@@ -159,6 +163,51 @@
     "name": {
       "description": "Project name; becomes the directory under the projects root.",
       "type": "string"
+    },
+    "project": {
+      "additionalProperties": false,
+      "description": "Project-wide setup ADE generates under <root>/<project>/ on every add and update: agent guidance, a nix shell wrapper.",
+      "properties": {
+        "agents": {
+          "description": "File relative to the manifest, written as <root>/<project>/AGENTS.md (the project's agent guidance). Needs a local or git+ manifest source.",
+          "type": "string"
+        },
+        "nixpkgs": {
+          "description": "Flake reference the packages come from (default: the registry's \"nixpkgs\").",
+          "type": "string"
+        },
+        "packages": {
+          "description": "nixpkgs attributes put on PATH for every pane, task and service of the project through <root>/<project>/.ade/shell (needs nix on PATH).",
+          "items": {
+            "description": "nixpkgs attributes put on PATH for every pane, task and service of the project through <root>/<project>/.ade/shell (needs nix on PATH).",
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "repo_groups": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "repos": {
+            "description": "Repo names in the group; a repo may be in several groups.",
+            "items": {
+              "description": "Repo names in the group; a repo may be in several groups.",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "workspace": {
+            "description": "File stem of <root>/<project>/<workspace>.code-workspace, a VS Code multi-root workspace of the group's repos (baseline worktrees).",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "description": "Display-only repo groups: `ade project status` lists repos under them and each group with a workspace gets a .code-workspace file. They never change routing, checkouts or the run graph.",
+      "type": "object"
     },
     "repos": {
       "additionalProperties": {

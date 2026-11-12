@@ -146,6 +146,29 @@ func checkConfig(cmd *cobra.Command, files []string) []fileReport {
 			add(ref.Source, m, err)
 		}
 	}
+	// A manifest checked before any user config exists (a team lead's draft, a
+	// CDE image build) cannot name a configured forge yet: its forge key is
+	// noted instead of failing, and ade init / ade setup take the name from it.
+	noConfig := ""
+	switch {
+	case len(files) == 0:
+	case cfg == nil:
+		noConfig = "the user config could not be loaded"
+	case cfg.Missing:
+		noConfig = "no user config"
+	}
+	if noConfig != "" {
+		cfg = nil
+	}
+	if a == nil && len(files) > 0 {
+		// Say why, without failing the manifests' check on the config's account.
+		r := configReport(cmd, a)
+		for i := range r.Issues {
+			r.Issues[i].Severity = config.SeverityWarn
+			r.Issues[i].Msg += " (manifests checked without it)"
+		}
+		reports = append(reports, r)
+	}
 	byFile := config.ValidateAll(ms, cfg)
 	seen := map[string]bool{}
 	for _, m := range ms {
@@ -153,7 +176,13 @@ func checkConfig(cmd *cobra.Command, files []string) []fileReport {
 			continue
 		}
 		seen[m.Source] = true
-		reports = append(reports, fileReport{m.Source, "manifest", nonNil(byFile[m.Source]), m.Overlay})
+		issues := byFile[m.Source]
+		if noConfig != "" && m.Forge != "" {
+			issues = append(issues, config.Issue{Severity: config.SeverityWarn, Path: "forge", Msg: fmt.Sprintf(
+				"%q not checked: %s (each teammate's config needs [forges.%s]; ade init and ade setup take the name from the manifest)",
+				m.Forge, noConfig, m.Forge)})
+		}
+		reports = append(reports, fileReport{m.Source, "manifest", nonNil(issues), m.Overlay})
 	}
 	return reports
 }

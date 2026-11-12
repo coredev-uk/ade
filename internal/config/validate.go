@@ -6,11 +6,13 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/coredev-uk/ade/internal/commitmsg"
 )
@@ -138,6 +140,8 @@ func (v *manifestValidator) run() []Issue {
 	v.checkHeader()
 	v.checkIterations()
 	v.checkRepos()
+	v.checkProjectSetup()
+	v.checkRepoGroups()
 	v.collectNodes()
 	v.checkNodes()
 	v.checkGroups()
@@ -239,6 +243,77 @@ func (v *manifestValidator) checkRepos() {
 	}
 	for _, c := range findCycles(repoNames, edges) {
 		v.errorf(fmt.Sprintf("repos.%s.requires[%d]", c.from, c.idx), "checkout dependency cycle: %s", strings.Join(c.path, " → "))
+	}
+}
+
+// nixAttr is a nixpkgs attribute path: one package or a dotted set member.
+var nixAttr = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_+.-]*$`)
+
+// checkProjectSetup validates the [project] table.
+func (v *manifestValidator) checkProjectSetup() {
+	p := v.m.Project
+	if p.Agents != "" {
+		if !filepath.IsLocal(filepath.FromSlash(p.Agents)) {
+			v.errorf("project.agents", "%q must be a path relative to the manifest, without \"..\" or a leading \"/\"", p.Agents)
+		}
+		if src := v.m.Source; strings.HasPrefix(src, "https://") || strings.HasPrefix(src, "http://") {
+			v.warnf("project.agents", "cannot be read from an https manifest source (no file beside it): AGENTS.md is not written; use a local or git+ source")
+		}
+	}
+	for i, pkg := range p.Packages {
+		if !nixAttr.MatchString(pkg) {
+			v.errorf(fmt.Sprintf("project.packages[%d]", i), "%q is not a nixpkgs attribute path: use letters, digits, '_', '+', '.' or '-'", pkg)
+		}
+	}
+	if p.Nixpkgs != "" {
+		switch {
+		case strings.ContainsFunc(p.Nixpkgs, unicode.IsSpace) || strings.ContainsAny(p.Nixpkgs, "#'\"") || strings.HasPrefix(p.Nixpkgs, "-"):
+			v.errorf("project.nixpkgs", "%q is not a flake reference: no whitespace, quotes or '#', and it must not start with '-'", p.Nixpkgs)
+		case len(p.Packages) == 0:
+			v.warnf("project.nixpkgs", "has no effect without project.packages")
+		}
+	}
+}
+
+// checkRepoGroups validates [repo_groups.*].
+func (v *manifestValidator) checkRepoGroups() {
+	owner := map[string]string{} // workspace stem -> group
+	for _, g := range slices.Sorted(maps.Keys(v.m.RepoGroups)) {
+		grp := v.m.RepoGroups[g]
+		p := "repo_groups." + g
+		if !identName.MatchString(g) {
+			v.errorf(p, "invalid group name %q: use letters, digits, '_' or '-'", g)
+		}
+		if len(grp.Repos) == 0 {
+			v.errorf(p+".repos", "must list at least one repo")
+		}
+		seen := map[string]bool{}
+		for i, r := range grp.Repos {
+			rp := fmt.Sprintf("%s.repos[%d]", p, i)
+			switch {
+			case seen[r]:
+				v.errorf(rp, "repo %q is listed twice", r)
+			default:
+				if _, ok := v.m.Repos[r]; !ok {
+					v.errorf(rp, "unknown repo %q", r)
+				}
+			}
+			seen[r] = true
+		}
+		ws := grp.Workspace
+		switch {
+		case ws == "":
+		case !projectName.MatchString(ws):
+			v.errorf(p+".workspace", "%q is not a path-safe file name: use letters, digits, '.', '_' or '-', starting with a letter or digit", ws)
+		default:
+			if _, ok := v.m.Repos[ws]; ok {
+				v.errorf(p+".workspace", "%q collides with the repo of that name", ws)
+			}
+			if first, dup := owner[ws]; dup {
+				v.errorf(p+".workspace", "%q is already the workspace of group %q", ws, first)
+			}
+			owner[ws] = g
+		}
 	}
 }
 
@@ -557,6 +632,11 @@ func (v *manifestValidator) checkConventions() {
 	if s := m.Conventions.MR.Create; !oneOf(s, "", "ask", "always", "never") {
 		v.errorf("conventions.mr.create", "unknown value %q: want ask, always or never", s)
 	}
+	if g := m.Conventions.MR.ReviewerGroup; g != "" {
+		if err := checkReviewerGroup(g); err != nil {
+			v.errorf("conventions.mr.reviewer_group", "%v", err)
+		}
+	}
 	if s := m.Tracker.Iterations.Source; !oneOf(s, "", "auto", "gitlab-iterations", "milestones", "labels", "github-project", "cadence") {
 		v.errorf("tracker.iterations.source", "unknown source %q: want auto, gitlab-iterations, milestones, labels, github-project or cadence", s)
 	}
@@ -589,6 +669,21 @@ func (v *manifestValidator) checkDotfiles() {
 			v.errorf("dotfiles.install", "%q must be a path inside the dotfiles repo", d.Install)
 		}
 	}
+}
+
+// checkReviewerGroup rejects values that cannot be a group path: whitespace, a
+// leading "@" (the manifest names the group, not a mention), and empty path
+// segments from a leading, trailing or doubled "/".
+func checkReviewerGroup(g string) error {
+	switch {
+	case strings.ContainsFunc(g, unicode.IsSpace):
+		return fmt.Errorf("%q must not contain whitespace", g)
+	case strings.HasPrefix(g, "@"):
+		return fmt.Errorf("%q: write the group path without the leading @ (e.g. \"acme/reviewers\")", g)
+	case slices.Contains(strings.Split(g, "/"), ""):
+		return fmt.Errorf("%q must be a group path like \"acme/reviewers\", without a leading, trailing or doubled /", g)
+	}
+	return nil
 }
 
 // --- cycles ---------------------------------------------------------------

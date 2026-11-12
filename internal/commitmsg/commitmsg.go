@@ -17,14 +17,15 @@ import (
 // Placeholders a commit_prefix template may use.
 const (
 	PlaceholderParent  = "{parent}"  // the tracker issue's iid
-	PlaceholderChild   = "{child}"   // the child issue's iid in the code repo (the parent's when there is none)
+	PlaceholderChild   = "{child}"   // the child issue's iid in the code repo, else the branch's leading number, else the parent's
 	PlaceholderProject = "{project}" // the ADE project (manifest name)
 )
 
 // Vars are the values of a template's placeholders.
 type Vars struct {
 	Parent  int
-	Child   int // 0: no child issue; {child} then expands like {parent}
+	Child   int    // 0: no child issue; {child} then expands to the branch's leading number, else like {parent}
+	Branch  string // the branch the work is on; "" when unknown
 	Project string
 }
 
@@ -64,6 +65,9 @@ func Expand(tmpl string, v Vars) (string, error) {
 	}
 	child := v.Child
 	if child == 0 {
+		child = BranchNumber(v.Branch)
+	}
+	if child == 0 {
 		child = v.Parent
 	}
 	return strings.NewReplacer(
@@ -71,6 +75,26 @@ func Expand(tmpl string, v Vars) (string, error) {
 		PlaceholderChild, strconv.Itoa(child),
 		PlaceholderProject, v.Project,
 	).Replace(tmpl), nil
+}
+
+// BranchNumber is the issue number a branch name starts with: the leading run
+// of digits when it ends the name or is followed by '-', '_', '/' or '.'
+// ("57-fix-export", "57_fix", "57/fix", "57" are 57; "2024-cleanup" is 2024).
+// 0 when the name does not start that way ("fix-57", "v2-x", "57x") or the
+// number does not fit an int.
+func BranchNumber(branch string) int {
+	end := 0
+	for end < len(branch) && branch[end] >= '0' && branch[end] <= '9' {
+		end++
+	}
+	if end == 0 || (end < len(branch) && !strings.ContainsRune("-_/.", rune(branch[end]))) {
+		return 0
+	}
+	n, err := strconv.Atoi(branch[:end])
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // Apply puts prefix before msg, separated by one space, unless msg already
