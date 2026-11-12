@@ -62,14 +62,25 @@ func checkForgeToken(ctx context.Context, a *app.App, name string, fg config.For
 
 // runSetupProjects is step 3: add (clone + baseline worktrees + hooks),
 // update (fetch / fast-forward), first sync.
-func runSetupProjects(ctx context.Context, say io.Writer, a *app.App, res *setupResult) {
+// newSources are --project manifests the config does not list yet: Add
+// registers them in the config (appending, never rewriting it).
+func runSetupProjects(ctx context.Context, say io.Writer, a *app.App, newSources []string, res *setupResult) {
 	svc := project.New(a, "ade:setup")
+	sources := make([]string, 0, len(a.Config.Projects)+len(newSources))
 	for _, p := range a.Config.Projects {
-		rep, err := svc.Add(ctx, p.Source)
+		sources = append(sources, p.Source)
+	}
+	sources = append(sources, newSources...)
+	for i, src := range sources {
+		rep, err := svc.Add(ctx, src)
 		if err != nil {
-			step(say, "projects", "add %s: FAILED: %v", p.Source, err)
-			res.problem(exitSetupPartial, "add %s: %v", p.Source, err)
+			step(say, "projects", "add %s: FAILED: %v", src, err)
+			res.problem(exitSetupPartial, "add %s: %v", src, err)
 			continue
+		}
+		if i >= len(sources)-len(newSources) {
+			res.Registered = append(res.Registered, src)
+			step(say, "projects", "registered %s in %s", src, a.Config.File)
 		}
 		res.Add = append(res.Add, rep)
 		step(say, "projects", "%s", rep.Title())
@@ -105,6 +116,44 @@ func runSetupProjects(ctx context.Context, say io.Writer, a *app.App, res *setup
 		}
 		step(say, "sync", "%s: %s, %s", r.Project, plural(len(r.Items), "item"), plural(len(r.Reviews), "review"))
 	}
+}
+
+// unregisteredSources returns the --project sources cfg does not list yet,
+// in order and without duplicates, as they will be stored (local paths made
+// absolute). A local path and a remote URL are compared as written, after
+// resolving local paths the way the config does.
+func unregisteredSources(cfg *config.Config, flagged []string) ([]string, error) {
+	have := map[string]bool{}
+	canon := func(src string) (string, error) {
+		if strings.Contains(src, "://") || strings.HasPrefix(src, "git+") {
+			return src, nil
+		}
+		return cfg.ResolvePath(src)
+	}
+	for _, p := range cfg.Projects {
+		c, err := canon(p.Source)
+		if err != nil {
+			continue // reported by `project add` for that entry
+		}
+		have[c] = true
+	}
+	var out []string
+	for _, src := range flagged {
+		norm, err := project.NormalizeSource(src)
+		if err != nil {
+			return nil, fmt.Errorf("--project %s: %w", src, err)
+		}
+		c, err := canon(norm)
+		if err != nil {
+			return nil, fmt.Errorf("--project %s: %w", src, err)
+		}
+		if have[c] {
+			continue
+		}
+		have[c] = true
+		out = append(out, norm)
+	}
+	return out, nil
 }
 
 // warmShells pre-builds the dev shell of every repo's baseline worktree.

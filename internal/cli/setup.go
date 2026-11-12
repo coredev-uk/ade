@@ -60,7 +60,8 @@ fast to run on every boot:
 
   1. config   no user config yet: created like ` + "`ade init --yes`" + ` from flags or
               ADE_SETUP_* variables, or copied from --config-from <path|url>.
-              An existing config is validated and never overwritten.
+              An existing config is validated and never rewritten; a
+              --project it does not list yet is registered (appended).
   2. token    every configured forge's token (and read token) is checked. A missing or rejected
               token skips the forge steps (3) and exits 3; with a read token, a write
               token that does not resolve exits 3 but the forge steps still run.
@@ -177,6 +178,7 @@ type setupResult struct {
 	Config        string               `json:"config"`
 	ConfigCreated bool                 `json:"config_created"`
 	Tokens        []setupToken         `json:"tokens"`
+	Registered    []string             `json:"registered,omitempty"` // --project sources added to an existing config
 	Add           []project.Report     `json:"add,omitempty"`
 	Update        *project.Report      `json:"update,omitempty"`
 	Sync          []setupSync          `json:"sync,omitempty"`
@@ -300,15 +302,24 @@ func runSetup(cmd *cobra.Command, f setupFlags) error {
 		res.problem(exitSetupPartial, "no forge configured in %s", p.ConfigFile)
 	}
 
-	// 3. projects, update, sync
+	// 3. projects, update, sync. A --project (ADE_SETUP_PROJECT) the existing
+	// config lacks is registered here, as `ade project add` would.
+	newSources, err := unregisteredSources(a.Config, f.init.projects)
+	if err != nil {
+		return withCode(exitSetupFailed, err)
+	}
 	switch {
 	case !tokensOK:
 		res.Skipped = append(res.Skipped, "projects", "update", "sync")
-		step(say, "projects", "skipped: token problem above (fix it and rerun ade setup)")
-	case len(a.Config.Projects) == 0:
+		msg := "skipped: token problem above (fix it and rerun ade setup)"
+		if len(newSources) > 0 {
+			msg += "; not registered yet: " + strings.Join(newSources, ", ")
+		}
+		step(say, "projects", "%s", msg)
+	case len(a.Config.Projects) == 0 && len(newSources) == 0:
 		step(say, "projects", "none configured (ade project add <manifest>)")
 	default:
-		runSetupProjects(ctx, say, a, res)
+		runSetupProjects(ctx, say, a, newSources, res)
 	}
 
 	return finishSetup(cmd, say, a, f, res, start)

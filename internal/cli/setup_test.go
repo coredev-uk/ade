@@ -14,6 +14,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -166,6 +167,48 @@ func TestSetupExistingConfigUntouchedAndSecondRunIsNoop(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(e.home, "elsewhere")); err == nil {
 		t.Error("the env root created a second tree")
+	}
+}
+
+func TestSetupRegistersNewProjectInExistingConfig(t *testing.T) {
+	e := newInitEnv(t)
+	e.setupEnvVars()
+	if _, p, err := e.setup(); err != nil {
+		t.Fatalf("first run: %v\n%s", err, p)
+	}
+
+	// The template's variables gain a second manifest after the config exists.
+	second := filepath.Join(filepath.Dir(e.manifest), "other.ade.toml")
+	body := strings.Replace(mustRead(t, e.manifest), `name = "team"`, `name = "other"`, 1)
+	if err := os.WriteFile(second, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ADE_SETUP_PROJECT", e.manifest+" "+second)
+	res, p, err := e.setup()
+	if err != nil {
+		t.Fatalf("second run: %v\n%s", err, p)
+	}
+	if len(res.Registered) != 1 || res.Registered[0] != second {
+		t.Errorf("registered = %v, want [%s]\n%s", res.Registered, second, p)
+	}
+	cfg, lerr := config.Load(e.configPath())
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if len(cfg.Projects) != 2 || cfg.Projects[1].Source != second {
+		t.Errorf("projects = %+v", cfg.Projects)
+	}
+	if _, err := os.Stat(filepath.Join(e.home, "ade", "other", "api", "main", "README")); err != nil {
+		t.Errorf("the new project was not cloned: %v", err)
+	}
+
+	before := mustRead(t, e.configPath())
+	res, p, err = e.setup()
+	if err != nil {
+		t.Fatalf("third run: %v\n%s", err, p)
+	}
+	if len(res.Registered) != 0 || mustRead(t, e.configPath()) != before {
+		t.Errorf("a repeat run registered again: %v", res.Registered)
 	}
 }
 
@@ -577,5 +620,41 @@ func TestSetupKeepsReadingWhenTheWriteTokenDoesNotResolve(t *testing.T) {
 	}
 	if len(res.Sync) == 0 {
 		t.Errorf("a write token that does not resolve must not skip the forge steps: sync = %+v", res.Sync)
+	}
+}
+
+func TestUnregisteredSources(t *testing.T) {
+	cfgDir := filepath.Join(t.TempDir(), "cfg")
+	cfg := &config.Config{File: filepath.Join(cfgDir, "config.toml"), Projects: []config.ProjectRef{
+		{Source: "/abs/a.toml"},
+		{Source: "rel.toml"}, // relative to the config file
+		{Source: "https://example.com/m.toml"},
+		{Source: "git+https://example.com/team.git#acme.ade.toml"},
+	}}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		flagged []string
+		want    []string
+	}{
+		{"nothing flagged", nil, nil},
+		{"already registered", []string{"/abs/a.toml"}, nil},
+		{"a path written differently", []string{"/abs/../abs/a.toml"}, nil},
+		{"registered relative to the config file", []string{filepath.Join(cfgDir, "rel.toml")}, nil},
+		{"remote sources already registered", []string{"https://example.com/m.toml", "git+https://example.com/team.git#acme.ade.toml"}, nil},
+		{"new local path", []string{"/abs/b.toml"}, []string{"/abs/b.toml"}},
+		{"relative path becomes absolute against the working directory", []string{"b.toml"}, []string{filepath.Join(cwd, "b.toml")}},
+		{"new remote sources are kept as written", []string{"https://example.com/n.toml", "git+ssh://git@example.com/t.git#n.ade.toml"}, []string{"https://example.com/n.toml", "git+ssh://git@example.com/t.git#n.ade.toml"}},
+		{"duplicates and registered ones dropped, order kept", []string{"/abs/c.toml", "/abs/a.toml", "/abs/b.toml", "/abs/c.toml", "/abs/../abs/b.toml"}, []string{"/abs/c.toml", "/abs/b.toml"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := unregisteredSources(cfg, tc.flagged)
+			if err != nil || !slices.Equal(got, tc.want) {
+				t.Errorf("unregisteredSources(%v) = %v, %v; want %v", tc.flagged, got, err, tc.want)
+			}
+		})
 	}
 }
