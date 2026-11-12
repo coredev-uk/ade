@@ -160,6 +160,13 @@ func TestProjectAgentsFromHTTPSourceCannotResolve(t *testing.T) {
 
 func TestProjectShellIsWrittenAndRemoved(t *testing.T) {
 	e := newEnv(t)
+	// The script is written whether or not nix exists; a stub keeps the
+	// missing-nix warning (its own test) out of the idempotence check.
+	stub := t.TempDir()
+	if err := os.WriteFile(filepath.Join(stub, "nix"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", stub+string(os.PathListSeparator)+os.Getenv("PATH"))
 	r := newRemote(t, "api")
 	src := e.manifest("demo", map[string]*remote{"api": r}, nil)
 	withProject(t, src, "[project]\npackages = [\"nodejs_22\", \"pnpm\"]\nnixpkgs = \"github:NixOS/nixpkgs/nixos-25.05\"\n")
