@@ -2,6 +2,7 @@ package startwork_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -794,5 +795,158 @@ func TestExistingChildIsFoundThroughTheHierarchy(t *testing.T) {
 	web := target(t, res, "web")
 	if web.Child == nil || *web.Child != pair.Child {
 		t.Fatalf("web child = %v, want %s", web.Child, pair.Child)
+	}
+}
+
+func pinned(repo, branch string) startwork.Choices {
+	ch := draftApi()
+	ch.Repos = []string{repo}
+	ch.Branches = map[string]string{repo: branch}
+	return ch
+}
+
+// mrSources lists the source branches of the MRs on branches ade made, apart
+// from the ones the fake seeds.
+func mrSources(t *testing.T, h *harness, project string, branches ...string) []string {
+	t.Helper()
+	mrs, err := h.forge.ListMRs(context.Background(), forge.MRQuery{Project: project, State: "all"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, mr := range mrs {
+		if slices.Contains(branches, mr.SourceBranch) {
+			out = append(out, mr.SourceBranch)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+func TestPinnedNewBranchGetsItsOwnBranchMRAndWorktree(t *testing.T) {
+	h := newHarness(t, fake.Free)
+	if _, _, err := h.start(3, draftApi()); err != nil { // the default set of changes
+		t.Fatal(err)
+	}
+	plan, res, err := h.start(3, pinned("api", "hotfix/retry-cache"))
+	if err != nil {
+		t.Fatalf("start: %v\n%+v", err, res.Steps)
+	}
+	api := target(t, res, "api")
+	if want := filepath.Join(h.app.Root, "demo-gl", "api", "hotfix-retry-cache"); api.Worktree != want || api.Branch != "hotfix/retry-cache" {
+		t.Errorf("target = %+v, want branch hotfix/retry-cache in %s", api, want)
+	}
+	if !plan.Targets[0].Pinned || plan.Targets[0].Found.Branch != "" {
+		t.Errorf("target plan = %+v, want a pinned branch that does not exist yet", plan.Targets[0])
+	}
+	if got := countOutcome(res, startwork.OutcomeCreated); got != 3 { // branch, MR, worktree; the child is reused
+		t.Errorf("%d steps created, want 3: %+v", got, res.Steps)
+	}
+	if got := mrSources(t, h, apiProj, "3-retry-failed-webhook-deliveries", "hotfix/retry-cache"); len(got) != 2 {
+		t.Errorf("MR source branches = %v: want one MR per branch", got)
+	}
+
+	// Again: the pinned branch is now found, with its MR and worktree.
+	before := h.writes()
+	plan, _, err = h.start(3, pinned("api", "hotfix/retry-cache"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.writes() != before || plan.Pending() != 0 {
+		t.Errorf("re-run: %d writes, %d pending steps, want none", h.writes()-before, plan.Pending())
+	}
+}
+
+func TestPinnedExistingBranchIsReusedWithoutCreatingIt(t *testing.T) {
+	h := newHarness(t, fake.Free)
+	ctx := context.Background()
+	if _, err := h.forge.CreateBranch(ctx, apiProj, "second-set", "main"); err != nil {
+		t.Fatal(err)
+	}
+	h.forge.FailNext("CreateBranch", errBoom) // any CreateBranch from here on fails the test
+	plan, res, err := h.start(3, pinned("api", "second-set"))
+	if err != nil {
+		t.Fatalf("start: %v\n%+v", err, res.Steps)
+	}
+	tp := plan.Targets[0]
+	if !tp.Pinned || tp.Found.Branch != "second-set" || tp.Branch != "second-set" {
+		t.Fatalf("target plan = %+v, want the existing second-set", tp)
+	}
+	api := target(t, res, "api")
+	if api.MR == nil || api.Worktree != filepath.Join(h.app.Root, "demo-gl", "api", "second-set") {
+		t.Fatalf("target = %+v: want a new MR and the worktree of second-set", api)
+	}
+	if got := mrSources(t, h, apiProj, "second-set"); len(got) != 1 {
+		t.Errorf("MRs from second-set = %v, want one", got)
+	}
+
+	// The worktree of the branch is reused, not added again.
+	plan, _, err = h.start(3, pinned("api", "second-set"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Pending() != 0 {
+		t.Errorf("re-run has %d pending steps: %+v", plan.Pending(), plan.Steps)
+	}
+	for _, s := range plan.Steps {
+		if s.Kind == startwork.StepWorktree && !s.Done {
+			t.Errorf("worktree step = %+v, want the existing tree reused", s)
+		}
+	}
+}
+
+func TestPinnedBranchWithItsMROpensNoNewMR(t *testing.T) {
+	h := newHarness(t, fake.Free)
+	_, res, err := h.start(3, draftApi())
+	if err != nil {
+		t.Fatal(err)
+	}
+	def := target(t, res, "api")
+	before := h.writes()
+	plan, _, err := h.start(3, pinned("api", def.Branch))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.writes() != before || plan.Pending() != 0 || plan.Targets[0].Found.MR == nil {
+		t.Errorf("pinning the existing branch: %d writes, %d pending, MR %v", h.writes()-before, plan.Pending(), plan.Targets[0].Found.MR)
+	}
+}
+
+func TestPinnedBranchOnlyAffectsItsRepo(t *testing.T) {
+	h := newHarness(t, fake.Free)
+	ch := startwork.Choices{
+		Repos: []string{"api", "web"}, Mode: startwork.ModeDraft, Child: startwork.ChildAuto,
+		Branches: map[string]string{"web": "second-set"},
+	}
+	_, res, err := h.start(8, ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	api, web := target(t, res, "api"), target(t, res, "web")
+	if web.Branch != "second-set" || !strings.HasPrefix(api.Branch, fmt.Sprint(api.Child.IID, "-")) {
+		t.Errorf("branches: api %q, web %q: want api derived and web pinned", api.Branch, web.Branch)
+	}
+	if web.Child == nil {
+		t.Error("the pinned repo got no child issue: pinning changes only the branch")
+	}
+}
+
+func TestDryRunNamesThePinnedBranchAsNewOrExisting(t *testing.T) {
+	h := newHarness(t, fake.Free)
+	if _, err := h.forge.CreateBranch(context.Background(), apiProj, "second-set", "main"); err != nil {
+		t.Fatal(err)
+	}
+	for branch, want := range map[string]string{
+		"second-set": "branch for api: second-set (existing)",
+		"fresh-one":  "branch for api: fresh-one (new, from main)",
+	} {
+		before := h.writes()
+		_, res, err := h.env.Start(context.Background(), h.resolve(3), pinned("api", branch), true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if h.writes() != before || !slices.Contains(res.Notes, want) {
+			t.Errorf("%s: writes %d→%d, notes %q, want %q", branch, before, h.writes(), res.Notes, want)
+		}
 	}
 }

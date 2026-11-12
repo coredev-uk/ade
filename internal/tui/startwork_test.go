@@ -875,3 +875,51 @@ func (e *swEnvT) typ(s string) {
 		e.press(string(r))
 	}
 }
+
+func TestStartDialogBranchKeyPinsARepoBranch(t *testing.T) {
+	e := newSWEnv(t)
+	e.selectRow(trk(3).String())
+	e.press("s", "j", "b") // the web row
+	if e.m.sw.branchIn == nil {
+		t.Fatal("b did not open the branch input")
+	}
+	e.want("branch ", "empty: the derived name")
+	e.typ("second set")
+	e.press("enter") // a name with a space is refused
+	if e.m.sw.branchIn == nil || !strings.Contains(e.m.sw.warn, "not a valid branch name") {
+		t.Fatalf("invalid name accepted: input open %v, warn %q", e.m.sw.branchIn != nil, e.m.sw.warn)
+	}
+	e.press("backspace", "backspace", "backspace", "backspace", "backspace", "backspace", "backspace", "backspace", "backspace", "backspace", "backspace")
+	e.typ("second-set")
+	e.press("enter")
+	if e.m.sw.branchIn != nil || e.m.sw.ch.Branches["web"] != "second-set" {
+		t.Fatalf("branches = %v, input open %v", e.m.sw.ch.Branches, e.m.sw.branchIn != nil)
+	}
+	if got := e.m.sw.chosen(); !slices.Equal(got, []string{"api", "web"}) {
+		t.Errorf("repos = %v: naming a branch should tick the repo", got)
+	}
+	e.want("branch second-set")
+
+	// Esc leaves the typed text out; an empty name drops the pin.
+	e.press("b")
+	e.typ("zzz")
+	e.press("esc")
+	if e.m.sw.ch.Branches["web"] != "second-set" {
+		t.Errorf("esc changed the branch: %v", e.m.sw.ch.Branches)
+	}
+	e.press("b")
+	e.press(strings.Split(strings.Repeat("backspace,", len("second-set")), ",")[:len("second-set")]...)
+	e.press("enter")
+	if len(e.m.sw.ch.Branches) != 0 {
+		t.Errorf("an empty name kept %v", e.m.sw.ch.Branches)
+	}
+
+	e.press("b")
+	e.typ("second-set")
+	e.press("enter", "enter")
+	if e.m.sw.stage != swConfirm {
+		t.Fatalf("stage = %v (warn %q, err %v)", e.m.sw.stage, e.m.sw.warn, e.m.sw.err)
+	}
+	e.want("branch second-set (new)", "create branch second-set from main")
+	e.wantNot("branch " + startwork.ChildIIDPlaceholder + "-retry (new)")
+}

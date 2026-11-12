@@ -163,8 +163,8 @@ ade                       # attach to (or create) the zellij session "ade" with 
 ### The daily loop
 
 1. **Home** shows your issues and MRs by stage. Move with the arrow keys or `j`/`k`; `?` lists every key; `/` searches.
-2. **`s` start work** on an item: pick repos, branch/MR mode, child issue behaviour. ADE creates the branch, a worktree and a zellij tab.
-3. **The tab** has your main pane (editor, or an `omp` agent, depending on `host.layout`), the item's live overview, lazygit, a shell, and one pane per service. Service panes wait: press **Enter** in a pane to start that service; Ctrl-C stops it. `ade ws restart <node>` restarts one with its dependents.
+2. **`s` start work** on an item: pick repos, branch/MR mode, child issue behaviour (`b` on a repo row names its branch when a sibling repo carries a second set of changes). ADE creates the branch, a worktree and a zellij tab.
+3. **The tab** has your main pane (editor, or an `omp` agent, depending on `host.layout`), the item's live overview, lazygit, a shell, and one pane per task of the workspace itself. Task panes wait: press **Enter** in a pane to start it; Ctrl-C stops it. The first time a workspace opens, ADE also creates an unfocused `<tab> · services` tab: it installs the repos' dependencies first (`hooks.install`), then starts the services in dependency order, each waiting for what it requires (a service with a `port` counts as ready once the port accepts connections). `services = "manual"` on the workspace skips that tab and keeps the services in the strip, waiting for Enter. `ade ws restart <node>` restarts one with its dependents.
 4. **`v`** opens a multi-root VS Code workspace for the item (all repos of the project).
 5. **Enter** on an MR opens the MR page: threads, diff, CI; reply, resolve, approve, mark ready, merge. `ade review <group/project!N>` opens someone else's MR in a review tab; collected line comments go out as one review batch.
 6. **Clean up** with `ade gc`, which removes worktrees of merged or closed MRs when they are clean and pushed.

@@ -19,5 +19,6 @@
 |   o always  always a child issue                                             |
 |   o never   none: branch and MR reference the tracker issue                  |
 |  Main pane  * editor  o omp  o shell  a toggles - your editor beside lazy... |
-| space select   m mode   c child   a main pane   enter continue   esc cancel  |
+| space select   b branch   m mode   c child   a main pane   enter continue    |
+| esc cancel                                                                   |
 +------------------------------------------------------------------------------+

@@ -408,8 +408,12 @@ EOF
   Z() { env -u ZELLIJ -u ZELLIJ_SESSION_NAME -u ZELLIJ_PANE_ID zellij "$@"; }
   Z delete-session --force "$SESSION" >/dev/null 2>&1 || true
   "$ADE" ws layout "$WEB/main" >"$WS/layout.kdl"
-  grep -q 'tab name="web/main"' "$WS/layout.kdl" && grep -q '"task" "run" "api.db"' "$WS/layout.kdl" && grep -q '"task" "run" "api.dev"' "$WS/layout.kdl" && grep -q '"task" "run" "web.dev"' "$WS/layout.kdl" \
-    && pass "layout has the tab and a pane per run-graph node" || { cat "$WS/layout.kdl" >&2; fail "layout lacks tab or node panes"; }
+  grep -q 'tab name="web/main"' "$WS/layout.kdl" && grep -q '"task" "run" "web.dev"' "$WS/layout.kdl" && ! grep -q '"task" "run" "api.dev"' "$WS/layout.kdl" \
+    && pass "layout has the tab and a pane for the workspace's own task (web.dev); the services of the api tree are not in it" || { cat "$WS/layout.kdl" >&2; fail "layout lacks the tab or its task pane"; }
+  "$ADE" ws layout "$WEB/main" --services >"$WS/layout-services.kdl"
+  grep -q 'tab name="web/main · services"' "$WS/layout-services.kdl" && grep -q '"task" "run" "api.db"' "$WS/layout-services.kdl" && grep -q '"task" "run" "api.dev"' "$WS/layout-services.kdl" \
+    && grep -q -e '--wait-requires' "$WS/layout-services.kdl" && ! grep -q 'start_suspended' "$WS/layout-services.kdl" \
+    && pass "the services tab has a pane for api.db and api.dev that waits for its requirements and is not suspended" || { cat "$WS/layout-services.kdl" >&2; fail "services tab layout"; }
   Z attach --create-background "$SESSION" >/dev/null 2>&1
   # A client must be attached for panes to be created; `script` provides a pty.
   command -v script >/dev/null || fail "script (util-linux) is needed to attach a pty client"
@@ -425,29 +429,28 @@ EOF
   wait_for 20 bash -c "env -u ZELLIJ -u ZELLIJ_SESSION_NAME -u ZELLIJ_PANE_ID zellij --session $SESSION action list-panes --json | jq -e '[.[] | select(.tab_name == \"web/main\" and .is_plugin == false)] | length >= 3' >/dev/null" \
     && pass "panes were created in the tab" || fail "tab has no panes"
   Z --session "$SESSION" action list-panes --json >"$WS/panes.json"
-  expect_json "panes run 'ade task run' for api.db, api.dev and web.dev in the worktree" "$WS/panes.json" \
-    '[.[] | select(.tab_name == "web/main") | .terminal_command // ""] | (any(contains("task run api.db")) and any(contains("task run api.dev")) and any(contains("task run web.dev")))'
-  expect_json "every running pane's cwd is the worktree (service panes wait for Enter, so they have no process yet)" "$WS/panes.json" \
+  expect_json "panes run 'ade task run' for web.dev in the tab and for api.db and api.dev in its services tab" "$WS/panes.json" \
+    '([.[] | select(.tab_name == "web/main") | .terminal_command // ""] | any(contains("task run web.dev"))) and ([.[] | select(.tab_name == "web/main · services") | .terminal_command // ""] | (any(contains("task run api.db")) and any(contains("task run api.dev"))))'
+  expect_json "every running pane's cwd is the worktree (a task pane waits for Enter, so it has no process yet)" "$WS/panes.json" \
     "[.[] | select(.tab_name == \"web/main\" and .is_plugin == false and .exited == false and .pane_cwd != null) | .pane_cwd] | (length >= 1) and all(. == \"$WEB/main\")"
   expect_json "the tab's panes sit below the tab bar (the new tab has the standard chrome)" "$WS/panes.json" \
     '[.[] | select(.tab_name == "web/main" and .is_plugin == false) | .pane_y] | min >= 1'
   mapfile -t TABS_NOW < <(Z --session "$SESSION" action query-tab-names)
   for t in "${TABS_BEFORE[@]}"; do printf '%s\n' "${TABS_NOW[@]}" | grep -qxF "$t" && pass "tab '$t' survived the open" || fail "tab '$t' disappeared"; done
-  sleep 3
-  [[ $("$ADE" ws status --json | jq length) == 0 ]] && pass "nothing started when the tab opened: the service panes wait for Enter" || fail "an instance started on open"
-  pane_of() { Z --session "$SESSION" action list-panes --json | jq -r --arg n "$1" '[.[] | select(.tab_name == "web/main" and .title == $n and .is_plugin == false) | "terminal_\(.id)"] | first // empty'; }
-  Z --session "$SESSION" action dump-screen --pane-id "$(pane_of web.dev)" | grep -q 'Waiting to run' && pass "the web.dev pane shows its command and waits" || fail "web.dev pane is not waiting"
-  Z --session "$SESSION" action send-keys --pane-id "$(pane_of web.dev)" Enter
+  # The services tab starts api by itself (db first, then api once db is ready); the strip's web.dev waits for Enter.
+  wait_for 240 bash -c "[[ \$('$ADE' ws status --json | jq '[.[] | select(.node == \"api.dev\" and .alive)] | length') == 1 ]]" \
+    && pass "the services tab started api.dev on its own, after api.db" || fail "api.dev did not start from the services tab"
+  [[ $("$ADE" ws status --json | jq '[.[] | select(.node == "web.dev" and .alive)] | length') == 0 ]] && pass "web.dev, a task of the tab's strip, did not start on open" || fail "web.dev started on open"
+  pane_of() { Z --session "$SESSION" action list-panes --json | jq -r --arg t "$1" --arg n "$2" '[.[] | select(.tab_name == $t and .title == $n and .is_plugin == false) | "terminal_\(.id)"] | first // empty'; }
+  Z --session "$SESSION" action dump-screen --pane-id "$(pane_of web/main web.dev)" | grep -q 'Waiting to run' && pass "the web.dev pane shows its command and waits" || fail "web.dev pane is not waiting"
+  Z --session "$SESSION" action dump-screen --pane-id "$(pane_of 'web/main · services' api.dev)" | grep -q 'ade: ready api.dev' && pass "the services tab's api.dev pane reports ready" || fail "api.dev pane is not ready"
+  Z --session "$SESSION" action send-keys --pane-id "$(pane_of web/main web.dev)" Enter
   wait_for 240 bash -c "[[ \$('$ADE' ws status --json | jq '[.[] | select(.node == \"web.dev\" and .alive)] | length') == 1 ]]" \
     || fail "Enter in the web.dev pane did not bring up web.dev"
   WEB_Z=$(jq -r --arg d "$WEB/main" '.[] | select(.tree == $d and .node == "web.dev") | .port' <("$ADE" ws status --json))
   wait_for 30 bash -c "curl -fsS --max-time 5 http://127.0.0.1:$WEB_Z/healthz | jq -e .api.reachable >/dev/null" \
-    && pass "web started from its pane brought up its requirement api and reaches it" || fail "web in the tab cannot reach api"
-  [[ $("$ADE" ws status --json | jq '[.[] | select(.node == "api.dev" and .alive)] | length') == 1 ]] && pass "one api instance, started by web's pane" || fail "api not started once"
-  Z --session "$SESSION" action send-keys --pane-id "$(pane_of api.dev)" Enter
-  wait_for 60 bash -c "env -u ZELLIJ -u ZELLIJ_SESSION_NAME -u ZELLIJ_PANE_ID zellij --session $SESSION action dump-screen --pane-id $(pane_of api.dev) | grep -q 'ade: ready api.dev'" \
-    && pass "Enter in the api.dev pane then shares the running instance" || fail "api.dev pane did not start"
-  [[ $("$ADE" ws status --json | jq '[.[] | select(.node == "api.dev")] | length') == 1 ]] && pass "still one api instance behind both panes" || fail "api started twice"
+    && pass "web started from its pane reaches the api the services tab started" || fail "web in the tab cannot reach api"
+  [[ $("$ADE" ws status --json | jq '[.[] | select(.node == "api.dev")] | length') == 1 ]] && pass "one api instance, held by the services tab" || fail "api started twice"
   "$ADE" ws up "$WEB/main" --session "$SESSION" --json >"$WS/open2.json"
   expect_json "opening again focuses the existing tab (idempotent)" "$WS/open2.json" '.created == false'
   [[ $(Z --session "$SESSION" action query-tab-names | grep -cx 'web/main') == 1 ]] && pass "still exactly one web/main tab" || fail "duplicate tab"

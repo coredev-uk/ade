@@ -244,6 +244,9 @@ func (e *Env) findChild(ctx context.Context, tracker forge.Issue, project string
 // computed name counts, since another issue of that number could own a prefix.
 func (e *Env) findBranchAndMR(ctx context.Context, item domain.WorkItem, m *config.Manifest, ch Choices, t Target, work forge.Ref, f *Found) error {
 	withChild := useChild(m, ch, t)
+	if pin := ch.Branches[t.Name]; pin != "" {
+		return e.findPinnedBranch(ctx, t, pin, f)
+	}
 	switch {
 	case withChild && f.Child != nil:
 		bs, err := e.Forge.Branches(ctx, t.Project, fmt.Sprintf("%d-", f.Child.Ref.IID))
@@ -283,6 +286,26 @@ func (e *Env) findBranchAndMR(ctx context.Context, item domain.WorkItem, m *conf
 			f.Branch = f.MR.SourceBranch
 		}
 	}
+	return nil
+}
+
+// findPinnedBranch looks up the branch Choices.Branches names, by exact name,
+// and its MR. No other branch or MR of the issue stands in for it: the pin
+// asks for a separate set of changes.
+func (e *Env) findPinnedBranch(ctx context.Context, t Target, name string, f *Found) error {
+	bs, err := e.Forge.Branches(ctx, t.Project, name)
+	if err != nil {
+		return err
+	}
+	if !slices.Contains(bs, name) {
+		return nil
+	}
+	f.Branch = name
+	mrs, err := e.Forge.ListMRs(ctx, forge.MRQuery{Project: t.Project, SourceBranch: name, State: "all"})
+	if err != nil {
+		return err
+	}
+	f.MR = pickMR(mrs)
 	return nil
 }
 

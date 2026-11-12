@@ -131,6 +131,11 @@ func (e *Env) DryRun(p Plan) Result {
 		res.Targets = append(res.Targets, tr)
 	}
 	for _, tp := range p.Targets {
+		if tp.Pinned {
+			res.Notes = append(res.Notes, tp.PinnedNote())
+		}
+	}
+	for _, tp := range p.Targets {
 		if st := stepOf(p, StepMR, tp.Target.Name); st != nil && !st.Done {
 			var child forge.Ref
 			if tp.Found.Child != nil {
@@ -187,7 +192,7 @@ func (e *Env) Execute(ctx context.Context, p Plan) (Result, error) {
 			rt.child = tp.Found.Child.Ref
 			rt.result.Child, rt.result.ChildURL = &tp.Found.Child.Ref, tp.Found.Child.WebURL
 		}
-		if rt.branch == "" && (!tp.UseChild || !rt.child.IsZero()) {
+		if rt.branch == "" && (!tp.UseChild || !rt.child.IsZero() || tp.Pinned) {
 			rt.branch = tp.Branch
 		}
 		rt.result.Branch = tp.Found.Branch

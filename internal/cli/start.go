@@ -4,12 +4,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/coredev-uk/ade/internal/app"
+	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/forgesync"
 	"github.com/coredev-uk/ade/internal/project"
 	"github.com/coredev-uk/ade/internal/startwork"
@@ -27,6 +30,7 @@ var mrExtraCmds []func() *cobra.Command
 // startFlags are the choices both `ade start` and `ade mr create` take.
 type startFlags struct {
 	repos       []string
+	branches    []string
 	mode        string
 	child       string
 	template    string
@@ -44,6 +48,7 @@ func (f *startFlags) bind(cmd *cobra.Command, withMode bool) {
 	fl := cmd.Flags()
 	fl.StringSliceVar(&f.repos, "repo", nil, "manifest repo to work in (repeatable); default: the repos the app labels route to")
 	if withMode {
+		fl.StringArrayVar(&f.branches, "branch", nil, "work on this branch in a repo instead of the derived name: repo=branch (repeatable); an existing branch and its MR are reused, and the repo is added to the work")
 		fl.StringVar(&f.mode, "mode", "", "draft (child, branch, draft MR) | branch (no MR yet) | browse (no forge writes); default from conventions.mr.create")
 		fl.BoolVar(&f.moveLabel, "move-label", false, "confirm the workflow label move when labels.workflow.sync = ask")
 		fl.BoolVar(&f.noLabel, "no-move-label", false, "do not move the workflow label")
@@ -71,7 +76,7 @@ func newStartCmd() *cobra.Command {
 			"It is idempotent: an existing child, branch or MR is found and reused, so a re-run creates\n" +
 			"nothing and a failed run resumes. --dry-run shows every write, and the MR body, first.\n" +
 			"<tracker-ref> is group/project#N, or N when one project is registered.",
-		Example: "  ade start acme/tracker#128\n  ade start 128 --repo api --mode branch\n  ade start 128 --dry-run --json",
+		Example: "  ade start acme/tracker#128\n  ade start 128 --repo api --mode branch\n  ade start 128 --repo api --branch web=fix-retry-cache\n  ade start 128 --dry-run --json",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			f.dryRun, _ = cmd.Flags().GetBool("dry-run")
@@ -171,6 +176,9 @@ func (f startFlags) choices(r *startwork.Resolved) (startwork.Choices, error) {
 		return ch, errors.New("--move-label and --no-move-label contradict each other")
 	}
 	ch.MoveLabel, ch.NoMoveLabel = f.moveLabel, f.noLabel
+	if err := f.pinBranches(r.Manifest, &ch); err != nil {
+		return ch, err
+	}
 	ch.Template = f.template
 	for _, s := range f.strip {
 		if s == "all" {
@@ -186,6 +194,32 @@ func (f startFlags) choices(r *startwork.Resolved) (startwork.Choices, error) {
 		ch.MRBody = string(b)
 	}
 	return ch, nil
+}
+
+// pinBranches turns --branch repo=branch into ch.Branches and adds those repos
+// to the chosen ones.
+func (f startFlags) pinBranches(m *config.Manifest, ch *startwork.Choices) error {
+	pins, err := keyValues("--branch", f.branches)
+	if err != nil || pins == nil {
+		return err
+	}
+	if ch.Mode == startwork.ModeBrowse {
+		return errors.New("--branch has no effect with --mode browse")
+	}
+	for _, repo := range slices.Sorted(maps.Keys(pins)) {
+		_, known := m.Repos[repo]
+		if !known && (repo != startwork.TrackerRepo || m.Tracker.Project == "") {
+			return fmt.Errorf("--branch %s=%s: unknown repo (have: %s)", repo, pins[repo], strings.Join(m.RepoNames(), ", "))
+		}
+		if err := startwork.ValidBranchName(pins[repo]); err != nil {
+			return fmt.Errorf("--branch %s=%s: %w", repo, pins[repo], err)
+		}
+		if !slices.Contains(ch.Repos, repo) {
+			ch.Repos = append(ch.Repos, repo)
+		}
+	}
+	ch.Branches = pins
+	return nil
 }
 
 // newStartEnv wires start work to the real git auth and the workspace host.
