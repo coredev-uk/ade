@@ -19,6 +19,13 @@
 - **Install hooks:** `[repos.<r>.hooks] install` runs once per worktree (again when the commands change, or with `ade ws install --force`), inside the repo's dev shell.
 - **`ade start --branch <repo>=<branch>`** (and `b` in the start dialog) pins a sibling repo to a named branch: an existing branch and its MR are reused, a new name is created. The dry run notes the branch per repo.
 - **AI answers cut short** show a note beside the text, never inside it, so a draft reply or a parsed answer never contains it. The same prompt is not re-bought for 30 minutes unless you refresh, and the pre-flight shows the retry's worst case. Summaries, draft replies, standups and sprint reviews are renewed once.
+- **Project dotfiles:** a `[dotfiles]` table in the manifest names the team dotfiles repo (the one used with `coder dotfiles`). `ade setup` and `ade dotfiles` clone or update it and run its install script, or symlink its dotfiles into `$HOME`, as Coder does. Inside Coder they skip a repo Coder already applied. `[dotfiles]` in the user config can switch it off or point elsewhere, and `ade doctor` reports it.
+- **Classify and weight** work on app-repo issues and closed issues, skip a project whose manifest cannot be read, and show the real error when the issue cannot be read.
+- **Facets from the parent:** an app-repo issue or MR without its own type, apps or weight takes them from its tracker issue, on Home rows, review rows and the detail pane.
+- **Reviews** no longer list draft MRs. A draft marked ready appears then.
+- **Notes on work:** `ade note <ref> <text> [--blocked]` and `N` on Home add a dated local note (never sent to the forge). The side panel shows the newest three, and a row whose newest note is blocked is marked.
+- **CI job log** fills the screen, reads the last 512 KiB, and searches with `/`, `n` and `N`.
+- **Sprint review** with several projects opens on the first project with sprints instead of failing. `p` switches projects; the CLI says which project it chose.
 - **Background services:** opening a workspace for the first time also opens an unfocused `<tab> · services` tab. It runs the install hooks first, then each service in dependency order, with no "waiting to run" panes. A required service with a port and no `ready` check counts as ready when its port accepts connections. `[workspaces.<w>] services = "manual"` keeps the old on-demand strip. A waiting pane reports every 30 seconds and stops with the reason when its dependency or the install failed, or after `--wait-timeout` (10 minutes by default). A lockfile change at the worktree root reruns the install.
 
 ## v0.1.0
