@@ -112,17 +112,52 @@ func (c *Collector) Standup(ctx context.Context, date time.Time) (Standup, error
 	if err != nil {
 		return Standup{}, err
 	}
-	results, err := c.cached()
-	if err != nil {
-		return Standup{}, err
-	}
 	now := c.now()
 	if date.IsZero() {
 		date = now
 	}
 	in := StandupInput{Date: date, Cal: cal, Now: now}
 	from, to := in.Window()
+	warns, err := c.gather(ctx, &in, from, to)
+	if err != nil {
+		return Standup{}, err
+	}
+	s := BuildStandup(in)
+	s.Warnings = warns
+	return s, nil
+}
 
+// lastDayLookback is how far back LastDay looks for your last working day.
+const lastDayLookback = 14
+
+// LastDay finds your last working day before today (the last day you pushed
+// commits or opened or merged an MR, whatever the calendar says) within the
+// past two weeks, with what you did that day.
+func (c *Collector) LastDay(ctx context.Context) (LastDay, error) {
+	cal, err := c.calendar()
+	if err != nil {
+		return LastDay{}, err
+	}
+	now := c.now()
+	in := StandupInput{Date: now, Cal: cal, Now: now}
+	to := cal.Day(now)
+	warns, err := c.gather(ctx, &in, to.AddDate(0, 0, -lastDayLookback), to)
+	if err != nil {
+		return LastDay{}, err
+	}
+	l := BuildLastDay(in)
+	l.Warnings = warns
+	return l, nil
+}
+
+// gather fills in what the reports read: your identity, the cached items and
+// reviews, the forge feeds of every project over [from, to), the audit log
+// since from and the inbox. Sources that cannot be read become warnings.
+func (c *Collector) gather(ctx context.Context, in *StandupInput, from, to time.Time) ([]string, error) {
+	results, err := c.cached()
+	if err != nil {
+		return nil, err
+	}
 	for _, r := range results {
 		if r.Err == "" || len(r.Items) > 0 {
 			in.Me = append(in.Me, r.Me)
@@ -182,9 +217,7 @@ func (c *Collector) Standup(ctx context.Context, date time.Time) (Standup, error
 			}
 		}
 	}
-	s := BuildStandup(in)
-	s.Warnings = warns
-	return s, nil
+	return warns, nil
 }
 
 // brief drops the request URL from a transport failure: "dial tcp …: connection

@@ -42,10 +42,62 @@ func (n *AINarrator) Narrate(ctx context.Context, s Standup) (string, error) {
 	return n.run(ctx, ai.StandupJob("all", day, RenderStandup(s, Markdown)))
 }
 
-// NarrateReview writes the sprint review narrative.
+// NarrateReview writes the sprint review narrative, a structured retro. Its
+// facts are the review as Markdown plus a timeline of when items finished.
 func (n *AINarrator) NarrateReview(ctx context.Context, r Review) (string, error) {
 	r.Narrative, r.Warnings = "", nil
-	return n.run(ctx, ai.SprintReviewJob(r.Project, r.Sprint.Title, r.Sprint.Start.Time, RenderReview(r, Markdown)))
+	return n.run(ctx, ai.SprintReviewJob(r.Project, r.Sprint.Title, r.Sprint.Start.Time, RenderReview(r, Markdown)+reviewTimeline(r)))
+}
+
+// reviewTimeline lists, earliest first, when items were finished and when
+// their last MR merged, so the retro can be told in date order.
+func reviewTimeline(r Review) string {
+	type event struct {
+		at   time.Time
+		text string
+	}
+	var evs []event
+	for _, it := range r.Items {
+		if it.MergedAt != nil {
+			text := short(it.Ref) + " merged"
+			if len(it.MRs) > 0 {
+				text += " (" + strings.Join(it.MRs, ", ") + ")"
+			}
+			evs = append(evs, event{*it.MergedAt, text + ": " + it.Title})
+		}
+		if it.Done && it.DoneAt != nil {
+			evs = append(evs, event{*it.DoneAt, short(it.Ref) + " done: " + it.Title})
+		}
+	}
+	if len(evs) == 0 {
+		return ""
+	}
+	slices.SortStableFunc(evs, func(a, b event) int { return a.at.Compare(b.at) })
+	var b strings.Builder
+	b.WriteString("\n## Timeline\n\n")
+	for _, e := range evs {
+		fmt.Fprintf(&b, "- %s · %s\n", e.at.Format("Mon 2 Jan"), e.text)
+	}
+	return b.String()
+}
+
+// NarrateLastDay writes the summary of your last working day.
+func (n *AINarrator) NarrateLastDay(ctx context.Context, l LastDay) (string, error) {
+	return n.run(ctx, ai.LastDayJob(l.From, LastDayFacts(l)))
+}
+
+// LastDayFacts is the deterministic input of the last-day summary: the date
+// and what you did, in time order.
+func LastDayFacts(l LastDay) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# Work on %s\n\n", l.From.Format("Monday 2 January 2006"))
+	if len(l.Done) == 0 {
+		b.WriteString("Nothing recorded.\n")
+	}
+	for _, e := range l.Done {
+		fmt.Fprintf(&b, "- %s %s\n", e.At.In(l.From.Location()).Format("15:04"), e.Text)
+	}
+	return b.String()
 }
 
 // ReviewNarrator is the sprint-review counterpart of Narrator.

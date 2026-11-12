@@ -215,6 +215,9 @@ func (m model) homeList(w, h int) string {
 	idx := 0
 	legend := false // the station names appear once, above the first project that has tracks
 	narrowed := m.narrowed()
+	if narrowed == "" && !m.searching() {
+		out = append(out, m.lastDayLines(w)...)
+	}
 	for ri := range m.results {
 		res := &m.results[ri]
 		if m.hs.project != "" && res.Project != m.hs.project {

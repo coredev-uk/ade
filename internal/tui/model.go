@@ -97,6 +97,8 @@ type model struct {
 	// spend figure (aichip.go).
 	cl   *classifyDialog
 	chip aiChip
+	// ld is Home's last-working-day summary (lastday.go).
+	ld lastDayUI
 
 	// nt and wt are the open Notes and Weight dialogs, nil when closed
 	// (notes.go, weight.go).
@@ -263,7 +265,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.homeLoaded = true
 		vel := m.loadVelocity(!msg.synced)
-		return m, tea.Batch(m.pollInbox(), vel)
+		return m, tea.Batch(m.pollInbox(), vel, m.loadLastDay())
 	case startUpdateMsg:
 		return m, m.refresh()
 	case updateTickMsg:
@@ -306,6 +308,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ws.chips = msg.chips
 	case aiChipMsg:
 		m.chip = aiChip(msg)
+	case lastDayMsg:
+		m.onLastDay(msg)
 	case agileMsg:
 		return m.agileUpdate(msg)
 	case budgetMsg:

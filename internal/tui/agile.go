@@ -66,13 +66,16 @@ type (
 		err error
 	}
 
-	// narrativeMsg is the answer of an AI narrative request.
+	// narrativeMsg is the answer of an AI narrative request. auto marks one
+	// nobody asked for (the retro written when the review opens): its
+	// failures stay quiet.
 	narrativeMsg struct {
 		kind    agileKind
 		standup *agile.Standup
 		review  *agile.Review
 		res     ai.Result
 		err     error
+		auto    bool
 	}
 )
 
@@ -174,6 +177,9 @@ func (m model) agileUpdate(msg agileMsg) (tea.Model, tea.Cmd) {
 			r.Narrative = old.Narrative
 		}
 		m.ag.review, m.ag.reviewErr = &r, nil
+		if r.Narrative == "" {
+			return m.narrateAuto()
+		}
 	case narrativeMsg:
 		return m.narrativeDone(msg)
 	}
@@ -431,8 +437,42 @@ func (m model) narrate() (model, tea.Cmd) {
 	}
 }
 
+// narrateAuto writes the retro nobody asked for when the review opens: only
+// with AI set up and the budget not critical (lastday.go), and never with a
+// prompt. A skipped or failed one leaves the page as it was.
+func (m model) narrateAuto() (model, tea.Cmd) {
+	a := m.app
+	if a == nil || m.ag.kind != agileReview {
+		return m, nil
+	}
+	if cfg := a.Config; cfg.AI.Mode == "off" || len(cfg.AI.Profiles) == 0 {
+		return m, nil
+	}
+	next, cmd := m.narrate()
+	if cmd == nil {
+		return next, nil
+	}
+	return next, func() tea.Msg {
+		if ok, _ := autoAI(a); !ok {
+			return narrativeMsg{kind: agileReview, auto: true, err: errAutoSkipped}
+		}
+		msg := cmd()
+		if nm, ok := msg.(narrativeMsg); ok {
+			nm.auto = true
+			return nm
+		}
+		return msg
+	}
+}
+
+// errAutoSkipped is an automatic narrative the budget or AI settings ruled out.
+var errAutoSkipped = errors.New("automatic AI summary skipped")
+
 func (m model) narrativeDone(msg narrativeMsg) (tea.Model, tea.Cmd) {
 	m.ag.narrating = false
+	if msg.auto && msg.err != nil {
+		return m, nil // nobody asked: say nothing
+	}
 	if msg.err != nil {
 		text, subject := "no AI narrative: "+msg.err.Error(), ""
 		if errors.As(msg.err, new(*ai.ErrNeedsConfirm)) {
