@@ -84,8 +84,8 @@ func Resolve(ctx context.Context, a *app.App, open startwork.OpenFunc, arg strin
 		if err != nil {
 			return nil, err
 		}
-		return resolveWith(ctx, f, m, ref, func(ctx context.Context, group string) (forge.Caps, error) {
-			return startwork.CachedCaps(ctx, a, m.Forge, group, f)
+		return resolveWith(ctx, f, m, ref, func(ctx context.Context, group, project string) (forge.Caps, error) {
+			return startwork.CachedCaps(ctx, a, m.Forge, group, project, f)
 		})
 	}
 	return nil, fmt.Errorf("%s is not in the tracker project of any registered project", ref)
@@ -94,8 +94,8 @@ func Resolve(ctx context.Context, a *app.App, open startwork.OpenFunc, arg strin
 // ResolveWith reads the issue, its capabilities and its children through an
 // open forge.
 func ResolveWith(ctx context.Context, f startwork.Forge, m *config.Manifest, ref forge.Ref) (*Target, error) {
-	return resolveWith(ctx, f, m, ref, func(ctx context.Context, group string) (forge.Caps, error) {
-		return f.Capabilities(ctx, group)
+	return resolveWith(ctx, f, m, ref, func(ctx context.Context, group, project string) (forge.Caps, error) {
+		return f.Capabilities(ctx, group, project)
 	})
 }
 
@@ -103,7 +103,7 @@ func ResolveWith(ctx context.Context, f startwork.Forge, m *config.Manifest, ref
 // once, then the children at once: a dialog waits for the slowest read of
 // each step, not for their sum. capsOf may answer from a cache, since probing
 // capabilities costs several requests.
-func resolveWith(ctx context.Context, f startwork.Forge, m *config.Manifest, ref forge.Ref, capsOf func(context.Context, string) (forge.Caps, error)) (*Target, error) {
+func resolveWith(ctx context.Context, f startwork.Forge, m *config.Manifest, ref forge.Ref, capsOf func(context.Context, string, string) (forge.Caps, error)) (*Target, error) {
 	var (
 		is                    forge.Issue
 		caps                  forge.Caps
@@ -113,7 +113,7 @@ func resolveWith(ctx context.Context, f startwork.Forge, m *config.Manifest, ref
 	)
 	wg.Add(3)
 	go func() { defer wg.Done(); is, isErr = f.Issue(ctx, ref) }()
-	go func() { defer wg.Done(); caps, capErr = capsOf(ctx, forge.Group(ref.Project)) }()
+	go func() { defer wg.Done(); caps, capErr = capsOf(ctx, forge.Group(ref.Project), ref.Project) }()
 	go func() { defer wg.Done(); links, lnkErr = f.Links(ctx, ref) }()
 	wg.Wait()
 	if isErr != nil {
@@ -150,7 +150,7 @@ func resolveWith(ctx context.Context, f startwork.Forge, m *config.Manifest, ref
 			}
 			r.caps = caps
 			if forge.Group(l.Ref.Project) != forge.Group(ref.Project) {
-				if r.caps, r.err = capsOf(ctx, forge.Group(l.Ref.Project)); r.err != nil {
+				if r.caps, r.err = capsOf(ctx, forge.Group(l.Ref.Project), l.Ref.Project); r.err != nil {
 					r.err = fmt.Errorf("capabilities of %s: %w", l.Ref.Project, r.err)
 				}
 			}

@@ -661,7 +661,7 @@ func TestIterations(t *testing.T) {
 
 func TestCapabilities(t *testing.T) {
 	forEachTier(t, func(t *testing.T, tier fake.Tier, c *gitlab.Client, _ *fake.Server) {
-		caps, err := c.Capabilities(context.Background(), group)
+		caps, err := c.Capabilities(context.Background(), group, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -673,18 +673,57 @@ func TestCapabilities(t *testing.T) {
 		if caps != want {
 			t.Errorf("caps = %+v\nwant   %+v", caps, want)
 		}
-		if _, err := c.Capabilities(context.Background(), "no-such-group"); !errors.Is(err, forge.ErrNotFound) {
+		if _, err := c.Capabilities(context.Background(), "no-such-group", ""); !errors.Is(err, forge.ErrNotFound) {
 			t.Errorf("unknown group err = %v, want ErrNotFound", err)
 		}
-		if _, err := c.Capabilities(context.Background(), ""); err == nil {
+		if _, err := c.Capabilities(context.Background(), "", ""); err == nil {
 			t.Error("want error for an empty group")
 		}
 	})
 }
 
+// A user's personal namespace has no group endpoints: the licence is read
+// from the tracker project, and iterations, cadences and epics are off.
+func TestCapabilitiesUserNamespace(t *testing.T) {
+	for _, tier := range tiers {
+		t.Run(tier.String(), func(t *testing.T) {
+			srv := fake.New(tier, fake.WithClock(clock), fake.WithUserNamespace())
+			t.Cleanup(srv.Close)
+			c := gitlab.New(srv.URL, fake.Token, gitlab.WithClock(func() time.Time { return clock }))
+			premium := tier == fake.Premium
+
+			// The seeded merge requests live in web, so it has a licence flag to read.
+			caps, err := c.Capabilities(context.Background(), group, group+"/web")
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := forge.Caps{
+				UserNamespace: true, Weight: premium, ApprovalRules: premium, BlocksLinks: premium, ProbedAt: clock,
+			}
+			if caps != want {
+				t.Errorf("caps = %+v\nwant   %+v", caps, want)
+			}
+			for _, r := range srv.Requests() {
+				if strings.HasPrefix(r.Path, "/api/v4/groups/") || r.Path == "/api/graphql" {
+					t.Errorf("user namespace probe sent %s %s", r.Method, r.Path)
+				}
+			}
+
+			// Without a project there is nothing to sample.
+			caps, err = c.Capabilities(context.Background(), group, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := (forge.Caps{UserNamespace: true, ProbedAt: clock}); caps != want {
+				t.Errorf("caps without a project = %+v\nwant   %+v", caps, want)
+			}
+		})
+	}
+}
+
 func TestCapabilitiesNeverWrites(t *testing.T) {
 	forEachTier(t, func(t *testing.T, _ fake.Tier, c *gitlab.Client, srv *fake.Server) {
-		if _, err := c.Capabilities(context.Background(), group); err != nil {
+		if _, err := c.Capabilities(context.Background(), group, ""); err != nil {
 			t.Fatal(err)
 		}
 		for _, r := range srv.Requests() {
@@ -875,7 +914,7 @@ func TestErrorMapping(t *testing.T) {
 	if _, err := bad.Me(ctx); !errors.Is(err, forge.ErrAuth) {
 		t.Errorf("bad token err = %v, want ErrAuth", err)
 	}
-	if _, err := bad.Capabilities(ctx, group); !errors.Is(err, forge.ErrAuth) {
+	if _, err := bad.Capabilities(ctx, group, ""); !errors.Is(err, forge.ErrAuth) {
 		t.Errorf("bad token on a probe = %v, want ErrAuth, not a silent false", err)
 	}
 	if _, err := bad.Iterations(ctx, group, ""); !errors.Is(err, forge.ErrAuth) {

@@ -190,6 +190,75 @@ func TestGCMergedBranchDeletedOnTheRemote(t *testing.T) {
 	}
 }
 
+// noUpstreamTree commits locally on the feature tree and drops its upstream,
+// the state of a migrated worktree; it returns the new HEAD.
+func (g *gcEnv) noUpstreamTree() string {
+	g.t.Helper()
+	gitCmd(g.t, g.tree, "commit", "--quiet", "--allow-empty", "-m", "local only")
+	gitCmd(g.t, g.tree, "branch", "--unset-upstream")
+	return gitCmd(g.t, g.tree, "rev-parse", "HEAD")
+}
+
+func TestGCBranchWithoutUpstream(t *testing.T) {
+	t.Run("a local-only commit keeps the tree", func(t *testing.T) {
+		g := newGCEnv(t)
+		g.noUpstreamTree()
+		wantKept(t, g.one(answer(mrOf("merged", ""))), "never pushed")
+	})
+	t.Run("a local-only commit is not the MR's head", func(t *testing.T) {
+		g := newGCEnv(t)
+		g.noUpstreamTree()
+		wantKept(t, g.one(answer(mrOf("merged", "0000000000000000000000000000000000000000"))), "never pushed")
+	})
+	t.Run("HEAD is the head of the MR", func(t *testing.T) {
+		g := newGCEnv(t)
+		head := g.noUpstreamTree()
+		tr := g.one(answer(mrOf("merged", head)))
+		if !tr.Removable() || tr.Pushed != "HEAD is api!7's head" {
+			t.Fatalf("tree = %+v", tr)
+		}
+	})
+	t.Run("HEAD is on a remote branch", func(t *testing.T) {
+		g := newGCEnv(t)
+		g.noUpstreamTree()
+		gitCmd(t, g.tree, "push", "--quiet", "origin", "feature/x")
+		tr := g.one(answer(mrOf("merged", "")))
+		if !tr.Removable() || tr.Pushed != "on origin/feature/x" {
+			t.Fatalf("tree = %+v", tr)
+		}
+	})
+	t.Run("a remote-tracking ref the remote no longer has does not count", func(t *testing.T) {
+		g := newGCEnv(t)
+		g.noUpstreamTree()
+		gitCmd(t, g.tree, "push", "--quiet", "origin", "feature/x")
+		// The bare clone still has origin/feature/x holding HEAD until a fetch --prune.
+		gitCmd(t, g.r.work, "push", "--quiet", "origin", "--delete", "feature/x")
+		bare := filepath.Join(g.app.Root, "demo", "api", ".bare")
+		if out := gitCmd(t, bare, "branch", "-r", "--contains", "HEAD"); !strings.Contains(out, "origin/feature/x") {
+			t.Fatalf("setup: the stale ref is gone: %q", out)
+		}
+		wantKept(t, g.one(answer(mrOf("merged", ""))), "never pushed")
+	})
+	t.Run("a failed fetch cannot vouch for the commits", func(t *testing.T) {
+		g := newGCEnv(t)
+		g.noUpstreamTree()
+		gitCmd(t, g.tree, "push", "--quiet", "origin", "feature/x")
+		gitCmd(t, filepath.Join(g.app.Root, "demo", "api", ".bare"), "remote", "set-url", "origin", filepath.Join(t.TempDir(), "gone.git"))
+		wantKept(t, g.one(answer(mrOf("merged", ""))), "fetching the remote failed")
+	})
+}
+
+func TestGCKeepsATreeWhoseStatusCannotBeRead(t *testing.T) {
+	g := newGCEnv(t)
+	// Without its .git file the tree resolves to the bare repo above it, where
+	// git status refuses to run.
+	if err := os.Remove(filepath.Join(g.tree, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	tr := g.one(answer(mrOf("merged", "")))
+	wantKept(t, tr, "cannot read the worktree status")
+}
+
 func TestTreeOfFindsTheWorktreeAMergedMRCameFrom(t *testing.T) {
 	g := newGCEnv(t)
 	mr := mrOf("merged", "")

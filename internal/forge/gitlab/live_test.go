@@ -122,7 +122,7 @@ func TestLiveSandbox(t *testing.T) {
 	})
 
 	t.Run("capabilities are Free only", func(t *testing.T) {
-		caps, err := c.Capabilities(ctx, group)
+		caps, err := c.Capabilities(ctx, group, "")
 		if err != nil {
 			t.Fatal(err)
 		}

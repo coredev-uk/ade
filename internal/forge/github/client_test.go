@@ -73,14 +73,14 @@ func TestMeAndCapabilities(t *testing.T) {
 		t.Errorf("GET /user ran %d times; the answer must be kept", n)
 	}
 
-	caps, err := c.Capabilities(ctx, "ade-demo")
+	caps, err := c.Capabilities(ctx, "ade-demo", "")
 	if err != nil || caps.Iterations || caps.Cadences || caps.Weight || caps.ApprovalRules || caps.BlocksLinks || caps.Epics || caps.ProbedAt.IsZero() {
 		t.Errorf("caps = %+v, %v; GitHub's free tier has none of the gated features", caps, err)
 	}
-	if _, err := c.Capabilities(ctx, "no-such-owner"); !errors.Is(err, forge.ErrNotFound) {
+	if _, err := c.Capabilities(ctx, "no-such-owner", ""); !errors.Is(err, forge.ErrNotFound) {
 		t.Errorf("unknown owner: err = %v, want ErrNotFound", err)
 	}
-	if _, err := c.Capabilities(ctx, ""); err == nil {
+	if _, err := c.Capabilities(ctx, "", ""); err == nil {
 		t.Error("an empty owner was accepted")
 	}
 	if _, err := c.Iterations(ctx, "ade-demo", ""); !errors.Is(err, forge.ErrUnavailable) {

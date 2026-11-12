@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -15,6 +14,7 @@ import (
 	"github.com/coredev-uk/ade/internal/records"
 	"github.com/coredev-uk/ade/internal/review"
 	"github.com/coredev-uk/ade/internal/startwork"
+	"github.com/coredev-uk/ade/internal/workspace"
 )
 
 // ForApp wires a Manager to the app: cache.db for the index and drafts, the
@@ -77,11 +77,9 @@ func ResolveTarget(ctx context.Context, a *app.App, open startwork.OpenFunc, ref
 	for _, req := range required {
 		if w := found[req].Worktree; w != "" {
 			t.AddDirs = append(t.AddDirs, w)
-		} else if main := filepath.Join(a.Root, r.Project, req, "main"); dirExists(main) {
-			t.AddDirs = append(t.AddDirs, main)
+		} else if base, err := workspace.BaselineDir(ctx, filepath.Join(a.Root, r.Project), r.Manifest, req); err == nil {
+			t.AddDirs = append(t.AddDirs, base)
 		}
 	}
 	return t, r.Forge, nil
 }
-
-func dirExists(p string) bool { st, err := os.Stat(p); return err == nil && st.IsDir() }

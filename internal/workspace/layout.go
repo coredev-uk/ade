@@ -182,6 +182,11 @@ func (s LayoutSpec) lazygit() (command, bool) {
 	return command{prog: s.Tools.Lazygit}, true
 }
 
+// AgentRunEnv names the variable ADE sets to 1 in the environment of every
+// agent process it launches, so a git hook can tell an agent's own `git push`
+// from the user's.
+const AgentRunEnv = "ADE_AGENT_RUN"
+
 // primary is the large left pane.
 func (s LayoutSpec) primary() command {
 	switch s.Layout {
@@ -195,7 +200,9 @@ func (s LayoutSpec) primary() command {
 		return command{name: "editor"}
 	case LayoutAgent:
 		if s.Tools.Omp != "" {
-			return command{prog: s.Tools.Omp, args: s.Agent, name: "agent"}
+			// env sets the marker for the agent only; the pane's shell (and a hook
+			// that blocks agent pushes) stays unmarked outside this process.
+			return command{prog: "env", args: append([]string{AgentRunEnv + "=1", s.Tools.Omp}, s.Agent...), name: "agent"}
 		}
 		return command{name: "agent"}
 	case LayoutReview:

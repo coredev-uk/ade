@@ -104,7 +104,7 @@ func main() {
 	same("labels.workflow.pattern", want.Labels.Workflow.Pattern, got.Labels.Workflow.Pattern)
 	same("labels.workflow.stage", sortedMap(want.Labels.Workflow.Stage), sortedMap(got.Labels.Workflow.Stage))
 	same("labels.workflow.done", want.Labels.Workflow.Done, got.Labels.Workflow.Done)
-	same("labels.workflow.sync", orAuto(want.Labels.Workflow.Sync), orAuto(got.Labels.Workflow.Sync))
+	same("labels.workflow.sync", want.Labels.Workflow.SyncMode(), got.Labels.Workflow.SyncMode())
 	same("tracker.iterations.source", want.Tracker.Iterations.Source, got.Tracker.Iterations.Source)
 	same("tracker.iterations.cadence", want.Tracker.Iterations.Cadence, got.Tracker.Iterations.Cadence)
 	same("tracker.weight", want.Tracker.Weight, got.Tracker.Weight)
@@ -133,13 +133,6 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Println("RESULT: equivalent on every compared field")
-}
-
-func orAuto(s string) string {
-	if s == "" {
-		return "auto"
-	}
-	return s
 }
 
 func sortedMap(m map[string]string) string {

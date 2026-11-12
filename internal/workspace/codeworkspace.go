@@ -31,7 +31,7 @@ import (
 // Where a code-workspace folder comes from.
 const (
 	FolderItem     = "item"     // a worktree of the work item (or the worktree it was generated for)
-	FolderBaseline = "baseline" // the repo's main/ worktree
+	FolderBaseline = "baseline" // the repo's baseline worktree
 )
 
 const (

@@ -883,8 +883,10 @@ func (m model) swStations(d *startDialog, inner int, compact bool) []string {
 			l = append(l, ansi.Truncate(stFaint.Render(g.Vertical)+" "+stepMark(g, s)+" "+g.T(s.Text), inner, m.g.Ell))
 		}
 	}
-	if p.Workflow == nil && d.res.Manifest.Labels.Workflow.Sync == "ask" {
-		l = append(l, stFaint.Render(g.Vertical+" labels.workflow.sync = ask: l moves the workflow label ")+checkbox(g, d.ch.MoveLabel, ""))
+	if p.Workflow != nil && d.res.Manifest.Labels.Workflow.SyncMode() == "ask" && !d.ch.NoMoveLabel && (d.ch.MoveLabel || p.WorkflowNote != "") {
+		l = append(l, stFaint.Render(g.Vertical+" labels.workflow.sync = ask: press l to move the workflow label ")+checkbox(g, d.ch.MoveLabel, ""))
+	} else if p.WorkflowNote != "" {
+		l = append(l, ansi.Truncate(stFaint.Render(g.Vertical+" "+p.WorkflowNote), inner, m.g.Ell))
 	}
 	for _, w := range p.Warnings {
 		l = append(l, stWarn.Render(g.Warn+" "+ansi.Truncate(w, inner-2, m.g.Ell)))

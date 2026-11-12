@@ -57,7 +57,7 @@ func TestMRDetailsMatchMR(t *testing.T) {
 	forEachTier(t, func(t *testing.T, tier fake.Tier, c *gitlab.Client, srv *fake.Server) {
 		ctx := context.Background()
 		mrs := allMRs(t, c)
-		caps, err := c.Capabilities(ctx, group)
+		caps, err := c.Capabilities(ctx, group, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -95,7 +95,7 @@ func TestMRDetailsFallsBackToREST(t *testing.T) {
 	c := gitlab.New(srv.URL, fake.Token)
 	ctx := context.Background()
 	mrs := allMRs(t, c)
-	caps, err := c.Capabilities(ctx, group)
+	caps, err := c.Capabilities(ctx, group, "")
 	if err != nil {
 		t.Fatal(err)
 	}

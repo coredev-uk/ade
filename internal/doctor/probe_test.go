@@ -256,6 +256,28 @@ func TestProbeWithoutMergeRequestSample(t *testing.T) {
 	}
 }
 
+// A personal namespace has no group endpoints: the probe says so, reads the
+// project's milestones instead and does not fail on capabilities.
+func TestProbeUserNamespace(t *testing.T) {
+	srv := fake.New(fake.Free, fake.WithUserNamespace())
+	t.Cleanup(srv.Close)
+	r := Probe(context.Background(), probeConfig(t, srv.URL, fake.Token), []ProbeTarget{target()})[0]
+	if r.Failed() || r.Caps == nil || !r.Caps.UserNamespace {
+		t.Fatalf("probe = %+v, want a user namespace without failure", r)
+	}
+	if e := endpoint(t, r, "group endpoints"); len(e.Notes) != 1 || !strings.Contains(e.Notes[0], "user namespace") {
+		t.Errorf("group endpoints = %+v", e)
+	}
+	if e := endpoint(t, r, "project milestones"); e.Status != 200 || shape(t, e, "title") != "string" {
+		t.Errorf("project milestones = %+v", e)
+	}
+	for _, e := range r.Endpoints {
+		if strings.HasPrefix(e.Path, "/groups/") && e.Name != "group endpoints" {
+			t.Errorf("probed group endpoint %q", e.Name)
+		}
+	}
+}
+
 func TestShapeOf(t *testing.T) {
 	o := object{
 		"s": json.RawMessage(`"x"`), "n": json.RawMessage(`3`), "f": json.RawMessage(`-1.5`), "b": json.RawMessage(`false`),

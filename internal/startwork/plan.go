@@ -305,8 +305,12 @@ type Plan struct {
 	Mode     Mode          `json:"mode"`
 	Targets  []TargetPlan  `json:"targets"`
 	Workflow *WorkflowMove `json:"workflow,omitempty"`
-	Steps    []Step        `json:"steps"`
-	Warnings []string      `json:"warnings,omitempty"`
+	// WorkflowNote says why the workflow label is not written (sync is ask or
+	// off, --no-move-label, or the item is further along), so a dry run
+	// accounts for the label; empty when the move is a step or nothing maps.
+	WorkflowNote string   `json:"workflow_note,omitempty"`
+	Steps        []Step   `json:"steps"`
+	Warnings     []string `json:"warnings,omitempty"`
 
 	in PlanInput
 }
@@ -359,7 +363,7 @@ func BuildPlan(in PlanInput) (Plan, error) {
 		p.Targets = append(p.Targets, tp)
 		p.Warnings = append(p.Warnings, tp.Found.Warnings...)
 	}
-	p.Workflow = planWorkflow(in)
+	p.Workflow, p.WorkflowNote = planWorkflow(in)
 	if ch.OnlyMR {
 		return onlyMR(p)
 	}
@@ -373,7 +377,7 @@ func onlyMR(p Plan) (Plan, error) {
 	if p.Mode == ModeBrowse {
 		return Plan{}, errors.New("browse mode creates no MR")
 	}
-	p.Workflow = nil
+	p.Workflow, p.WorkflowNote = nil, ""
 	for _, tp := range p.Targets {
 		switch {
 		case tp.Found.Branch == "":
@@ -513,17 +517,21 @@ func BranchName(m *config.Manifest, title string, item domain.WorkItem, workIID 
 }
 
 // planWorkflow decides the tracker label move, or nil when labels.workflow
-// maps nothing for `started`, sync is off, or the label is already right or
-// further along.
-func planWorkflow(in PlanInput) *WorkflowMove {
+// maps nothing for `started`, sync is off, or the label is further along. The
+// note says why a mapped label is not written: it is set for nil and for a
+// move that will not run (sync = ask without MoveLabel, or NoMoveLabel).
+func planWorkflow(in PlanInput) (*WorkflowMove, string) {
 	m, item := in.Manifest, in.Item
 	wf := m.Labels.Workflow
-	if in.Choices.Mode == ModeBrowse || wf.Sync == "off" || wf.Pattern == "" {
-		return nil
+	if in.Choices.Mode == ModeBrowse || wf.Pattern == "" {
+		return nil, ""
 	}
 	want := domain.WantWorkflow(domain.StageStarted, m.Labels)
 	if want == "" {
-		return nil
+		return nil, ""
+	}
+	if wf.SyncMode() == "off" {
+		return nil, "workflow label: not moved (sync = off)"
 	}
 	wantLabel := domain.WorkflowLabel(want, m.Labels)
 	var remove []string
@@ -538,16 +546,23 @@ func planWorkflow(in PlanInput) *WorkflowMove {
 	// by derived stage later, not by this step.
 	if cur := item.Workflow; cur != "" && !strings.EqualFold(cur, want) &&
 		domain.FacetsOf([]string{wantLabel, domain.WorkflowLabel(cur, m.Labels)}, m.Labels).Workflow == cur {
-		return nil
+		return nil, fmt.Sprintf("workflow label: not moved (%s is further along than %s)", item.Ref, wantLabel)
 	}
 	if has && len(remove) == 0 {
-		return &WorkflowMove{Ref: item.Ref, Add: wantLabel} // already there: reported as done
+		return &WorkflowMove{Ref: item.Ref, Add: wantLabel}, "" // already there: reported as done
 	}
 	mv := &WorkflowMove{Ref: item.Ref, Remove: remove}
 	if !has {
 		mv.Add = wantLabel
 	}
-	return mv
+	switch {
+	case wfWanted(in, mv):
+		return mv, ""
+	case in.Choices.NoMoveLabel:
+		return mv, fmt.Sprintf("workflow label: would %s (--no-move-label: not applied)", workflowText(mv))
+	default:
+		return mv, fmt.Sprintf("workflow label: would %s (sync = ask: pass --move-label to apply)", workflowText(mv))
+	}
 }
 
 // facetValue returns the value a label carries under pattern.
@@ -592,7 +607,7 @@ func planSteps(p *Plan) []Step {
 				add(Step{Kind: StepChild, Repo: repo, Write: true, Text: fmt.Sprintf("create child issue in %s: %s", t.Project, tp.Child.Title)})
 			}
 		}
-		if i == 0 && p.Workflow != nil && wfWanted(in, p.Workflow) {
+		if i == 0 && p.Workflow != nil && (workflowDone(in, p.Workflow) || wfWanted(in, p.Workflow)) {
 			add(workflowStep(in, p.Workflow))
 		}
 		if tp.UseChild && contains(in.Manifest.Conventions.Link, "relates_to", true) {
@@ -626,23 +641,29 @@ func planSteps(p *Plan) []Step {
 	return steps
 }
 
+// wfWanted reports whether the move runs: with sync = ask only when the user
+// confirmed it, otherwise unless they declined.
 func wfWanted(in PlanInput, mv *WorkflowMove) bool {
-	switch in.Manifest.Labels.Workflow.Sync {
-	case "ask":
-		return in.Choices.MoveLabel
-	default:
-		return !in.Choices.NoMoveLabel
+	if in.Choices.NoMoveLabel {
+		return false
 	}
+	return in.Manifest.Labels.Workflow.SyncMode() != "ask" || in.Choices.MoveLabel
 }
 
-func workflowStep(in PlanInput, mv *WorkflowMove) Step {
+// workflowText is what the move does, e.g. "set workflow::in progress on g/t#3".
+func workflowText(mv *WorkflowMove) string {
+	if mv.Add == "" {
+		return fmt.Sprintf("remove %s from %s", strings.Join(mv.Remove, ", "), mv.Ref)
+	}
 	text := fmt.Sprintf("set %s on %s", mv.Add, mv.Ref)
 	if len(mv.Remove) > 0 {
 		text += ", remove " + strings.Join(mv.Remove, ", ")
 	}
-	if mv.Add == "" {
-		text = fmt.Sprintf("remove %s from %s", strings.Join(mv.Remove, ", "), mv.Ref)
-	}
+	return text
+}
+
+func workflowStep(in PlanInput, mv *WorkflowMove) Step {
+	text := workflowText(mv)
 	if workflowDone(in, mv) {
 		text = fmt.Sprintf("%s already carries %s", mv.Ref, mv.Add)
 	}

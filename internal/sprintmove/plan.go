@@ -96,7 +96,7 @@ func ResolveWith(ctx context.Context, f startwork.Forge, m *config.Manifest, ref
 }
 
 func withSprints(ctx context.Context, wt *weight.Target, now time.Time) (*Target, error) {
-	sp, err := forgesync.LoadSprints(ctx, wt.Forge, wt.Manifest, now)
+	sp, err := forgesync.LoadSprints(ctx, wt.Forge, wt.Manifest, wt.Caps, now)
 	if err != nil {
 		return nil, fmt.Errorf("sprints of %s: %w", wt.Project, err)
 	}
@@ -149,6 +149,11 @@ func (t *Target) noNext(cur *domain.Sprint) error {
 	}
 	src := t.Manifest.Tracker.Iterations
 	group := forge.Group(t.Manifest.Tracker.Project)
+	// A user namespace has no group to create milestones in.
+	milestoneScope := "group " + group
+	if t.Caps.UserNamespace {
+		milestoneScope = "project " + t.Manifest.Tracker.Project
+	}
 	var fix string
 	switch {
 	case cur != nil && cur.Source == "gitlab-iterations", src.Source == "gitlab-iterations", src.Source == "cadence":
@@ -156,7 +161,7 @@ func (t *Target) noNext(cur *domain.Sprint) error {
 	case cur != nil && cur.Source == "labels", src.Source == "labels":
 		fix = fmt.Sprintf("the label for the next sprint (pattern %s) is not on any issue yet: create it, or apply it to one issue, then run this again", src.Pattern)
 	default:
-		fix = fmt.Sprintf("create the next milestone in group %s (Plan > Milestones > New milestone, starting after that sprint ends), then run this again", group)
+		fix = fmt.Sprintf("create the next milestone in %s (Plan > Milestones > New milestone, starting after that sprint ends), then run this again", milestoneScope)
 	}
 	return fmt.Errorf("no sprint starts after %s: %s (ADE creates no sprints)", after, fix)
 }

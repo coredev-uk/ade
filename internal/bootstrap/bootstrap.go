@@ -331,7 +331,7 @@ func capValues(vs []string, n int) []string {
 func (d *Draft) fillPlanning(ctx context.Context, f Forge, o Options, facets Facets, weighted bool) error {
 	var caps forge.Caps
 	if f.Kind() == "gitlab" {
-		c, err := f.Capabilities(ctx, o.Group)
+		c, err := f.Capabilities(ctx, o.Group, "")
 		switch {
 		case errors.Is(err, forge.ErrNotFound):
 			d.Notes = append(d.Notes, o.Group+" is not a group: iterations and weights are read as on a free account")

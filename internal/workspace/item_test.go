@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/domain"
 	"github.com/coredev-uk/ade/internal/forge"
 )
@@ -170,5 +171,29 @@ func TestItemOfAndBranchOf(t *testing.T) {
 	}
 	if _, _, ok := ItemOf(items, "demo", "grp/web", ""); ok {
 		t.Fatal("a detached tree belongs to no item")
+	}
+}
+
+func TestBaselineDirIsNamedAfterTheDefaultBranch(t *testing.T) {
+	root, loc := gitFixture(t, nil, nil)
+	ctx := context.Background()
+	projectDir := filepath.Join(root, "demo")
+	got, err := BaselineDir(ctx, projectDir, loc.Manifest, "api")
+	if err != nil || got != filepath.Join(projectDir, "api", "main") {
+		t.Fatalf("BaselineDir = %q, %v", got, err)
+	}
+
+	// default_branch = "release/1" puts the baseline in release-1/.
+	m := *loc.Manifest
+	m.Repos = map[string]config.Repo{"api": {Path: "grp/api", DefaultBranch: "release/1"}}
+	if _, err := BaselineDir(ctx, projectDir, &m, "api"); err == nil || !strings.Contains(err.Error(), "release-1") {
+		t.Fatalf("a missing baseline tree must name release-1: %v", err)
+	}
+	want := filepath.Join(projectDir, "api", "release-1")
+	if err := os.MkdirAll(want, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := BaselineDir(ctx, projectDir, &m, "api"); err != nil || got != want {
+		t.Fatalf("BaselineDir = %q, %v; want %q", got, err, want)
 	}
 }

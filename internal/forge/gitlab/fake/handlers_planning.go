@@ -12,6 +12,23 @@ func (s *Server) planningRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v4/groups/{id}/iterations", s.groupIterations)
 	mux.HandleFunc("GET /api/v4/projects/{id}/approval_rules", s.approvalRules)
 	mux.HandleFunc("GET /api/v4/groups/{id}/projects", s.groupProjects)
+	mux.HandleFunc("GET /api/v4/namespaces/{id}", s.namespace)
+}
+
+// namespace answers the kind of the namespace the fake serves, which is how a
+// client tells a user's namespace from a group.
+func (s *Server) namespace(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.st.hasNamespace(r.PathValue("id")) {
+		notFound(w)
+		return
+	}
+	kind := "group"
+	if s.st.userNamespace {
+		kind = "user"
+	}
+	writeJSON(w, http.StatusOK, object{"id": s.st.groupID, "path": s.st.group, "full_path": s.st.group, "kind": kind})
 }
 
 func (s *Server) groupMilestones(w http.ResponseWriter, r *http.Request) {
@@ -25,7 +42,7 @@ func (s *Server) groupMilestones(w http.ResponseWriter, r *http.Request) {
 }
 
 // projectMilestones serves the project endpoint; the sandbox keeps sprint
-// milestones on the group, so a project sees them as ancestors only when
+// milestones on the group (on the projects in a user namespace), so a project sees them as ancestors only when
 // include_ancestors is set, like GitLab.
 func (s *Server) projectMilestones(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
@@ -34,7 +51,7 @@ func (s *Server) projectMilestones(w http.ResponseWriter, r *http.Request) {
 		notFound(w)
 		return
 	}
-	if r.URL.Query().Get("include_ancestors") != "true" {
+	if r.URL.Query().Get("include_ancestors") != "true" && !s.st.userNamespace {
 		writeJSON(w, http.StatusOK, []object{})
 		return
 	}

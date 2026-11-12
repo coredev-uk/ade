@@ -33,9 +33,9 @@ func CachedMe(ctx context.Context, a *app.App, forgeName string, f forge.Forge) 
 }
 
 // CachedCaps reads a group's capabilities from the cache, probing the forge
-// only on a miss.
-func CachedCaps(ctx context.Context, a *app.App, forgeName, group string, f forge.Forge) (forge.Caps, error) {
-	fetch := func() (forge.Caps, error) { return f.Capabilities(ctx, group) }
+// (with the tracker project as the sample source) only on a miss.
+func CachedCaps(ctx context.Context, a *app.App, forgeName, group, project string, f forge.Forge) (forge.Caps, error) {
+	fetch := func() (forge.Caps, error) { return f.Capabilities(ctx, group, project) }
 	st, err := a.Cache()
 	if err != nil {
 		return fetch()

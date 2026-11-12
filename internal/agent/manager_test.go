@@ -44,6 +44,10 @@ hang)
   turn toolUse "working" 0.01
   sleep 30
   ;;
+envdump)
+  printf '%s' "${ADE_AGENT_RUN-unset}" >"$FAKE_OMP_ENV"
+  turn stop "# Plan" 0.01
+  ;;
 fail)
   echo "boom: no credentials" >&2
   exit 1
@@ -385,6 +389,24 @@ func TestCostCapKillsTheProcess(t *testing.T) {
 	}
 }
 
+// The agent process carries ADE_AGENT_RUN=1 so a global pre-push hook can
+// refuse its pushes; ADE itself (and so its own push) does not.
+func TestAgentRunMarksOnlyTheAgentProcess(t *testing.T) {
+	e := newEnv(t)
+	seen := filepath.Join(t.TempDir(), "env")
+	t.Setenv("FAKE_OMP", "envdump")
+	t.Setenv("FAKE_OMP_ENV", seen)
+	if _, err := e.m.Plan(context.Background(), e.newRun(KindPlan, e.ctx()).ID); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(seen); err != nil || string(b) != "1" {
+		t.Errorf("the agent saw ADE_AGENT_RUN=%q (%v), want 1", b, err)
+	}
+	if v, ok := os.LookupEnv("ADE_AGENT_RUN"); ok {
+		t.Errorf("ADE_AGENT_RUN=%q leaked into ADE's own environment", v)
+	}
+}
+
 func TestAgentFailureSurfacesStderr(t *testing.T) {
 	e := newEnv(t)
 	t.Setenv("FAKE_OMP", "fail")
@@ -670,5 +692,30 @@ func TestFirstCommitOnly(t *testing.T) {
 	}
 	if commitprefix.FirstCommit(ctx, e.wt) {
 		t.Fatal("a commit is ahead of the target: not first any more")
+	}
+}
+
+func TestPromptsCarryTheCommitPrefix(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	r := e.newRun(KindPlan, e.ctx())
+	r.Worktree = e.wt
+	c := e.ctx()
+
+	if p := PlanPrompt(e.m.targetOf(ctx, r), c); !strings.Contains(p, "The project sets no commit prefix.") {
+		t.Errorf("plan prompt without a prefix:\n%s", p)
+	}
+	if err := commitprefix.WriteWorktreeConfig(ctx, e.wt, 42, "GL-42", ""); err != nil {
+		t.Fatal(err)
+	}
+	want := `Commit messages start with the prefix "GL-42" (ADE adds it to the first commit).`
+	for name, p := range map[string]string{
+		"plan":    PlanPrompt(e.m.targetOf(ctx, r), c),
+		"run":     RunPrompt(e.m.targetOf(ctx, r), c, "the plan"),
+		"address": AddressPrompt(e.m.targetOf(ctx, r), c),
+	} {
+		if !strings.Contains(p, want) {
+			t.Errorf("%s prompt lacks %q:\n%s", name, want, p)
+		}
 	}
 }

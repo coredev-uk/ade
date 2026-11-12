@@ -71,7 +71,7 @@ func (r RunRecord) Markdown() string {
 
 // Recorder writes one workspace run into its work item's record directory
 // (PLAN 4.2: runs/<id>/run.md). A nil Recorder does nothing: worktrees that no
-// work item owns (a baseline `main/`) have no record to write to.
+// work item owns (a baseline tree) have no record to write to.
 type Recorder struct {
 	dir string
 	rec RunRecord

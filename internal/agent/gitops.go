@@ -145,7 +145,7 @@ func head(ctx context.Context, dir string) (string, error) {
 
 // checkWorktree insists the tree is a linked git worktree on the branch start
 // work made for the item: an agent never works in a bare repo, in a baseline
-// `main/` tree or in a checkout somebody else is using.
+// (default-branch) tree or in a checkout somebody else is using.
 func checkWorktree(ctx context.Context, dir, branch string) error {
 	st, err := os.Stat(filepath.Join(dir, ".git"))
 	if err != nil {

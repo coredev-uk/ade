@@ -327,6 +327,75 @@ func TestDryRunWritesNothing(t *testing.T) {
 	}
 }
 
+func TestDryRunAccountsForTheWorkflowLabel(t *testing.T) {
+	for _, tc := range []struct {
+		sync     string
+		choose   func(*startwork.Choices)
+		wantStep bool
+		wantNote string
+	}{
+		{"auto", nil, true, ""},
+		{"", nil, false, "would set workflow::in progress on " + tracker + "#3 (sync = ask: pass --move-label to apply)"},
+		{"ask", func(c *startwork.Choices) { c.MoveLabel = true }, true, ""},
+		{"auto", func(c *startwork.Choices) { c.NoMoveLabel = true }, false, "--no-move-label: not applied"},
+		{"off", nil, false, "not moved (sync = off)"},
+	} {
+		t.Run(tc.sync, func(t *testing.T) {
+			h := newHarness(t, fake.Free)
+			h.m.Labels.Workflow.Sync = tc.sync
+			r := h.resolve(3)
+			ch := draftApi()
+			if tc.choose != nil {
+				tc.choose(&ch)
+			}
+			before := h.writes()
+			_, res, err := h.env.Start(context.Background(), r, ch, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if h.writes() != before {
+				t.Error("dry run wrote")
+			}
+			var step *startwork.StepResult
+			for i, s := range res.Steps {
+				if s.Kind == startwork.StepWorkflow {
+					step = &res.Steps[i]
+				}
+			}
+			if (step != nil) != tc.wantStep {
+				t.Fatalf("workflow step = %+v, want present=%v", step, tc.wantStep)
+			}
+			if step != nil && (!step.Write || step.Outcome != startwork.OutcomeWould) {
+				t.Errorf("workflow step = %+v, want a write that would run", step)
+			}
+			var note string
+			for _, n := range res.Notes {
+				if strings.HasPrefix(n, "workflow label:") {
+					note = n
+				}
+			}
+			if tc.wantNote == "" && note != "" || !strings.Contains(note, tc.wantNote) {
+				t.Errorf("notes = %q, want a workflow label note containing %q", res.Notes, tc.wantNote)
+			}
+		})
+	}
+}
+
+func TestRealRunWithAskLeavesTheLabelAndSaysSo(t *testing.T) {
+	h := newHarness(t, fake.Free)
+	h.m.Labels.Workflow.Sync = ""
+	_, res, err := h.start(3, draftApi())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if labels, _ := h.srv.IssueLabels(issueRef(tracker, 3)); slices.Contains(labels, "workflow::in progress") {
+		t.Errorf("unset sync moved the label without --move-label: %v", labels)
+	}
+	if !slices.ContainsFunc(res.Notes, func(n string) bool { return strings.Contains(n, "pass --move-label to apply") }) {
+		t.Errorf("notes = %q, want one saying how to move the label", res.Notes)
+	}
+}
+
 func TestStrippingQuickActionsOnlyAffectsThisMR(t *testing.T) {
 	h := newHarness(t, fake.Free)
 	ch := draftApi()

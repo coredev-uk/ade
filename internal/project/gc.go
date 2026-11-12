@@ -28,6 +28,9 @@ type Tree struct {
 	MR string `json:"mr,omitempty"`
 	// Keep lists why the worktree stays; empty means it can be removed.
 	Keep []string `json:"keep,omitempty"`
+	// Pushed says what proves the commits are on the remote ("HEAD is
+	// api!7's head", "on origin/develop"); set when no guard failed.
+	Pushed string `json:"pushed,omitempty"`
 }
 
 // Removable reports whether every guard passed.
@@ -51,13 +54,16 @@ func shellQuote(s string) string {
 // Trees inspects the feature worktrees of project name (every project when
 // empty) and decides for each whether it can go: its merge requests are all
 // merged or closed (at least one), it has no uncommitted changes, and
-// everything committed is on the remote. Only the MR lookup uses the network.
+// everything committed is on the remote. The MR lookup uses the network, and
+// so does one fetch per repo when a branch without upstream needs its commits
+// checked against the remote.
 func (s *Service) Trees(ctx context.Context, name string, lookup MRLookup) ([]Tree, error) {
 	sts, err := s.Status(ctx, name)
 	if err != nil {
 		return nil, err
 	}
 	var out []Tree
+	fetch := s.fetcher()
 	for _, ps := range sts {
 		m, err := LoadManifest(ps.Dir)
 		if err != nil {
@@ -67,7 +73,7 @@ func (s *Service) Trees(ctx context.Context, name string, lookup MRLookup) ([]Tr
 			bare := filepath.Join(ps.Dir, rs.Name, ".bare")
 			for _, ts := range rs.Worktrees {
 				t := Tree{Project: ps.Name, Repo: rs.Name, Branch: ts.Branch, Path: ts.Path, Bare: bare}
-				s.judge(ctx, &t, ts, m, lookup)
+				s.judge(ctx, &t, ts, m, lookup, fetch)
 				out = append(out, t)
 			}
 		}
@@ -76,13 +82,30 @@ func (s *Service) Trees(ctx context.Context, name string, lookup MRLookup) ([]Tr
 	return out, nil
 }
 
-// judge fills t.Keep and t.MR.
-func (s *Service) judge(ctx context.Context, t *Tree, ts TreeStatus, m *config.Manifest, lookup MRLookup) {
+// fetcher returns a function that runs `git fetch --prune` in a bare clone
+// with the forge's credentials, once per clone and run.
+func (s *Service) fetcher() func(ctx context.Context, forgeName, bare string) error {
+	done := map[string]error{}
+	return func(ctx context.Context, forgeName, bare string) error {
+		if err, ok := done[bare]; ok {
+			return err
+		}
+		c, err := s.GitClient(ctx, forgeName, bare)
+		if err == nil {
+			err = c.Fetch(ctx, bare)
+		}
+		done[bare] = err
+		return err
+	}
+}
+
+// judge fills t.Keep, t.MR and t.Pushed.
+func (s *Service) judge(ctx context.Context, t *Tree, ts TreeStatus, m *config.Manifest, lookup MRLookup, fetch func(ctx context.Context, forgeName, bare string) error) {
 	if ts.Branch == "" {
 		t.Keep = append(t.Keep, "detached HEAD: no branch to match a merge request to")
 		return
 	}
-	var heads []string
+	var heads []mrHead
 	repo, ok := m.Repos[t.Repo]
 	switch {
 	case !ok:
@@ -97,12 +120,17 @@ func (s *Service) judge(ctx context.Context, t *Tree, ts TreeStatus, m *config.M
 			t.Keep = append(t.Keep, why)
 		}
 	}
-	t.Keep = append(t.Keep, localGuard(ctx, git.Client{}, ts, heads)...)
+	ev := pushEvidence{heads: heads, refresh: func(ctx context.Context) error { return fetch(ctx, m.Forge, t.Bare) }}
+	keep, pushed := localGuard(ctx, git.Client{}, ts, ev)
+	t.Keep = append(t.Keep, keep...)
+	if len(t.Keep) == 0 {
+		t.Pushed = pushed
+	}
 }
 
 // mrVerdict says why the MRs of a branch keep the worktree ("" when they
 // allow removal) and returns the head commits they ended at.
-func mrVerdict(t *Tree, mrs []forge.MR, err error) (why string, heads []string) {
+func mrVerdict(t *Tree, mrs []forge.MR, err error) (why string, heads []mrHead) {
 	if err != nil {
 		return "could not read merge requests: " + err.Error(), nil
 	}
@@ -122,7 +150,7 @@ func mrVerdict(t *Tree, mrs []forge.MR, err error) (why string, heads []string) 
 			}
 		}
 		if mr.HeadSHA != "" {
-			heads = append(heads, mr.HeadSHA)
+			heads = append(heads, mrHead{sha: mr.HeadSHA, mr: mrLabel(mr.Ref)})
 		}
 	}
 	if done == nil {
@@ -140,45 +168,79 @@ func mrLabel(ref forge.Ref) string {
 	return fmt.Sprintf("%s!%d", proj, ref.IID)
 }
 
-// localGuard returns what makes a worktree unsafe to discard whatever the
-// forge says: uncommitted changes, or commits that no remote branch has.
-// pushedHeads are commits the forge reports as the final head of the branch's
-// merge requests; a branch deleted after the merge has no remote ref left, but
-// a tree sitting on such a commit has lost nothing.
-func localGuard(ctx context.Context, c git.Client, ts TreeStatus, pushedHeads []string) []string {
-	var keep []string
-	if ts.Dirty {
-		keep = append(keep, "uncommitted changes")
-	}
-	if why := unpushed(ctx, c, ts, pushedHeads); why != "" {
-		keep = append(keep, why)
-	}
-	return keep
+// mrHead is the final head commit of a merge request, which the forge keeps.
+type mrHead struct{ sha, mr string }
+
+// pushEvidence is what a tree's commits are checked against besides its
+// upstream.
+type pushEvidence struct {
+	// heads are the final head commits of the branch's merge requests; a branch
+	// deleted after the merge has no remote ref left, but a tree sitting on such
+	// a commit has lost nothing.
+	heads []mrHead
+	// refresh fetches and prunes the remote-tracking refs, so that a ref found
+	// to contain HEAD still exists on the remote. Nil checks the refs as they
+	// are, which is for callers that must not touch the network.
+	refresh func(context.Context) error
 }
 
-// unpushed explains why the tree's commits are not all on the remote, or "".
-func unpushed(ctx context.Context, c git.Client, ts TreeStatus, pushedHeads []string) string {
+// localGuard returns what makes a worktree unsafe to discard whatever the
+// forge says: uncommitted changes, or commits that no remote branch has. When
+// nothing does, pushed says what proves the commits are on the remote.
+func localGuard(ctx context.Context, c git.Client, ts TreeStatus, ev pushEvidence) (keep []string, pushed string) {
+	switch {
+	case ts.StatusError != "":
+		keep = append(keep, "cannot read the worktree status: "+ts.StatusError)
+	case ts.Dirty:
+		keep = append(keep, "uncommitted changes")
+	}
+	why, proof := unpushed(ctx, c, ts, ev)
+	if why != "" {
+		keep = append(keep, why)
+	}
+	return keep, proof
+}
+
+// unpushed explains why the tree's commits are not all on the remote, or ""
+// with the proof that they are. A branch with an upstream is pushed when it is
+// not ahead of it. Without one, HEAD must be the head of one of the branch's
+// merge requests or sit on a remote-tracking ref that survives a fetch --prune.
+func unpushed(ctx context.Context, c git.Client, ts TreeStatus, ev pushEvidence) (why, proof string) {
 	if ts.HasUpstream {
 		if ts.Ahead > 0 {
-			return fmt.Sprintf("%d %s not pushed", ts.Ahead, commits(ts.Ahead))
+			return fmt.Sprintf("%d %s not pushed", ts.Ahead, commits(ts.Ahead)), ""
 		}
-		return ""
-	}
-	if out, err := c.Run(ctx, ts.Path, "branch", "-r", "--contains", "HEAD"); err != nil {
-		return "cannot tell whether commits are pushed: " + git.Reason(err)
-	} else if strings.TrimSpace(out) != "" {
-		return ""
+		up, err := c.Upstream(ctx, ts.Path)
+		if err != nil {
+			up = "its upstream"
+		}
+		return "", "not ahead of " + up
 	}
 	head, err := c.Run(ctx, ts.Path, "rev-parse", "HEAD")
 	if err != nil {
-		return "cannot tell whether commits are pushed: " + git.Reason(err)
+		return "cannot tell whether commits are pushed: " + git.Reason(err), ""
 	}
-	for _, h := range pushedHeads {
-		if h == strings.TrimSpace(head) {
-			return ""
+	head = strings.TrimSpace(head)
+	for _, h := range ev.heads {
+		if h.sha == head {
+			return "", "HEAD is " + h.mr + "'s head"
 		}
 	}
-	return "commits not on any remote branch (never pushed)"
+	if ev.refresh != nil {
+		if err := ev.refresh(ctx); err != nil {
+			return "cannot tell whether commits are pushed: fetching the remote failed: " + git.Reason(err), ""
+		}
+	}
+	out, err := c.Run(ctx, ts.Path, "for-each-ref", "--contains", head, "--format=%(refname)", "refs/remotes")
+	if err != nil {
+		return "cannot tell whether commits are pushed: " + git.Reason(err), ""
+	}
+	for _, ref := range strings.Fields(out) {
+		if name := strings.TrimPrefix(ref, "refs/remotes/"); !strings.HasSuffix(name, "/HEAD") {
+			return "", "on " + name
+		}
+	}
+	return "commits not on any remote branch (never pushed)", ""
 }
 
 func commits(n int) string {
@@ -225,6 +287,7 @@ func (s *Service) TreeOf(ctx context.Context, name string, mr forge.MR) (t Tree,
 	known := func(context.Context, *config.Manifest, string, string) ([]forge.MR, error) {
 		return []forge.MR{mr}, nil
 	}
+	fetch := s.fetcher()
 	for _, ps := range sts {
 		m, err := LoadManifest(ps.Dir)
 		if err != nil {
@@ -239,7 +302,7 @@ func (s *Service) TreeOf(ctx context.Context, name string, mr forge.MR) (t Tree,
 					continue
 				}
 				t = Tree{Project: ps.Name, Repo: rs.Name, Branch: ts.Branch, Path: ts.Path, Bare: filepath.Join(ps.Dir, rs.Name, ".bare")}
-				s.judge(ctx, &t, ts, m, known)
+				s.judge(ctx, &t, ts, m, known, fetch)
 				return t, true, nil
 			}
 		}

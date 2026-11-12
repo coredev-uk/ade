@@ -147,7 +147,10 @@ func (e *Env) DryRun(p Plan) Result {
 		}
 		res.Steps = append(res.Steps, StepResult{Step: s, Outcome: out})
 	}
-	res.Notes = p.Warnings
+	res.Notes = append(res.Notes, p.Warnings...)
+	if p.WorkflowNote != "" {
+		res.Notes = append(res.Notes, p.WorkflowNote)
+	}
 	_ = e.App.Audit.Append(audit.Entry{
 		Actor: e.actor(), Action: "start.plan", Target: p.Item.String(), Item: p.Item.String(), Project: p.Project,
 		Params: map[string]any{"mode": string(p.Mode), "pending": p.Pending(), "writes": p.Writes()},
@@ -193,6 +196,9 @@ func (e *Env) Execute(ctx context.Context, p Plan) (Result, error) {
 		rts[tp.Target.Name] = rt
 	}
 	res.Notes = append(res.Notes, p.Warnings...)
+	if p.WorkflowNote != "" {
+		res.Notes = append(res.Notes, p.WorkflowNote)
+	}
 
 	for _, s := range p.Steps {
 		sr := StepResult{Step: s}

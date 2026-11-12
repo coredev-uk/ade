@@ -85,10 +85,19 @@ type LabelFacet struct {
 type WorkflowFacet struct {
 	Pattern string            `toml:"pattern"`
 	Stage   map[string]string `toml:"stage"` // derived stage -> workflow value
-	Sync    string            `toml:"sync"`  // auto | ask | off
+	Sync    string            `toml:"sync"`  // auto | ask | off; unset means ask
 	// Done is the workflow value that marks a tracker issue finished while it
 	// stays open (teams that close sprint work only at sprint end).
 	Done string `toml:"done"`
+}
+
+// SyncMode is Sync with the default applied: unset means "ask", so a manifest
+// that never mentions it does not rewrite a shared board on its own.
+func (w WorkflowFacet) SyncMode() string {
+	if w.Sync == "" {
+		return "ask"
+	}
+	return w.Sync
 }
 
 // Repo is one repository in a project.

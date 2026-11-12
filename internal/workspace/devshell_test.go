@@ -49,7 +49,7 @@ func TestBuildLayoutRunsPanesInTheDevShell(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(got, `pane name="agent" size="60%" focus=true command="nix" {`) ||
-		!strings.Contains(got, `args "develop" "`+dir+`" "-c" "/bin/omp" "--config" "/tmp/omp.yml" "start"`) {
+		!strings.Contains(got, `args "develop" "`+dir+`" "-c" "env" "ADE_AGENT_RUN=1" "/bin/omp" "--config" "/tmp/omp.yml" "start"`) {
 		t.Errorf("agent layout must start omp via nix develop:\n%s", got)
 	}
 

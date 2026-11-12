@@ -2,6 +2,7 @@ package forgesync
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -40,9 +41,9 @@ app      = ["web"]
 requires = ["api"]
 `
 
-func syncFake(t *testing.T, tier fake.Tier) Result {
+func syncFake(t *testing.T, tier fake.Tier, opts ...fake.Option) Result {
 	t.Helper()
-	srv := fake.New(tier)
+	srv := fake.New(tier, opts...)
 	t.Cleanup(srv.Close)
 	h := newHarness(t, manifestFile{"demo-gl", sandboxManifest})
 	h.svc.Open = func(context.Context, string, config.Forge) (forge.Forge, error) {
@@ -104,6 +105,40 @@ func TestSyncAgainstFakeGitLab(t *testing.T) {
 				if weights != 0 {
 					t.Errorf("free tier shows %d weights", weights)
 				}
+			}
+		})
+	}
+}
+
+// A tracker in a personal namespace has no group endpoints: sprints are the
+// tracker project's milestones and weight comes from its licence.
+func TestSyncUserNamespaceTracker(t *testing.T) {
+	for _, tier := range []fake.Tier{fake.Free, fake.Premium} {
+		t.Run(tier.String(), func(t *testing.T) {
+			r := syncFake(t, tier, fake.WithUserNamespace())
+			if !r.Caps.UserNamespace || r.Caps.Iterations {
+				t.Errorf("caps = %+v, want a user namespace without iterations", r.Caps)
+			}
+			cur := r.Window.Current
+			if cur == nil || cur.Source != "milestones" || cur.Title != "Sprint 42" {
+				t.Fatalf("window = %+v, want the project milestone Sprint 42", r.Window)
+			}
+			if r.Caps.Weight != (tier == fake.Premium) {
+				t.Errorf("weight caps = %v on %s", r.Caps.Weight, tier)
+			}
+		})
+	}
+}
+
+func TestIterationsSourceNeedsAGroup(t *testing.T) {
+	for _, src := range []string{srcIterations, "cadence"} {
+		t.Run(src, func(t *testing.T) {
+			p := &pipeline{m: &config.Manifest{Tracker: config.Tracker{
+				Project: "me/tracker", Iterations: config.IterationsSource{Source: src},
+			}}}
+			_, err := p.loadSprints(context.Background(), forge.Caps{UserNamespace: true})
+			if err == nil || !strings.Contains(err.Error(), "user namespace") {
+				t.Errorf("err = %v, want a user namespace error", err)
 			}
 		})
 	}

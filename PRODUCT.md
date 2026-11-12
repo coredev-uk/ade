@@ -38,7 +38,7 @@ Forge TUIs (`glab`, `gh-dash`, lazygit) each cover one slice. ADE models the *wo
 ## Capabilities and Constraints
 
 - Configuration has two layers: **user-local config** (identity, forge credentials via commands/env, AI profiles, budgets, the list of projects on this machine) and **shareable project manifests** (tracker, repos, tasks, workspaces, conventions). Manifests never contain secrets.
-- ADE manages many projects, each with many repos. Adding a project clones every repo as a bare clone with git worktrees: a `main/` baseline plus one worktree per work-item branch. Every start of ADE (and a periodic timer) refreshes manifests, fetches all repos, fast-forwards clean trees only (never merging, rebasing, or stashing), and syncs the forge.
+- ADE manages many projects, each with many repos. Adding a project clones every repo as a bare clone with git worktrees: a baseline worktree named after the default branch (`main/`, `develop/`) plus one worktree per work-item branch. Every start of ADE (and a periodic timer) refreshes manifests, fetches all repos, fast-forwards clean trees only (never merging, rebasing, or stashing), and syncs the forge.
 - A built-in notification system (inbox, in-app toasts, best-effort terminal notifications) reports task completion and failure, CI results, pull and clone outcomes, review activity, agent runs, and budget thresholds.
 - Every feature works with AI fully disabled. AI only adds summaries, drafts, and automation; it is never required for core functions.
 - Every terminal action must also work when ADE runs inside VS Code's integrated terminal (key conflicts, `code` CLI as editor) and without zellij (plain host, VS Code tasks).

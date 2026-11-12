@@ -20,7 +20,7 @@ const (
 	SourceSelf     = "self"     // the worktree the workspace was opened for
 	SourceItem     = "item"     // the same work item's own worktree in that repo
 	SourcePin      = "pin"      // explicit `--with repo=branch`
-	SourceBaseline = "baseline" // the repo's main/ worktree
+	SourceBaseline = "baseline" // the repo's baseline worktree (named after its default branch)
 )
 
 // Tree is the worktree a repo resolves to for one workspace.

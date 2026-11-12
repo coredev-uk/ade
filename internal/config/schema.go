@@ -118,6 +118,9 @@ func (g schemaGen) node(t reflect.Type, path string) map[string]any {
 	if enum, ok := schemaEnums[g.key(path)]; ok {
 		n["enum"] = enum
 	}
+	if d, ok := schemaDefaults[g.key(path)]; ok {
+		n["default"] = d
+	}
 	if d, ok := schemaDocs[g.key(path)]; ok {
 		n["description"] = d
 	}
@@ -159,6 +162,12 @@ var schemaEnums = map[string][]string{
 	"manifest:repos.*.devshell":           {"auto", "direnv", "nix", "none"},
 	"manifest:services.*.kind":            {"service", "oneshot"},
 	"manifest:workspaces.*.layout":        {"code", "agent", "review", "manual"},
+}
+
+// schemaDefaults are the values an unset key takes, where that is not the
+// zero value.
+var schemaDefaults = map[string]any{
+	"manifest:labels.workflow.sync": "ask",
 }
 
 // schemaPatterns constrain free-form strings validate.go checks by regexp.
@@ -219,7 +228,7 @@ var schemaDocs = map[string]string{
 	"manifest:tracker.iterations.overlap": "Working days around a boundary that show the adjacent sprint (default 1).",
 	"manifest:tracker.weight.source":      "Where issue weights come from.",
 	"manifest:labels.workflow.stage":      "Derived stage (started, draft, review, merged) to workflow label value.",
-	"manifest:labels.workflow.sync":       "Whether ADE moves the workflow label when the derived stage changes.",
+	"manifest:labels.workflow.sync":       "Whether ADE moves the workflow label when the derived stage changes: auto moves it, ask moves it only when you confirm (ade start --move-label, or the start dialog) and lists background moves as pending, off never moves it (default ask).",
 	"manifest:labels.workflow.done":       "Workflow value that marks an open tracker issue finished.",
 	"manifest:repos":                      "Repositories of the project.",
 	"manifest:repos.*.path":               "Forge path, e.g. group/api.",

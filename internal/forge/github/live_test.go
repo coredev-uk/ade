@@ -105,7 +105,7 @@ func TestLiveRead(t *testing.T) {
 	if err != nil || me.Username == "" || me.ID == 0 {
 		t.Fatalf("Me = %+v, %v", me, err)
 	}
-	caps, err := c.Capabilities(ctx, s.owner)
+	caps, err := c.Capabilities(ctx, s.owner, "")
 	if err != nil || caps.Iterations || caps.Weight || caps.ApprovalRules || caps.Epics || caps.ProbedAt.IsZero() {
 		t.Fatalf("caps = %+v, %v", caps, err)
 	}

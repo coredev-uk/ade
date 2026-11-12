@@ -149,6 +149,9 @@ func (s *Service) syncProject(ctx context.Context, st *store.Store, ref config.P
 		for _, err := range o.Errs {
 			res.Warnings = append(res.Warnings, "workflow label: "+err.Error())
 		}
+		for _, mv := range o.Pending {
+			res.Warnings = append(res.Warnings, "workflow label not moved: "+mv.String()+": "+startwork.PendingAdvice(mv, m.Labels))
+		}
 	}
 	res.Warnings = append(res.Warnings, s.writeRecords(ctx, f, m, res, old, hadPrev)...)
 	// Features the instance lacks (an older self-managed GitLab) are named

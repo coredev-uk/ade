@@ -110,8 +110,8 @@ func newVSCodeWorkspaceCmd() *cobra.Command {
 		Short: "Write a multi-root VS Code workspace for a work item (--open starts VS Code)",
 		Long: `Writes <name>.code-workspace into the item's records directory (outside every git
 tree) and prints its path. The workspace has one folder per repo of the project:
-the work item's own worktree where it has one, the repo's baseline (main/)
-otherwise; plus the run graph as tasks (labels "ade: <node>", dependsOn and the
+the work item's own worktree where it has one, the repo's baseline (the
+default-branch tree) otherwise; plus the run graph as tasks (labels "ade: <node>", dependsOn and the
 API_URL wiring of "ade ws up", the item's trees pinned) and settings that keep
 .bare out of the explorer and search.
 

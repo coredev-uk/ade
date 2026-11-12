@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/coredev-uk/ade/internal/domain"
@@ -34,9 +35,10 @@ func TestSyncWorkflowApplyAskOff(t *testing.T) {
 	}{
 		{"auto", "workflow::in review", 1, 0, true, false},
 		{"ask", "workflow::in progress", 0, 1, false, true},
+		{"", "workflow::in progress", 0, 1, false, true}, // unset means ask
 		{"off", "workflow::in progress", 0, 0, false, false},
 	} {
-		t.Run(tc.sync, func(t *testing.T) {
+		t.Run("sync="+tc.sync, func(t *testing.T) {
 			h := newHarness(t, fake.Free)
 			h.m.Labels.Workflow.Sync = tc.sync
 			prev, cur := advancedItem(h)
@@ -59,7 +61,12 @@ func TestSyncWorkflowApplyAskOff(t *testing.T) {
 			}
 			var pending bool
 			for _, ev := range h.drain() {
-				pending = pending || ev.Kind == "workflow.move.pending"
+				if ev.Kind == "workflow.move.pending" {
+					pending = true
+					if !strings.Contains(ev.Detail, "workflow::in review") || !strings.Contains(ev.Detail, `sync = "auto"`) {
+						t.Errorf("pending detail = %q, want the label and how to apply it", ev.Detail)
+					}
+				}
 			}
 			if pending != tc.wantPending {
 				t.Errorf("pending event = %v, want %v", pending, tc.wantPending)

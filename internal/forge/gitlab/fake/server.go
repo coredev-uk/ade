@@ -82,9 +82,10 @@ type options struct {
 	latency  time.Duration
 	gitRoot  string
 
-	noMRDetails bool
-	rateLimit   int
-	rateWindow  time.Duration
+	noMRDetails   bool
+	userNamespace bool
+	rateLimit     int
+	rateWindow    time.Duration
 
 	selfHosted
 }
@@ -109,6 +110,11 @@ func WithRateLimit(n int, window time.Duration) Option {
 	return func(o *options) { o.rateLimit, o.rateWindow = n, window }
 }
 
+// WithUserNamespace makes GroupPath a user's personal namespace instead of a
+// group, as on GitLab: /namespaces/:id answers kind "user", every /groups/:id
+// endpoint is 404, and milestones belong to the projects.
+func WithUserNamespace() Option { return func(o *options) { o.userNamespace = true } }
+
 // SetLatency changes the per-response delay of a running server.
 func (s *Server) SetLatency(d time.Duration) {
 	s.mu.Lock()
@@ -123,6 +129,7 @@ func New(tier Tier, opts ...Option) *Server {
 		f(&o)
 	}
 	s := &Server{tier: tier, opts: o, st: seed(o.clock, tier)}
+	s.st.userNamespace = o.userNamespace
 	s.Server = s.start()
 	return s
 }
