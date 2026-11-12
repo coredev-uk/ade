@@ -29,7 +29,7 @@ import (
 
 const (
 	mrStale   = 30 * time.Second
-	logTail   = 16 << 10 // bytes of a job log kept for the viewer
+	logTail   = 512 << 10 // bytes of a job log kept for the viewer
 	spinEvery = 120 * time.Millisecond
 )
 

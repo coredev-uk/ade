@@ -159,6 +159,28 @@ func TestGoldenMRDescription(t *testing.T) {
 	}
 }
 
+// --- Job log ----------------------------------------------------------------------
+
+// logGolden opens the failed lint job's log from the CI tab: the log fills the screen.
+func logGolden(t *testing.T, ascii bool) (model, goldentest.Drive) {
+	e := newMREnv(t, fake.Free)
+	if ascii {
+		e.m.g = asciiGlyphs
+	}
+	e.open(mrRef("web", 1).String())
+	e.press("5", "j", "l")
+	return e.m, nil
+}
+
+func TestGoldenJobLog(t *testing.T) {
+	for _, s := range goldenSizes {
+		golden{
+			name: "job_log", w: s.w, h: s.h,
+			build: logGolden,
+		}.run(t)
+	}
+}
+
 // --- Start work dialog ------------------------------------------------------------
 
 func swGolden(t *testing.T, ascii bool, confirm bool) (model, goldentest.Drive) {

@@ -6,7 +6,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/coredev-uk/ade/internal/forge"
 )
@@ -117,3 +119,79 @@ func (s *Store) WriteNotes(forgeName string, ref forge.Ref, notes string) error 
 	}
 	return writeAtomic(path, []byte(out))
 }
+
+// noteStamp is the date prefix of an appended note line.
+const noteStamp = "2006-01-02 15:04"
+
+// blockedTag marks a note that says what is stopping progress.
+const blockedTag = "[blocked] "
+
+// AppendNote adds a dated line ("- 2026-11-12 14:20 text", with "[blocked] "
+// before the text when blocked) at the end of the item's "## Notes" section.
+// Text the user wrote stays as it is; a record without the heading gets one.
+// It never creates the record (ErrNoRecord): callers make it from the cache
+// first, as the notes dialog does.
+func (s *Store) AppendNote(forgeName string, ref forge.Ref, text string, now time.Time, blocked bool) error {
+	text = oneLine(text)
+	if text == "" {
+		return errors.New("note is empty")
+	}
+	path := s.ItemPath(forgeName, ref)
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return ErrNoRecord
+	}
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	head, notes, found := notesSplit(string(data))
+	if !found {
+		head = strings.TrimRight(head, "\n") + "\n\n" + notesHeader + "\n"
+	}
+	line := "- " + now.Format(noteStamp) + " "
+	if blocked {
+		line += blockedTag
+	}
+	out := head + "\n"
+	if strings.TrimSpace(notes) != "" {
+		out += strings.TrimRight(notes, " \t\r\n") + "\n"
+	}
+	return writeAtomic(path, []byte(out+line+text+"\n"))
+}
+
+// Note is one dated line of the user's notes.
+type Note struct {
+	At      time.Time
+	Blocked bool
+	Text    string
+}
+
+// ParseNotes returns the dated lines ("- 2026-11-12 14:20 [blocked] text") of
+// the notes text, newest first (the later line first among equal times). Any
+// other text is the user's own and is ignored.
+func ParseNotes(text string) []Note {
+	var out []Note
+	for _, line := range strings.Split(text, "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "- ")
+		if !ok || len(rest) <= len(noteStamp) {
+			continue
+		}
+		at, err := time.Parse(noteStamp, rest[:len(noteStamp)])
+		if err != nil {
+			continue
+		}
+		body := strings.TrimSpace(rest[len(noteStamp):])
+		blocked := strings.HasPrefix(body, strings.TrimSpace(blockedTag))
+		if blocked {
+			body = strings.TrimSpace(strings.TrimPrefix(body, strings.TrimSpace(blockedTag)))
+		}
+		out = append(out, Note{At: at, Blocked: blocked, Text: body})
+	}
+	slices.Reverse(out)
+	slices.SortStableFunc(out, func(a, b Note) int { return b.At.Compare(a.At) })
+	return out
+}
+
+// Blocked reports whether the newest note says work is blocked: a later note
+// that is not blocked clears it.
+func Blocked(notes []Note) bool { return len(notes) > 0 && notes[0].Blocked }

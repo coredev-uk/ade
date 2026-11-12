@@ -39,11 +39,22 @@ type Result struct {
 	// current/adjacent sprints, plus untracked issues assigned to me.
 	Items []domain.WorkItem `json:"items,omitempty"`
 	// Reviews are open MRs requesting my review across the manifest's repos.
-	Reviews  []forge.MR `json:"reviews,omitempty"`
-	SyncedAt time.Time  `json:"synced_at"`
+	Reviews []forge.MR `json:"reviews,omitempty"`
+	// ReviewFacets are the type, apps and weight of the issue a review
+	// worked on, by MR ref, for the reviews whose issue is loaded.
+	ReviewFacets map[string]ReviewFacets `json:"review_facets,omitempty"`
+	SyncedAt     time.Time               `json:"synced_at"`
 	// Warnings are non-fatal problems (e.g. a record that could not be written).
 	Warnings []string `json:"warnings,omitempty"`
 	Err      string   `json:"err,omitempty"`
+}
+
+// ReviewFacets are the facets of the issue behind a review request, taken
+// from its tracker parent where the issue has none of its own.
+type ReviewFacets struct {
+	Type   string   `json:"type,omitempty"`
+	Apps   []string `json:"apps,omitempty"`
+	Weight *int     `json:"weight,omitempty"`
 }
 
 // Service syncs every registered project.

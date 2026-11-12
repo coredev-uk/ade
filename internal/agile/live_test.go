@@ -2,6 +2,8 @@ package agile
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -232,5 +234,31 @@ func TestReviewCycleTimeAgainstFake(t *testing.T) {
 	}
 	if r.Cycle.Items != 2 || r.Cycle.MedianHours == nil {
 		t.Errorf("summary %+v", r.Cycle)
+	}
+}
+
+func TestPickProjectWithSeveralCachedProjects(t *testing.T) {
+	sp := []domain.Sprint{{Title: "Sprint 1"}}
+	results := []forgesync.Result{
+		{Project: "a", Items: []domain.WorkItem{{}}},
+		{Project: "b", Sprints: sp},
+		{Project: "c", Sprints: sp},
+	}
+	_, err := pickProject(results, "")
+	var several *severalProjectsError
+	if !errors.As(err, &several) || !strings.Contains(err.Error(), "choose one with --project") {
+		t.Fatalf("pickProject without a name = %v, want the several-projects error", err)
+	}
+	if res, err := several.first(); err != nil || res.Project != "b" {
+		t.Errorf("first = %q, %v: want b, the first with sprints", res.Project, err)
+	}
+	if note := several.chose("b"); !strings.Contains(note, "reviewing b") || !strings.Contains(note, "a, b, c") {
+		t.Errorf("note = %q", note)
+	}
+	if res, err := pickProject(results, "c"); err != nil || res.Project != "c" {
+		t.Errorf("pickProject c = %q, %v", res.Project, err)
+	}
+	if _, err := (&severalProjectsError{results: results[:1]}).first(); err == nil {
+		t.Error("no project with sprints should stay an error")
 	}
 }

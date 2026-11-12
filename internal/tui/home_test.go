@@ -98,7 +98,7 @@ func TestSprintOpenListsOnlyTrackerUnassignedTickets(t *testing.T) {
 		t.Errorf("my-work row reason = %q, want it untouched", got)
 	}
 	m := model{g: unicodeGlyphs, w: 120, h: 40}
-	if got := ansi.Strip(m.itemDetail(it, 80)); !strings.Contains(got, "by Sam Smith (sam)") {
+	if got := ansi.Strip(m.itemDetail(it, 80, true)); !strings.Contains(got, "by Sam Smith (sam)") {
 		t.Errorf("detail lacks the author:\n%s", got)
 	}
 }

@@ -30,16 +30,35 @@ type ClassifyInput struct {
 	// issues a weight suggestion compares with (WeightSamples).
 	Weight  config.WeightSource
 	Samples []WeightSample
+	// Inherited are the labels of the tracker issue above a code-repo issue:
+	// a facet it carries counts as the issue's own, so it is not missing.
+	Inherited []string
+}
+
+// NewClassifyInput is the input for classifying is under manifest m: the
+// label patterns, the apps the manifest's repos serve and, for an issue of a
+// code repo, the tracker parent whose facets it inherits. The caller adds the
+// known types and weight samples it has.
+func NewClassifyInput(m *config.Manifest, is forge.Issue, parent *forge.Issue) ClassifyInput {
+	in := ClassifyInput{Issue: is, Labels: m.Labels, Weight: m.Tracker.Weight}
+	for _, r := range m.Repos {
+		in.KnownApps = append(in.KnownApps, r.App...)
+	}
+	if parent != nil {
+		in.Inherited = parent.Labels
+	}
+	return in
 }
 
 // Missing lists the facets the issue lacks: "type", "app".
 func (in ClassifyInput) Missing() []string {
 	f := domain.FacetsOf(in.Issue.Labels, in.Labels)
+	inh := domain.FacetsOf(in.Inherited, in.Labels)
 	var miss []string
-	if f.Type == "" && in.Labels.Type.Pattern != "" {
+	if f.Type == "" && inh.Type == "" && in.Labels.Type.Pattern != "" {
 		miss = append(miss, "type")
 	}
-	if len(f.Apps) == 0 && in.Labels.App.Pattern != "" {
+	if len(f.Apps) == 0 && len(inh.Apps) == 0 && in.Labels.App.Pattern != "" {
 		miss = append(miss, "app")
 	}
 	return miss

@@ -146,7 +146,7 @@ func TestReviewPageShowsCountAndWeight(t *testing.T) {
 	m.ag = agileUI{kind: agileReview, review: reviewFixture()}
 	out := ansi.Strip(m.agileBody(120, 60))
 	for _, want := range []string{
-		"Sprint review · Sprint 42", "2–13 Nov", "by weight",
+		"Sprint review · demo · Sprint 42", "2–13 Nov", "by weight",
 		"Committed", "10w · 5 items (2 unweighted)",
 		"Added", "8w · 1 item",
 		"Done", "8w · 3 items (1 unweighted)",
@@ -422,5 +422,40 @@ func TestNarrowTodayKeepsWholeReasonAndNarrativeParagraphsSeparate(t *testing.T)
 	}
 	if !regexp.MustCompile(`First thing\.\s*\n\s+┃\s*\n\s+┃ Second thing\.`).MatchString(out) {
 		t.Errorf("narrative paragraphs run together:\n%s", out)
+	}
+}
+
+func twoProjectModel() model {
+	m := agileModel(unicodeGlyphs)
+	other := sampleResult()
+	other.Project = "other"
+	sp := []domain.Sprint{{Key: "7", Title: "Sprint 7"}}
+	m.results[0].Sprints = nil // no sprints: the review must not start here
+	other.Sprints = sp
+	m.results = append(m.results, other)
+	return m
+}
+
+func TestReviewWithSeveralProjectsOpensOnTheFirstWithSprints(t *testing.T) {
+	m := twoProjectModel()
+	m, cmd := press(m, "V")
+	if cmd == nil || m.ag.reviewProj != "other" {
+		t.Fatalf("V -> project %q, cmd %v: want the first project with sprints", m.ag.reviewProj, cmd)
+	}
+	m.ag.review = &agile.Review{Project: "other", Sprint: domain.Sprint{Title: "Sprint 7"}, Basis: agile.BasisWeight}
+	out := ansi.Strip(m.render())
+	if !strings.Contains(out, "Sprint review · other · Sprint 7") || strings.Contains(out, "several projects") {
+		t.Errorf("the page header should name the project:\n%s", out)
+	}
+	for _, w := range []int{80, 120, 160} {
+		m.w = w
+		if foot := ansi.Strip(m.agileFooter(w)); !strings.Contains(foot, "p project") {
+			t.Errorf("footer at %d columns lacks `p project`: %q", w, foot)
+		}
+	}
+	single := agileModel(unicodeGlyphs)
+	single.ag.kind = agileReview
+	if foot := ansi.Strip(single.agileFooter(80)); strings.Contains(foot, "p project") {
+		t.Errorf("one project needs no picker: %q", foot)
 	}
 }

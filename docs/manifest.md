@@ -378,6 +378,37 @@ devshell = "auto"     # auto | direnv | nix | none
 default) picks direnv for a repo with an `.envrc`, else `nix develop` for a flake with a `devShell`, else none.
 Services that belong to no repo are never wrapped. Details: [setup.md](setup.md#dev-shells-direnv--nix).
 
+### Team dotfiles
+
+```toml
+[dotfiles]
+repo    = "git@gitlab.example.com:acme/dotfiles.git"   # the repo the team uses with `coder dotfiles`
+branch  = "main"              # optional; default: the repository's default branch
+install = "script/setup"      # optional; overrides the install script search
+symlink = true                # optional; default true: link the dotfiles when there is no install script
+```
+
+`ade setup` and `ade dotfiles` apply the repo the way `coder dotfiles` does, so a team's Coder dotfiles also work
+outside Coder. The repo is cloned to `<data dir>/dotfiles/<project>` (a URL on a configured forge host is cloned with
+that forge's token; SSH host keys stay checked) and pulled on later runs. When `repo` changes, the old clone is moved to
+`<project>.backup-<timestamp>` and the new one cloned.
+
+Then ADE runs the first of `install.sh`, `install`, `bootstrap.sh`, `bootstrap`, `setup.sh`, `setup`,
+`script/install.sh`, `script/install`, `script/bootstrap.sh`, `script/bootstrap`, `script/setup.sh`, `script/setup` that
+exists, or the file named by `install`, inside the clone. A script without the executable bit runs through `sh`. It sees `ADE_PROJECT`,
+`ADE_ROOT` and `ADE_DOTFILES_DIR`. With no script and `symlink = true`, every top-level entry whose name starts with
+`.` is linked into `$HOME`, except `.git*` files other than `.gitconfig`; an existing file is first moved to
+`<name>.bak`, an existing link is replaced. Running again changes nothing that is already in place.
+
+**Security.** The install script is code your team pushes, and it runs with your environment (tokens included).
+Treat changes to `[dotfiles]` and to that repo like changes to a CI pipeline. `ade project sync` never runs it; only
+`ade setup` and `ade dotfiles` do.
+
+In a Coder workspace (`CODER=true`) whose own dotfiles step already cloned the same URL to
+`~/.config/coderv2/dotfiles`, ADE skips the project (`applied by coder`). Each person can change this in the user
+config: `[dotfiles] enabled = false` turns it off, `repo` and `branch` replace the manifest's (only for projects that
+have a `[dotfiles]` table). `ade doctor` warns when a project has dotfiles that were never applied.
+
 ### Self-hosted forge keys (user config, not the manifest)
 
 A manifest names its forge only by local name; where that forge lives is each person's `[forges.<name>]`. For a

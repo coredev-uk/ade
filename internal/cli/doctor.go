@@ -127,7 +127,7 @@ func probeTargets(ctx context.Context, a *app.App) []doctor.ProbeTarget {
 
 func doctorOptions(cmd *cobra.Command) doctor.Options {
 	if a := appFrom(cmd); a != nil {
-		return doctor.Options{ConfigFile: a.Paths.ConfigFile, Config: a.Config, Root: a.Root, Records: a.RecordsDir}
+		return doctor.Options{ConfigFile: a.Paths.ConfigFile, Config: a.Config, Root: a.Root, Records: a.RecordsDir, DataDir: a.Paths.DataDir}
 	}
 	o := doctor.Options{ConfigErr: loadError(cmd)}
 	if p, err := paths.Default(); err == nil {

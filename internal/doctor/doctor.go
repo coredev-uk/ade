@@ -42,6 +42,7 @@ type Options struct {
 	ConfigErr error
 	Root      string // resolved projects root
 	Records   string // resolved records directory
+	DataDir   string // ADE data directory, where project dotfiles are cloned
 
 	HTTP    *http.Client  // nil: a client with Timeout
 	Timeout time.Duration // per network or subprocess check; default 10s
@@ -87,6 +88,7 @@ func Run(ctx context.Context, o Options) []Check {
 	)
 	groups = append(groups, forgeChecks(o)...)
 	groups = append(groups, func(context.Context) []Check { return hostChecks(o) })
+	groups = append(groups, func(ctx context.Context) []Check { return dotfilesChecks(ctx, o) })
 	groups = append(groups, func(context.Context) []Check { return cdeChecks(o) })
 
 	results := make([][]Check, len(groups))

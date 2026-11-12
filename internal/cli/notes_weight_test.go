@@ -158,7 +158,7 @@ func TestIssueWeightRejectsBadValuesAndBadRefs(t *testing.T) {
 		{[]string{"weight", trackerProj + "#1", "--", "-2"}, "1 or more"},
 		{[]string{"weight", trackerProj + "#1", "heavy"}, "whole number or none"},
 		{[]string{"weight", fake.GroupPath + "/api!1", "2"}, "merge request"},
-		{[]string{"weight", "other/place#1", "2"}, "not in the tracker project"},
+		{[]string{"weight", "other/place#1", "2"}, "no registered project serves"},
 		{[]string{"weight", trackerProj + "#999", "2"}, "not found"},
 	} {
 		out, err := e.issue(tc.args...)

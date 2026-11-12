@@ -90,3 +90,79 @@ func TestWriteNotesAddsAMissingHeadingAndNeverCreatesTheRecord(t *testing.T) {
 		t.Errorf("notes = %q", got)
 	}
 }
+
+func TestAppendNoteAddsDatedLinesAtTheEndOfTheNotes(t *testing.T) {
+	s, _ := newStore(t)
+	wi := item("Rate limit")
+	if err := s.AppendNote("gl", wi.Ref, "x", time.Now(), false); !errors.Is(err, ErrNoRecord) {
+		t.Fatalf("no record: err = %v, want ErrNoRecord", err)
+	}
+	if _, _, err := s.WriteSnapshot("gl", wi, nil, 5); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteNotes("gl", wi.Ref, "my own words\n\n- plain bullet\n"); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 11, 12, 14, 20, 0, 0, time.UTC)
+	if err := s.AppendNote("gl", wi.Ref, "waiting for\nsupport", at, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendNote("gl", wi.Ref, "unblocked, retrying", at.Add(time.Hour), false); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.ReadNotes("gl", wi.Ref)
+	want := "my own words\n\n- plain bullet\n" +
+		"- 2026-11-12 14:20 [blocked] waiting for support\n" +
+		"- 2026-11-12 15:20 unblocked, retrying\n"
+	if got != want {
+		t.Errorf("notes = %q, want %q", got, want)
+	}
+	rec, _ := s.Read("gl", wi.Ref)
+	if !strings.HasPrefix(rec.Snapshot, "# Rate limit") {
+		t.Errorf("snapshot changed: %q", rec.Snapshot)
+	}
+	if err := s.AppendNote("gl", wi.Ref, "  ", at, false); err == nil {
+		t.Error("an empty note was accepted")
+	}
+}
+
+func TestAppendNoteOnARecordWithoutTheHeadingAndEmptyNotes(t *testing.T) {
+	s, _ := newStore(t)
+	wi := item("Rate limit")
+	if _, _, err := s.WriteSnapshot("gl", wi, nil, 5); err != nil {
+		t.Fatal(err)
+	}
+	path := s.ItemPath("gl", wi.Ref)
+	data := mustRead(t, path)
+	if err := os.WriteFile(path, []byte(strings.Replace(string(data), "## Notes", "", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 11, 12, 9, 5, 0, 0, time.UTC)
+	if err := s.AppendNote("gl", wi.Ref, "first", at, false); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.ReadNotes("gl", wi.Ref); got != "- 2026-11-12 09:05 first\n" {
+		t.Errorf("notes = %q", got)
+	}
+}
+
+func TestParseNotesNewestFirstAndIgnoresFreeText(t *testing.T) {
+	text := "free text\n- plain bullet\n" +
+		"- 2026-11-12 14:20 [blocked] waiting for support\n" +
+		"- 2026-11-10 09:00 started on the cache key\n" +
+		"- 2026-11-12 16:00 support answered\n" +
+		"- 2026-13-40 99:99 not a date\n"
+	got := ParseNotes(text)
+	if len(got) != 3 {
+		t.Fatalf("parsed %d notes: %+v", len(got), got)
+	}
+	if got[0].Text != "support answered" || got[0].Blocked || got[1].Text != "waiting for support" || !got[1].Blocked || got[2].Text != "started on the cache key" {
+		t.Errorf("notes = %+v", got)
+	}
+	if Blocked(got) {
+		t.Error("a later note that is not blocked clears the state")
+	}
+	if !Blocked(ParseNotes("- 2026-11-12 14:20 [blocked] x")) || Blocked(nil) {
+		t.Error("Blocked: newest blocked note should block, none should not")
+	}
+}

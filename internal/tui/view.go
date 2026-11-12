@@ -62,7 +62,9 @@ func (m model) render() string {
 		top := max(0, (h-2-lipgloss.Height(d))/2)
 		layers = append(layers, blankFieldLayer(m.g, strings.Repeat("\n", top)+d, w, h))
 	}
-	if l := blankFieldLayer(m.g, m.mrOverlay(w, h), w, h); l != nil {
+	if o := m.mrOverlay(w, h); m.mr.logOpen() {
+		layers = append(layers, lipgloss.NewLayer(fit(m.g, o, w, h)).X(0).Y(0).Z(4)) // the job log owns the whole screen
+	} else if l := blankFieldLayer(m.g, o, w, h); l != nil {
 		layers = append(layers, l)
 	}
 	if l := m.swOverlayLayer(w, h); l != nil {
@@ -584,6 +586,7 @@ func helpGroups(full bool) []helpGroup {
 			{"y", "copy the item's link (Home) or the tree's path (Worktrees)"},
 			{"o", "open the item in the browser (plain host: shows the URL)"},
 			{"n", "notes (yours; fed to agents and AI)"},
+			{"N", "add a dated note: what blocks the item or what you did last (a leading ! or tab marks it blocked; local only)"},
 			{"=", "set weight (shown before it is written; audited)"},
 			{">", "move to the next sprint, child issues following (shown before it is written; audited)"},
 			{"r", "restart blocked services of the item; otherwise refresh"},

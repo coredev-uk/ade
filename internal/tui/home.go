@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -258,4 +259,27 @@ func shortRef(ref forge.Ref, tracker string) string {
 		return s[i+1:]
 	}
 	return s
+}
+
+// reviewFacetsLine is the type, apps and weight of the issue behind a review
+// request ("story · api, web · weight 3"), or "" when the sync found none.
+func (m model) reviewFacetsLine(mr *forge.MR) string {
+	for _, res := range m.results {
+		f, ok := res.ReviewFacets[mr.Ref.String()]
+		if !ok {
+			continue
+		}
+		var parts []string
+		if f.Type != "" {
+			parts = append(parts, f.Type)
+		}
+		if len(f.Apps) > 0 {
+			parts = append(parts, strings.Join(f.Apps, ", "))
+		}
+		if f.Weight != nil {
+			parts = append(parts, fmt.Sprintf(m.g.T("weight %d"), *f.Weight))
+		}
+		return strings.Join(parts, " "+m.g.Sep+" ")
+	}
+	return ""
 }

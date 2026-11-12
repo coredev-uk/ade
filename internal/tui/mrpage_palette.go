@@ -63,7 +63,7 @@ func (m model) mrEntries() []palEntry {
 		at("Review: cycle the severity", "", tabReview, "s"),
 		at("Review: delete the draft", "", tabReview, "d"),
 		at("Review: show the draft on its line", "", tabReview, "enter"),
-		at("CI: job log tail", "", tabCI, "l"),
+		at("CI: job log (full screen, / searches)", "", tabCI, "l"),
 		at("CI: retry the pipeline", "ade mr retry", tabCI, "r"),
 	}
 	if ai {

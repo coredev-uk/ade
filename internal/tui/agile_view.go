@@ -29,13 +29,18 @@ func (m model) agileHeaderLeft() string {
 
 func (m model) agileFooter(w int) string {
 	narrow := w < narrowW
+	var proj []string
+	if len(m.results) > 1 {
+		proj = []string{"p", "project"} // the review opens on one project; this picks another
+	}
 	switch {
 	case m.ag.kind == agileStandup && narrow:
 		return " " + keys("j/k", "scroll", "r", "reload", "n", "narrative", "y", "copy", "esc", "back", "?", "keys")
 	case m.ag.kind == agileStandup:
 		return " " + keys("j/k", "scroll", "r", "reload", "n", "AI narrative", "y", "copy as Markdown", "esc", "back", "t", "home", "i", "notifications", "?", "keys", "q", "quit")
 	case w < 150: // the review's keys no longer fit whole below this
-		return " " + keys("j/k", "scroll", "[ ]", "sprint", "m", "mine", "J/K", "item", ">", "move", "M", "move mine", "esc", "back", "?", "keys")
+		kv := append([]string{"j/k", "scroll", "[ ]", "sprint", "m", "mine", "J/K", "item", ">", "move", "M", "move mine"}, proj...)
+		return " " + keys(append(kv, "esc", "back", "?", "keys")...)
 	}
 	return " " + keys("j/k", "scroll", "[ ]", "sprint", "m", "mine: "+onOff(m.ag.mine), "J/K", "carried item", ">", "move to next sprint", "M", "move mine", "p", "project", "r", "reload", "n", "AI narrative", "y", "copy", "esc", "back", "?", "keys", "q", "quit")
 }
@@ -308,7 +313,7 @@ func (m model) reviewLines(w int) []string {
 	if m.ag.loading {
 		guide = g.Sync + " refreshing " + g.Sep + " " + guide
 	}
-	out := []string{section("Sprint review "+g.Sep+" "+r.Sprint.Title, guide, w, g)}
+	out := []string{section("Sprint review "+g.Sep+" "+r.Project+" "+g.Sep+" "+r.Sprint.Title, guide, w, g)}
 	if m.ag.reviewErr != nil {
 		out = append(out, " "+stWarn.Render(g.Warn+" refresh failed: ")+m.ag.reviewErr.Error())
 	}

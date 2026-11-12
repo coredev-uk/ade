@@ -172,48 +172,111 @@ func logModal(lines int, wide string) *mrModal {
 func TestJobLogOpensOnTheTailAndScrolls(t *testing.T) {
 	m := model{g: unicodeGlyphs, mr: &mrPage{}}
 	md := logModal(100, "")
-	_, got := m.logDialog(md, 60, 24) // 12 rows
-	if len(got) != 12 || !strings.HasSuffix(strings.TrimSpace(ansi.Strip(got[len(got)-1])), "#100") {
-		t.Fatalf("the log should open on its last lines, got %d rows ending %q", len(got), ansi.Strip(got[len(got)-1]))
+	m.mr.modal = md
+	rows := func(w, h int) []string { return strings.Split(m.logScreen(md, w, h), "\n") }
+	got := rows(60, 24) // title, 22 log rows, hint
+	if len(got) != 24 || !strings.HasSuffix(strings.TrimSpace(ansi.Strip(got[22])), "#100") {
+		t.Fatalf("the log should fill the screen and open on its last lines, got %d rows, last log row %q", len(got), ansi.Strip(got[22]))
+	}
+	wide := rows(100, 24)
+	if !strings.Contains(ansi.Strip(wide[0]), "Job log") || !strings.Contains(ansi.Strip(wide[23]), "/ search") {
+		t.Errorf("one-line title and hint expected, got %q and %q", ansi.Strip(wide[0]), ansi.Strip(wide[23]))
 	}
 	if strings.Contains(strings.Join(got, ""), "\x1b[31m") {
-		t.Errorf("CI colour leaked into the dialog: %q", got[0])
+		t.Errorf("CI colour leaked into the log: %q", got[1])
 	}
-	m.mr.modal = md
+	last := func() string { g := rows(60, 24); return strings.TrimSpace(ansi.Strip(g[22])) }
 	m.modalKey(keyMsg("k"))
-	_, got = m.logDialog(md, 60, 24)
-	if !strings.HasSuffix(strings.TrimSpace(ansi.Strip(got[len(got)-1])), "#99") {
-		t.Errorf("k should scroll up one line, last row %q", ansi.Strip(got[len(got)-1]))
+	if !strings.HasSuffix(last(), "#99") {
+		t.Errorf("k should scroll up one line, last row %q", last())
 	}
-	m.modalKey(tea.KeyPressMsg{Code: 'g', Text: "g"})
-	_, got = m.logDialog(md, 60, 24)
-	if !strings.HasSuffix(strings.TrimSpace(ansi.Strip(got[0])), "#1") {
-		t.Errorf("g should go to the top, first row %q", ansi.Strip(got[0]))
+	m.modalKey(keyMsg("g"))
+	if g := rows(60, 24); !strings.HasSuffix(strings.TrimSpace(ansi.Strip(g[1])), "#1") {
+		t.Errorf("g should go to the top, first row %q", ansi.Strip(g[1]))
 	}
-	m.modalKey(tea.KeyPressMsg{Code: 'G', Text: "G"})
-	_, got = m.logDialog(md, 60, 24)
-	if !strings.HasSuffix(strings.TrimSpace(ansi.Strip(got[len(got)-1])), "#100") {
-		t.Errorf("G should go to the bottom, last row %q", ansi.Strip(got[len(got)-1]))
+	m.modalKey(keyMsg("G"))
+	if !strings.HasSuffix(last(), "#100") {
+		t.Errorf("G should go to the bottom, last row %q", last())
+	}
+	m.modalKey(tea.KeyPressMsg{Code: tea.KeyPgUp})
+	if !strings.HasSuffix(last(), "#79") {
+		t.Errorf("pgup should move a page less one line, last row %q", last())
 	}
 }
 
-func TestJobLogShortLogMakesAShortDialogAndLongLinesScrollSideways(t *testing.T) {
+func TestJobLogUsesTheWholeWidthAndScrollsSideways(t *testing.T) {
 	m := model{g: unicodeGlyphs, mr: &mrPage{}}
-	md := logModal(2, strings.Repeat("w", 100))
+	md := logModal(2, strings.Repeat("w", 300))
 	m.mr.modal = md
-	_, got := m.logDialog(md, 40, 40)
-	if len(got) != 2 {
-		t.Fatalf("a 2-line log took %d rows", len(got))
+	got := strings.Split(m.logScreen(md, 200, 30), "\n")
+	if len(got) != 30 {
+		t.Fatalf("screen is %d rows, want 30", len(got))
+	}
+	if w := lipgloss.Width(got[1]); w != 200 || strings.Contains(ansi.Strip(got[1]), "#1") {
+		t.Errorf("a long line should run to the screen edge (width %d): %q", w, ansi.Strip(got[1]))
 	}
 	for _, r := range got {
-		if lipgloss.Width(r) > 40 {
-			t.Errorf("row %q overflows the dialog", ansi.Strip(r))
+		if lipgloss.Width(r) > 200 {
+			t.Errorf("row %q overflows the screen", ansi.Strip(r))
 		}
 	}
-	before := ansi.Strip(got[0])
+	before := ansi.Strip(got[1])
 	m.modalKey(keyMsg("l"))
-	_, got = m.logDialog(md, 40, 40)
-	if ansi.Strip(got[0]) == before {
+	if after := ansi.Strip(strings.Split(m.logScreen(md, 200, 30), "\n")[1]); after == before {
 		t.Errorf("l should scroll a long line sideways")
+	}
+}
+
+func TestJobLogTitleSaysWhenTheStartWasCutOff(t *testing.T) {
+	m := model{g: unicodeGlyphs, mr: &mrPage{}}
+	md := &mrModal{kind: modalLog}
+	md.setLog(mrResultMsg{out: jobLog{text: strings.Repeat("x\n", logTail/2)}})
+	m.mr.modal = md
+	if title := ansi.Strip(strings.Split(m.logScreen(md, 120, 20), "\n")[0]); !strings.Contains(title, "start cut off") {
+		t.Errorf("a log of logTail bytes should say its start was cut off: %q", title)
+	}
+	short := logModal(5, "")
+	if title := ansi.Strip(strings.Split(m.logScreen(short, 120, 20), "\n")[0]); strings.Contains(title, "cut off") {
+		t.Errorf("a short log was reported cut off: %q", title)
+	}
+}
+
+func TestJobLogSearchJumpsBetweenMatches(t *testing.T) {
+	m := model{g: unicodeGlyphs, mr: &mrPage{}}
+	md := logModal(100, "")
+	m.mr.modal = md
+	screen := func() []string { return strings.Split(ansi.Strip(m.logScreen(md, 60, 24)), "\n") }
+	m.modalKey(keyMsg("g"))
+	m.modalKey(keyMsg("/"))
+	for _, r := range "#5" {
+		m.modalKey(keyMsg(string(r)))
+	}
+	if !md.logTyping || !strings.Contains(screen()[23], "#5") {
+		t.Fatalf("typing a query should show it on the hint line: %q", screen()[23])
+	}
+	m.modalKey(keyMsg("enter"))
+	if md.logTyping || len(md.logHits) != 11 { // #5, #50-#59
+		t.Fatalf("enter should keep the query; typing=%v hits=%d", md.logTyping, len(md.logHits))
+	}
+	if !strings.Contains(screen()[0], "/#5 1 of 11") {
+		t.Errorf("title should name the match: %q", screen()[0])
+	}
+	m.modalKey(keyMsg("n"))
+	if md.logHit != 1 {
+		t.Errorf("n should step to the next match, at %d", md.logHit)
+	}
+	m.modalKey(keyMsg("N"))
+	m.modalKey(keyMsg("N"))
+	if md.logHit != 10 {
+		t.Errorf("N should wrap to the last match, at %d", md.logHit)
+	}
+	m.modalKey(keyMsg("/"))
+	m.modalKey(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mr.modal == nil || md.logTyping || md.logQuery != "" {
+		t.Errorf("esc while typing should clear the search and keep the log open")
+	}
+	m.modalKey(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mr.modal != nil {
+		t.Error("esc should close the log")
 	}
 }

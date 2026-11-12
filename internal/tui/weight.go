@@ -416,11 +416,11 @@ func (m model) weightInputView(d *weightDialog, inner int) []string {
 	return l
 }
 
-// weightFailure words a failed dialog as "cause · what to do". The raw error
-// is in the audit log, never on screen.
+// weightFailure words a failed dialog as "cause · what to do". A failed read
+// shows its error, for the fix depends on it.
 func weightFailure(d *weightDialog) string {
 	if d.failedAt == wtResolving {
-		return "could not read the issue from the forge · check the connection and press = again"
+		return "could not read the issue: " + oneLine(d.err.Error()) + " · check the connection and press = again"
 	}
 	return "the weight was not fully written · what was written is listed below; press = to try again, or set it on the forge"
 }

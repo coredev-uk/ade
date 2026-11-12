@@ -165,9 +165,10 @@ ade                       # attach to (or create) the zellij session "ade" with 
 1. **Home** shows your issues and MRs by stage. Move with the arrow keys or `j`/`k`; `?` lists every key; `/` searches.
 2. **`s` start work** on an item: pick repos, branch/MR mode, child issue behaviour (`b` on a repo row names its branch when a sibling repo carries a second set of changes). ADE creates the branch, a worktree and a zellij tab.
 3. **The tab** has your main pane (editor, or an `omp` agent, depending on `host.layout`), the item's live overview, lazygit, a shell, and one pane per task of the workspace itself. Task panes wait: press **Enter** in a pane to start it; Ctrl-C stops it. The first time a workspace opens, ADE also creates an unfocused `<tab> · services` tab: it installs the repos' dependencies first (`hooks.install`), then starts the services in dependency order, each waiting for what it requires (a service others require, with a `port`, counts as ready once the port accepts connections). A waiting pane reports every 30 seconds, stops with the reason if what it waits for failed, and gives up after 10 minutes. `hooks.install` commands run with ADE's environment inside the dev shell, with the trust of `post_worktree`. `services = "manual"` on the workspace skips that tab and keeps the services in the strip, waiting for Enter. `ade ws restart <node>` restarts one with its dependents.
-4. **`v`** opens a multi-root VS Code workspace for the item (all repos of the project).
-5. **Enter** on an MR opens the MR page: threads, diff, CI; reply, resolve, approve, mark ready, merge. `ade review <group/project!N>` opens someone else's MR in a review tab; collected line comments go out as one review batch.
-6. **Clean up** with `ade gc`, which removes worktrees of merged or closed MRs when they are clean and pushed.
+4. **`N`** leaves a dated note on the item (what blocks it, what you did last); the side panel shows the newest ones and a blocked item is marked on its row. `ade note <ref> <text> [--blocked]` does the same from a shell. Notes stay on your machine.
+5. **`v`** opens a multi-root VS Code workspace for the item (all repos of the project).
+6. **Enter** on an MR opens the MR page: threads, diff, CI; reply, resolve, approve, mark ready, merge. `ade review <group/project!N>` opens someone else's MR in a review tab; collected line comments go out as one review batch.
+7. **Clean up** with `ade gc`, which removes worktrees of merged or closed MRs when they are clean and pushed.
 
 ### Moving work from another tool
 
@@ -288,9 +289,10 @@ What one run does, in order (each step prints one line; `--json` prints the summ
 1. **Config.** With no user config it creates one like `ade init --yes` from flags or `ADE_SETUP_*` variables (below), or copies a team template with `--config-from <path|https-url>` (validated first). An existing config is validated and never overwritten.
 2. **Token.** Every configured forge's token is resolved and checked. An empty or rejected token skips the forge steps, says so, and the run exits 3. Setup never waits for input.
 3. **Projects.** `project add` for each configured project (clone, baseline worktrees, `post_worktree` hooks; a repeat only fills gaps), then `update` (fetch and fast-forward), then the first `sync`.
-4. **Machine.** Writes the zellij unlock-first preset next to the config, checks git, zellij, lazygit, direnv, nix, omp and the VS Code remote `code` CLI, and prints what is missing with one `nix profile install nixpkgs#...` line. `--warm` pre-builds each repo's baseline dev shell (`nix develop <repo>/<default-branch> -c true`, or `direnv allow` then `direnv exec` for a `.envrc`: asking for `--warm` is asking to trust those repos' `.envrc` files) so the first work tab opens fast.
-5. **Session.** `--session` starts the detached zellij session with the dashboard layout when it is not running (a resurrectable one is resurrected), so the VS Code remote terminal or web tty only attaches. `--session-name` picks another name (default `ade`).
-6. **Doctor.** A final `ade doctor` summary, informational: it never changes the exit code.
+4. **Dotfiles.** For each project whose manifest has a `[dotfiles]` table, clones or pulls the repo and runs its install script, or symlinks its dotfiles into `$HOME` (details: [manifest.md](manifest.md#team-dotfiles)). A failure exits 3 and does not stop the steps after it. `ade dotfiles` does the same on demand (`--dry-run` to preview).
+5. **Machine.** Writes the zellij unlock-first preset next to the config, checks git, zellij, lazygit, direnv, nix, omp and the VS Code remote `code` CLI, and prints what is missing with one `nix profile install nixpkgs#...` line. `--warm` pre-builds each repo's baseline dev shell (`nix develop <repo>/<default-branch> -c true`, or `direnv allow` then `direnv exec` for a `.envrc`: asking for `--warm` is asking to trust those repos' `.envrc` files) so the first work tab opens fast.
+6. **Session.** `--session` starts the detached zellij session with the dashboard layout when it is not running (a resurrectable one is resurrected), so the VS Code remote terminal or web tty only attaches. `--session-name` picks another name (default `ade`).
+7. **Doctor.** A final `ade doctor` summary, informational: it never changes the exit code.
 
 A lock in the cache directory (`setup.lock`) serialises concurrent runs; the second waits and then finds nothing left to do.
 
@@ -349,9 +351,13 @@ A plain `startup_script` works the same way (`startup_script = "ade setup --warm
 
 If your team keeps a config template in a repo, replace the variables with `ADE_SETUP_CONFIG_FROM = "https://gitlab.example.internal/acme/ade-config/-/raw/main/config.toml"` (the template must not contain tokens; it names the variables).
 
-### What belongs in a dotfiles repo instead
+### Dotfiles: the team's and your own
 
-`ade setup` creates only ADE's own state. Keep personal choices in your dotfiles repo, which Coder applies before the startup script: shell and git config (`user.name`, `user.email`), your `~/.config/zellij/config.kdl` and neovim config (ADE's unlock-first preset applies only to the VS Code terminal), `direnv` and Nix settings, and `~/.config/ade/config.toml` itself when you prefer to manage it by hand (setup then validates and leaves it alone).
+Coder applies *your* dotfiles repo (`coder dotfiles <repo>`, or the template's dotfiles module) before the startup script. Keep personal choices there: shell and git config (`user.name`, `user.email`), your `~/.config/zellij/config.kdl` and neovim config (ADE's unlock-first preset applies only to the VS Code terminal), `direnv` and Nix settings, and `~/.config/ade/config.toml` itself when you prefer to manage it by hand (setup then validates and leaves it alone).
+
+The *team's* dotfiles, the repo the project uses with `coder dotfiles`, go in the manifest as `[dotfiles] repo = "..."`. `ade setup` applies them in the dotfiles step, after the projects are cloned: same clone, pull, install-script and symlink behaviour as `coder dotfiles`, kept under ADE's data directory (`~/.local/share/ade/dotfiles/<project>`). If the Coder workspace already applied the same repo (its clone at `~/.config/coderv2/dotfiles` has the same origin URL), ADE skips it and reports `applied by coder`, so the install script does not run twice. A personal Coder dotfiles repo with a different URL is untouched.
+
+The install script is team code and runs with your environment, tokens included; review changes to that repo as you would a CI pipeline. Opt out with `[dotfiles] enabled = false` in your config. See [manifest.md](manifest.md#team-dotfiles).
 
 ### Attaching
 

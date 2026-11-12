@@ -465,3 +465,50 @@ func TestAssembleIsAssignedThroughAnOpenChildOfMine(t *testing.T) {
 		})
 	}
 }
+
+// An issue of a code repo takes the type, apps and weight it lacks from its
+// tracker parent; its own values win, and triage counts the inherited ones.
+func TestAssembleInheritsFacetsFromTheTrackerParent(t *testing.T) {
+	m := sandboxManifest()
+	m.Tracker.Weight = configWeight("label")
+	parent := tracker(1, "parent", false, "opened", "type::story", "app::api", "weight::5")
+
+	cases := []struct {
+		name       string
+		labels     []string
+		wantType   string
+		wantApps   []string
+		wantWeight int
+		wantTriage []string
+	}{
+		{"bare issue takes all three", nil, "story", []string{"api"}, 5, nil},
+		{"own type and weight win", []string{"type::bug", "weight::2"}, "bug", []string{"api"}, 2, nil},
+		{"own app wins", []string{"app::web"}, "story", []string{"web"}, 5, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			own := child("api", 7, 1)
+			own.Assignees = []forge.User{{Username: me}}
+			own.Labels = tc.labels
+			got := Assemble(AssembleInput{Manifest: m, Me: me, Tracker: own, Parent: &parent})
+			if got.Ref != own.Ref {
+				t.Errorf("ref = %s, want the issue's own %s", got.Ref, own.Ref)
+			}
+			if got.Type != tc.wantType || !reflect.DeepEqual(got.Apps, tc.wantApps) || got.Weight == nil || *got.Weight != tc.wantWeight {
+				t.Errorf("type %q apps %v weight %v", got.Type, got.Apps, deref(got.Weight))
+			}
+			if !reflect.DeepEqual(got.Triage, tc.wantTriage) {
+				t.Errorf("triage = %v, want %v", got.Triage, tc.wantTriage)
+			}
+		})
+	}
+
+	own := child("api", 7, 1)
+	if got := Assemble(AssembleInput{Manifest: m, Me: me, Tracker: own}); len(got.Triage) != 3 {
+		t.Errorf("without a parent triage = %v, want type, app and weight", got.Triage)
+	}
+	bare := tracker(2, "bare parent", false, "opened")
+	if got := Assemble(AssembleInput{Manifest: m, Me: me, Tracker: own, Parent: &bare}); len(got.Triage) != 3 {
+		t.Errorf("a parent without facets fills nothing: triage = %v", got.Triage)
+	}
+}

@@ -38,9 +38,11 @@ type Child struct {
 
 var bareIID = regexp.MustCompile(`^#?(\d+)$`)
 
-// Resolve finds the registered project whose tracker holds the issue named by
-// arg ("group/tracker#3", or "3" when one project is registered) and reads it.
-// open nil uses startwork.OpenForge.
+// Resolve finds the registered project whose tracker or repos hold the issue
+// named by arg ("group/tracker#3", or "3" when one project is registered) and
+// reads it. Manifests that fail to load are skipped, and a closed issue or an
+// issue of a code repo is fine: weights are set on what the row shows. open
+// nil uses startwork.OpenForge.
 func Resolve(ctx context.Context, a *app.App, open startwork.OpenFunc, arg string) (*Target, error) {
 	if open == nil {
 		open = startwork.OpenForge
@@ -48,21 +50,17 @@ func Resolve(ctx context.Context, a *app.App, open startwork.OpenFunc, arg strin
 	if len(a.Config.Projects) == 0 {
 		return nil, errors.New("no projects registered: run `ade project add <manifest>`")
 	}
-	var ms []*config.Manifest
-	for _, pr := range a.Config.Projects {
-		m, err := project.CachedManifest(ctx, a, pr)
-		if err != nil {
-			return nil, fmt.Errorf("manifest %s: %w", pr.Source, err)
-		}
-		ms = append(ms, m)
-	}
 	var ref forge.Ref
 	if mt := bareIID.FindStringSubmatch(strings.TrimSpace(arg)); mt != nil {
-		if len(ms) != 1 {
-			return nil, fmt.Errorf("%q is ambiguous with %d projects registered: use group/project#N", arg, len(ms))
+		if len(a.Config.Projects) != 1 {
+			return nil, fmt.Errorf("%q is ambiguous with %d projects registered: use group/project#N", arg, len(a.Config.Projects))
+		}
+		m, err := project.CachedManifest(ctx, a, a.Config.Projects[0])
+		if err != nil {
+			return nil, fmt.Errorf("manifest %s: %w", a.Config.Projects[0].Source, err)
 		}
 		iid, _ := strconv.Atoi(mt[1])
-		ref = forge.Ref{Project: ms[0].Tracker.Project, IID: iid, Kind: forge.KindIssue}
+		ref = forge.Ref{Project: m.Tracker.Project, IID: iid, Kind: forge.KindIssue}
 	} else {
 		var err error
 		if ref, err = forge.ParseRef(arg); err != nil {
@@ -72,23 +70,21 @@ func Resolve(ctx context.Context, a *app.App, open startwork.OpenFunc, arg strin
 			return nil, fmt.Errorf("%s is a merge request: weights belong to issues", ref)
 		}
 	}
-	for _, m := range ms {
-		if m.Tracker.Project != ref.Project {
-			continue
-		}
-		fc, ok := a.Config.Forges[m.Forge]
-		if !ok {
-			return nil, fmt.Errorf("forge %q is not defined in the user config", m.Forge)
-		}
-		f, err := open(ctx, m.Forge, fc)
-		if err != nil {
-			return nil, err
-		}
-		return resolveWith(ctx, f, m, ref, func(ctx context.Context, group, project string) (forge.Caps, error) {
-			return startwork.CachedCaps(ctx, a, m.Forge, group, project, f)
-		})
+	m, err := project.Serving(ctx, a, project.CachedManifest, ref.Project)
+	if err != nil {
+		return nil, err
 	}
-	return nil, fmt.Errorf("%s is not in the tracker project of any registered project", ref)
+	fc, ok := a.Config.Forges[m.Forge]
+	if !ok {
+		return nil, fmt.Errorf("forge %q is not defined in the user config", m.Forge)
+	}
+	f, err := open(ctx, m.Forge, fc)
+	if err != nil {
+		return nil, err
+	}
+	return resolveWith(ctx, f, m, ref, func(ctx context.Context, group, project string) (forge.Caps, error) {
+		return startwork.CachedCaps(ctx, a, m.Forge, group, project, f)
+	})
 }
 
 // ResolveWith reads the issue, its capabilities and its children through an

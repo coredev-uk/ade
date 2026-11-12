@@ -2,7 +2,9 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"charm.land/bubbles/v2/viewport"
 
@@ -93,9 +95,18 @@ type mrModal struct {
 	logView    viewport.Model
 	logLines   int  // lines in the log
 	logTail    bool // open on the last lines: set until the first draw knows the height
+	logCut     bool // the log's start was cut off: only the last logTail bytes were read
 	logLoading bool
 	logErr     error
+	logRaw     []string // the lines without search highlights
+	logTyping  bool     // the "/" input has focus
+	logQuery   string
+	logHits    []int // lines holding the query
+	logHit     int   // index into logHits of the line last jumped to
 }
+
+// logOpen reports whether the page shows a job log.
+func (p *mrPage) logOpen() bool { return p != nil && p.modal != nil && p.modal.kind == modalLog }
 
 func (md *mrModal) setLog(msg mrResultMsg) {
 	md.logLoading = false
@@ -110,7 +121,120 @@ func (md *mrModal) setLog(msg mrResultMsg) {
 	}
 	md.logView = viewport.New()
 	md.logView.SetContentLines(lines)
+	md.logRaw = lines
 	md.logLines, md.logTail = len(lines), true
+	md.logCut = len(jl.text) > logTail-utf8.UTFMax // the read stops at logTail bytes, on a character boundary
+}
+
+// logSearch applies the query: matches are marked in the text and the view
+// jumps to the first one at or below the top line (wrapping to the first).
+func (md *mrModal) logSearch(query string) {
+	md.logQuery, md.logHits, md.logHit = query, nil, 0
+	if query == "" {
+		md.logView.SetContentLines(md.logRaw)
+		return
+	}
+	needle := strings.ToLower(query)
+	lines := make([]string, len(md.logRaw))
+	for i, ln := range md.logRaw {
+		lines[i] = ln
+		if strings.Contains(strings.ToLower(ln), needle) {
+			md.logHits = append(md.logHits, i)
+			lines[i] = markMatches(ln, needle)
+		}
+	}
+	md.logView.SetContentLines(lines)
+	if i := slices.IndexFunc(md.logHits, func(l int) bool { return l >= md.logView.YOffset() }); i >= 0 {
+		md.logHit = i
+	}
+	md.logJump()
+}
+
+// logStep moves to the next (d=1) or previous (d=-1) match, wrapping.
+func (md *mrModal) logStep(d int) {
+	if n := len(md.logHits); n > 0 {
+		md.logHit = (md.logHit + d + n) % n
+		md.logJump()
+	}
+}
+
+// logJump puts the current match a quarter of the way down the view.
+func (md *mrModal) logJump() {
+	if len(md.logHits) == 0 {
+		return
+	}
+	md.logView.SetYOffset(max(md.logHits[md.logHit]-md.logView.Height()/4, 0))
+}
+
+// markMatches reverses every case-insensitive occurrence of needle (lower
+// case) in the plain line.
+func markMatches(line, needle string) string {
+	lower := strings.ToLower(line)
+	if len(lower) != len(line) { // case folding changed the byte length: keep the line as it is
+		return line
+	}
+	var b strings.Builder
+	for {
+		i := strings.Index(lower, needle)
+		if i < 0 {
+			break
+		}
+		b.WriteString(line[:i])
+		b.WriteString(stFound.Render(line[i : i+len(needle)]))
+		line, lower = line[i+len(needle):], lower[i+len(needle):]
+	}
+	b.WriteString(line)
+	return b.String()
+}
+
+// logKey handles the open log's keys; typing is the "/" input.
+func (md *mrModal) logKey(k tea.KeyPressMsg) {
+	ks := k.String()
+	if md.logTyping {
+		switch ks {
+		case "esc":
+			md.logTyping = false
+			md.logSearch("")
+		case "enter":
+			md.logTyping = false
+		case "ctrl+u":
+			md.logSearch("")
+		case "backspace", "ctrl+h":
+			if r := []rune(md.logQuery); len(r) > 0 {
+				md.logSearch(string(r[:len(r)-1]))
+			}
+		default:
+			if k.Text != "" && !strings.ContainsAny(k.Text, "\r\n\t") {
+				md.logSearch(md.logQuery + k.Text)
+			}
+		}
+		return
+	}
+	switch ks {
+	case "j", "down":
+		md.logView.ScrollDown(1)
+	case "k", "up":
+		md.logView.ScrollUp(1)
+	case "g", "home":
+		md.logView.GotoTop()
+	case "G", "end":
+		md.logView.GotoBottom()
+	case "pgdown", "ctrl+d", "space":
+		md.logView.ScrollDown(max(md.logView.Height()-1, 1))
+	case "pgup", "ctrl+u":
+		md.logView.ScrollUp(max(md.logView.Height()-1, 1))
+	case "right", "l":
+		md.logView.ScrollRight(8)
+	case "left", "h":
+		md.logView.ScrollLeft(8)
+	case "/":
+		md.logTyping = true
+		md.logSearch("")
+	case "n":
+		md.logStep(1)
+	case "N":
+		md.logStep(-1)
+	}
 }
 
 // --- keys ----------------------------------------------------------------------
@@ -119,6 +243,10 @@ func (m *model) modalKey(k tea.KeyPressMsg) tea.Cmd {
 	p := m.mr
 	md := p.modal
 	ks := k.String()
+	if md.kind == modalLog && md.logTyping {
+		md.logKey(k) // esc ends the search input, not the viewer
+		return nil
+	}
 	if ks == "esc" {
 		p.modal = nil
 		return nil
@@ -168,24 +296,7 @@ func (m *model) modalKey(k tea.KeyPressMsg) tea.Cmd {
 	case modalAI:
 		return m.aiConfirmKey(md, ks)
 	case modalLog:
-		switch ks {
-		case "j", "down":
-			md.logView.ScrollDown(1)
-		case "k", "up":
-			md.logView.ScrollUp(1)
-		case "g", "home":
-			md.logView.GotoTop()
-		case "G", "end":
-			md.logView.GotoBottom()
-		case "pgdown", "ctrl+d", "space":
-			md.logView.ScrollDown(10)
-		case "pgup", "ctrl+u":
-			md.logView.ScrollUp(10)
-		case "right", "l":
-			md.logView.ScrollRight(8)
-		case "left", "h":
-			md.logView.ScrollLeft(8)
-		}
+		md.logKey(k)
 	}
 	return nil
 }
@@ -242,9 +353,12 @@ func (m model) mrOverlay(w, h int) string {
 	if p == nil || p.modal == nil {
 		return ""
 	}
+	md := p.modal
+	if md.kind == modalLog {
+		return m.logScreen(md, w, h)
+	}
 	dw := min(w, 100) // the Agent dialog's measure; blankFieldLayer centres it
 	inner := dw - 4
-	md := p.modal
 	var title string
 	var l []string
 	editorRows := 5
@@ -284,8 +398,6 @@ func (m model) mrOverlay(w, h int) string {
 		title, l = m.mergeDialog(md, inner)
 	case modalAI:
 		title, l = m.aiModal(md, inner)
-	case modalLog:
-		title, l = m.logDialog(md, inner, h)
 	}
 	if md.warn != "" {
 		l = append(l, "", stWarn.Render(m.g.Warn+" "+md.warn))
@@ -421,27 +533,59 @@ func (m model) mergeDialog(md *mrModal, inner int) (string, []string) {
 	return m.g.T("Merge · ") + d.ref.String() + m.g.T(" · ") + ansi.Truncate(mr.Title, max(10, inner-20), m.g.Ell), l
 }
 
-func (m model) logDialog(md *mrModal, inner, h int) (string, []string) {
-	title := m.g.T("Job log · ") + md.job.Name
-	rows := max(5, h-12)
+// logScreen is the open job log: the whole screen, a title line, the log and
+// a hint line. The log is plain text in ADE's own ink (stripCtl).
+func (m model) logScreen(md *mrModal, w, h int) string {
+	g := m.g
+	title := stBold.Render(g.T("Job log · ") + md.job.Name)
+	rows := max(h-2, 1)
+	var body []string
 	switch {
 	case md.logLoading:
-		return title, []string{stFaint.Render(spinnerFrame(m.g, m.mr.spin) + m.g.T(" reading the log tail…"))}
+		body = []string{stFaint.Render(spinnerFrame(g, m.mr.spin) + g.T(" reading the log…"))}
 	case md.logErr != nil:
-		return title, []string{stBad.Render(m.g.Bad + " " + shortCause(md.logErr))}
+		body = []string{stBad.Render(g.Bad + " " + shortCause(md.logErr))}
 	case md.logLines == 0:
-		return title, []string{stFaint.Render("The job has no log.")}
+		body = []string{stFaint.Render("The job has no log.")}
+	default:
+		md.logView.SetWidth(w)
+		md.logView.SetHeight(rows)
+		if md.logTail {
+			md.logView.GotoBottom()
+			md.logTail = false
+		}
+		top := md.logView.YOffset()
+		guide := fmt.Sprintf(g.T(" · %d-%d of %d lines"), top+1, min(md.logLines, top+rows), md.logLines)
+		if md.logCut {
+			guide += fmt.Sprintf(g.T(" · start cut off: only the last %d KiB"), logTail>>10)
+		}
+		title += stFaint.Render(guide)
+		if md.logQuery != "" {
+			found := g.T(" · /") + md.logQuery + " "
+			if n := len(md.logHits); n > 0 {
+				found += fmt.Sprintf("%d of %d", md.logHit+1, n)
+			} else {
+				found += "not found"
+			}
+			title += stWarn.Render(found)
+		}
+		body = strings.Split(md.logView.View(), "\n")
 	}
-	md.logView.SetWidth(inner)
-	rows = min(rows, md.logLines) // a short log gets a short dialog
-	md.logView.SetHeight(rows)
-	if md.logTail {
-		md.logView.GotoBottom()
-		md.logTail = false
+	hint := keys("j/k", "scroll", "pgup/pgdn", "page", "g/G", "ends", "h/l", "side", "/", "search", "n/N", "match", "esc", "close")
+	if md.logTyping {
+		hint = stBold.Render("/") + md.logQuery + g.Cursor + "  " + keys("enter", "keep", "esc", "clear")
 	}
-	top := md.logView.YOffset()
-	guide := fmt.Sprintf(m.g.T("%d-%d of %d lines · last %d KiB of the log"), top+1, min(md.logLines, top+rows), md.logLines, logTail>>10)
-	return title + stFaint.Render(m.g.T(" · ")+guide), strings.Split(md.logView.View(), "\n")
+	out := make([]string, 0, h)
+	out = append(out, ansi.Truncate(title, w, g.Ell))
+	for i := range rows {
+		ln := ""
+		if i < len(body) {
+			ln = ansi.Truncate(body[i], w, "")
+		}
+		out = append(out, ln)
+	}
+	out = append(out, ansi.Truncate(hint, w, g.Ell))
+	return strings.Join(out, "\n")
 }
 
 // stripCtl drops ANSI colour from CI output: the log is shown in ADE's own ink.

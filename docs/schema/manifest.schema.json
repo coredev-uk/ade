@@ -65,6 +65,29 @@
       },
       "type": "object"
     },
+    "dotfiles": {
+      "additionalProperties": false,
+      "description": "The team's dotfiles repository (the one used with `coder dotfiles`). `ade setup` and `ade dotfiles` clone it and run its install script, or symlink its dotfiles into $HOME. The install script is team code that runs with your environment.",
+      "properties": {
+        "branch": {
+          "description": "Branch to check out (default: the repository's default branch).",
+          "type": "string"
+        },
+        "install": {
+          "description": "Script inside the repo to run, overriding the search for install.sh, install, bootstrap.sh, bootstrap, setup.sh, setup, script/install.sh, script/install, script/bootstrap.sh, script/bootstrap, script/setup.sh and script/setup.",
+          "type": "string"
+        },
+        "repo": {
+          "description": "Git URL of the dotfiles repository. A URL on a configured forge host is cloned with that forge's token.",
+          "type": "string"
+        },
+        "symlink": {
+          "description": "Link the repo's dotfiles into $HOME when no install script is found (default true).",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "forge": {
       "description": "Key into the user config's [forges].",
       "type": "string"

@@ -40,6 +40,7 @@ type Manifest struct {
 	Conventions Conventions          `toml:"conventions"`
 	Groups      map[string][]string  `toml:"groups"`
 	Workspaces  map[string]Workspace `toml:"workspaces"`
+	Dotfiles    Dotfiles             `toml:"dotfiles"`
 
 	// Source is where the manifest came from; Undecoded lists unknown keys.
 	Source    string   `toml:"-"`
@@ -99,6 +100,27 @@ func (w WorkflowFacet) SyncMode() string {
 	}
 	return w.Sync
 }
+
+// Dotfiles is the team's dotfiles repository: the one members of the project
+// use with `coder dotfiles`. `ade setup` and `ade dotfiles` clone it and run
+// its install script, or symlink its dotfiles into $HOME. The install script
+// is team code that runs with your environment.
+type Dotfiles struct {
+	Repo   string `toml:"repo"`   // git URL; empty means the project has no dotfiles
+	Branch string `toml:"branch"` // default: the repository's default branch
+	// Install is a script inside the repo that overrides the automatic search
+	// (install.sh, install, bootstrap.sh, ...).
+	Install string `toml:"install"`
+	// Symlink says whether the repo's dotfiles are linked into $HOME when no
+	// install script is found (default true).
+	Symlink *bool `toml:"symlink"`
+}
+
+// Configured reports whether the manifest has a dotfiles repo.
+func (d Dotfiles) Configured() bool { return d.Repo != "" }
+
+// SymlinkFallback is Symlink with the default applied.
+func (d Dotfiles) SymlinkFallback() bool { return d.Symlink == nil || *d.Symlink }
 
 // Repo is one repository in a project.
 type Repo struct {

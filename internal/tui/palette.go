@@ -154,6 +154,7 @@ func (m model) paletteEntries() []palEntry {
 		pressEntry("Copy link", "y", "", true),
 		pressEntry("Open in browser", "o", "", true),
 		pressEntry("Notes", "n", "ade item <ref> --edit", true),
+		pressEntry("Add a note", "N", "ade note <ref> <text> [--blocked]", true),
 		pressEntry("Set weight", "=", "ade issue weight <ref> <n>", true),
 		pressEntry("Move to the next sprint", ">", "ade issue move <ref>", true),
 	}

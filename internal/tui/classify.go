@@ -45,7 +45,7 @@ type classifyDialog struct {
 	ref   forge.Ref
 	stage clStage
 
-	res *startwork.Resolved
+	res *startwork.Located
 	in  ai.ClassifyInput
 	cr  ai.ClassifyResult
 	pf  *ai.Preflight // what the AI call would cost, for clAsk
@@ -63,7 +63,7 @@ type classifyDialog struct {
 type (
 	clResolvedMsg struct {
 		d   *classifyDialog
-		res *startwork.Resolved
+		res *startwork.Located
 		in  ai.ClassifyInput
 		err error
 	}
@@ -103,14 +103,11 @@ func (m model) openClassify() (model, tea.Cmd) {
 			}
 			return w, nil
 		}
-		res, err := startwork.Resolve(ctx, a, open, d.ref.String())
+		res, err := startwork.Locate(ctx, a, open, d.ref)
 		if err != nil {
 			return clResolvedMsg{d: d, err: err}
 		}
-		in := ai.ClassifyInput{Issue: res.Item.Issue, Labels: res.Manifest.Labels, Weight: res.Manifest.Tracker.Weight}
-		for _, r := range res.Manifest.Repos {
-			in.KnownApps = append(in.KnownApps, r.App...)
-		}
+		in := ai.NewClassifyInput(res.Manifest, res.Issue, res.Parent)
 		seen := map[string]bool{}
 		var items []domain.WorkItem
 		for _, r := range results {
@@ -223,7 +220,7 @@ func (m model) classifyKey(ks string) (model, tea.Cmd) {
 				d.warn = "no weight to suggest: press = on Home to set one by hand"
 				return m, nil
 			}
-			ref, title := d.ref, d.res.Item.Issue.Title
+			ref, title := d.ref, d.res.Issue.Title
 			m.cl = nil
 			return m.openWeightFor(ref, title, d.cr.Suggestion.Weight, d.cr.Suggestion.WeightReason)
 		case "enter", "y":
@@ -283,7 +280,7 @@ func (m model) classifyOverlay(w, h int) string {
 	g := m.g
 	l := []string{}
 	if d.res != nil {
-		l = append(l, stFaint.Render(ansi.Truncate(d.res.Item.Issue.Title, inner, m.g.Ell)), "")
+		l = append(l, stFaint.Render(ansi.Truncate(d.res.Issue.Title, inner, m.g.Ell)), "")
 	}
 	var hint string
 	switch d.stage {
@@ -344,13 +341,13 @@ func (m model) classifyOverlay(w, h int) string {
 	return m.dialog(m.g.T("Classify · ")+d.ref.String(), l, dw)
 }
 
-// classifyFailure words a failed dialog as "cause · what to do". The raw
-// error is in the audit log (the AI call and the label write audit their
-// own failures; auditClassifyFailure covers the read), never on screen.
+// classifyFailure words a failed dialog as "cause · what to do". A failed
+// read shows its error, for the fix depends on it; the AI call and the label
+// write audit their own failures, auditClassifyFailure the read.
 func classifyFailure(d *classifyDialog) string {
 	switch d.failedAt {
 	case clResolving:
-		return "could not read the issue from the forge · check the connection and press c again"
+		return "could not read the issue: " + oneLine(d.err.Error()) + " · check the connection and press c again"
 	case clApplying:
 		return "the labels were not added · try again, or add them on the forge"
 	}

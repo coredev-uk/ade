@@ -130,7 +130,7 @@ func (s *Service) RefreshItem(ctx context.Context, m *config.Manifest, f forge.F
 
 	item := domain.Assemble(domain.AssembleInput{
 		Project: m.Name, Manifest: m, Me: me.Username, MeID: me.ID,
-		Tracker: tracker, Links: links, Candidates: kids, Parents: parents,
+		Tracker: tracker, Parent: startwork.TrackerParent(ctx, f, m, tracker, links), Links: links, Candidates: kids, Parents: parents,
 		MRs: mrs, Branches: branches(mrs), Sprints: prev.Sprints, Now: p.now,
 	})
 	if err := saveItem(st, item); err != nil {

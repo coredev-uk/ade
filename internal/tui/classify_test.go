@@ -11,9 +11,11 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/coredev-uk/ade/internal/ai"
 	"github.com/coredev-uk/ade/internal/audit"
 	"github.com/coredev-uk/ade/internal/budget"
 	"github.com/coredev-uk/ade/internal/config"
+	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/forge/gitlab"
 	"github.com/coredev-uk/ade/internal/forge/gitlab/fake"
 )
@@ -264,4 +266,84 @@ func TestPackFieldsHangsContinuationLinesWithoutALeadingSeparator(t *testing.T) 
 			t.Fatalf("bad line %q in %q", ln, got)
 		}
 	}
+}
+
+// addClassifyRow puts an item with ref on Home and selects it.
+func (e *swEnvT) addClassifyRow(ref forge.Ref, title string) {
+	e.t.Helper()
+	it := e.item(1, title)
+	it.Ref, it.Issue.Ref = ref, ref
+	e.m.results[0].Items = append(e.m.results[0].Items, it)
+	e.m.rebuildHome("")
+	e.selectRow(ref.String())
+}
+
+func TestClassifyWorksFromAnAppRepoRow(t *testing.T) {
+	e := newClassifyEnv(t)
+	api := forge.Ref{Project: grp + "/api", IID: 1, Kind: forge.KindIssue}
+	for _, r := range []forge.Ref{api, trk(1)} {
+		if err := e.srv.SetLabels(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.addClassifyRow(api, "Rate-limit the export endpoint")
+	e.press("c")
+	if e.m.cl == nil || e.m.cl.stage != clSuggest {
+		t.Fatalf("stage = %+v", e.m.cl)
+	}
+	e.want("Classify · "+api.String(), "Suggested labels")
+	e.wantNot("could not read")
+}
+
+func TestClassifyCountsTheFacetsOfTheTrackerParent(t *testing.T) {
+	e := newClassifyEnv(t)
+	api := forge.Ref{Project: grp + "/api", IID: 1, Kind: forge.KindIssue}
+	if err := e.srv.SetLabels(api); err != nil { // tracker#1 keeps type::story and app::api
+		t.Fatal(err)
+	}
+	e.addClassifyRow(api, "Rate-limit the export endpoint")
+	e.press("c")
+	if e.m.cl == nil || e.m.cl.stage != clFailed || !errors.Is(e.m.cl.err, ai.ErrNothingToClassify) {
+		t.Fatalf("dialog = %+v", e.m.cl)
+	}
+	e.want("already has a type and an app label")
+	e.wantNot("could not read")
+}
+
+func TestClassifyWorksOnAClosedTrackerIssue(t *testing.T) {
+	e := newClassifyEnv(t)
+	if err := e.srv.SetLabels(trk(10)); err != nil {
+		t.Fatal(err)
+	}
+	e.addClassifyRow(trk(10), "Upgrade export worker dependencies")
+	e.press("c")
+	if e.m.cl == nil || e.m.cl.stage != clSuggest {
+		t.Fatalf("stage = %+v", e.m.cl)
+	}
+	e.want("Suggested labels", "type::chore")
+}
+
+func TestClassifySkipsAManifestThatFailsToLoad(t *testing.T) {
+	e := newClassifyEnv(t)
+	e.app.Config.Projects = append([]config.ProjectRef{{Source: filepath.Join(t.TempDir(), "gone.ade.toml")}}, e.app.Config.Projects...)
+	e.press("c")
+	if e.m.cl == nil || e.m.cl.stage != clSuggest {
+		t.Fatalf("stage = %+v", e.m.cl)
+	}
+}
+
+func TestClassifyReadFailureShowsTheError(t *testing.T) {
+	e := newClassifyEnv(t)
+	e.addClassifyRow(forge.Ref{Project: "other/place", IID: 1, Kind: forge.KindIssue}, "Elsewhere")
+	e.press("c")
+	if e.m.cl == nil || e.m.cl.stage != clFailed {
+		t.Fatalf("dialog = %+v", e.m.cl)
+	}
+	e.want("could not read the issue: no registered project serves other/place", "press c again")
+	e.wantNot("from the forge")
+	// The unreadable manifest is named when it is why nothing serves the issue.
+	e.m.cl = nil
+	e.app.Config.Projects = []config.ProjectRef{{Source: filepath.Join(t.TempDir(), "gone.ade.toml")}}
+	e.press("c")
+	e.want("1 manifest(s) could not be")
 }

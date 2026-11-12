@@ -23,3 +23,11 @@ func (s *Service) GitClient(ctx context.Context, forgeName, bare string) (git.Cl
 	}
 	return s.client(ctx, forgeName, url)
 }
+
+// ClientFor returns a git client authorised for rawURL: https remotes on a
+// configured forge host (forgeName's own first) get that forge's token, any
+// other URL runs bare. Used for clones that are not a project repo, such as
+// the team dotfiles.
+func (s *Service) ClientFor(ctx context.Context, forgeName, rawURL string) (git.Client, error) {
+	return s.client(ctx, forgeName, rawURL)
+}

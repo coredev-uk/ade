@@ -40,6 +40,8 @@ func TestConfigValidate(t *testing.T) {
 		{"audit retain junk", "[records]\naudit_retain = \"a year\"\n", []string{"records.audit_retain:"}},
 		{"bad host mode", "[host]\nmode = \"tmux\"\n", []string{"host.mode:"}},
 		{"bad glyphs", "[host]\nglyphs = \"emoji\"\n", []string{"host.glyphs:"}},
+		{"dotfiles override", "[dotfiles]\nenabled = false\nrepo = \"https://x/d.git\"\nbranch = \"main\"\n", nil},
+		{"dotfiles override repo as option", "[dotfiles]\nrepo = \"-x\"\n", []string{"error: dotfiles.repo:"}},
 		{"unknown keys warn", "[user]\nhandel = \"x\"\n", []string{"warn: user.handel: unknown key"}},
 	}
 	for _, tt := range tests {

@@ -130,6 +130,9 @@ func (m model) reload() (model, tea.Cmd) {
 		}
 	case agileReview:
 		m.ag.reviewGen++
+		if m.ag.reviewProj == "" {
+			m.ag.reviewProj = m.reviewResult().Project // several projects: the first with sprints, not an error
+		}
 		gen, c, ctx := m.ag.reviewGen, m.collector(), m.ctx
 		o := agile.ReviewOptions{Project: m.ag.reviewProj, Sprint: m.ag.reviewSpr, Mine: m.ag.mine}
 		return m, func() tea.Msg {

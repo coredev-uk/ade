@@ -13,6 +13,7 @@ import (
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/forgesync"
 	"github.com/coredev-uk/ade/internal/project"
+	"github.com/coredev-uk/ade/internal/records"
 	"github.com/coredev-uk/ade/internal/review"
 	"github.com/coredev-uk/ade/internal/store"
 )
@@ -101,6 +102,9 @@ type model struct {
 	// (notes.go, weight.go).
 	nt *notesDialog
 	wt *weightDialog
+	// notes are the dated notes of the listed items, read once per refresh
+	// (loadNotes), keyed by markKey(project, ref).
+	notes map[string][]records.Note
 	// sm is the open sprint-move dialog, nil when closed (sprintmove.go).
 	sm *sprintDialog
 
@@ -331,6 +335,7 @@ func (m *model) setResults(rs []forgesync.Result) {
 		empty := func(r forgesync.Result) bool { return r.Err != "" && len(r.Items) == 0 }
 		return !empty(m.results[i]) && empty(m.results[j])
 	})
+	m.loadNotes()
 	m.rebuildHome(keep)
 }
 
@@ -484,6 +489,9 @@ func (m model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return next, cmd
 	case "n":
 		next, cmd := m.openNotes()
+		return next, cmd
+	case "N":
+		next, cmd := m.openNoteAdd()
 		return next, cmd
 	case "=":
 		next, cmd := m.openWeight()

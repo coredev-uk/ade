@@ -207,7 +207,7 @@ func activityProjects(m *config.Manifest) []string {
 
 // ReviewOptions selects what to review.
 type ReviewOptions struct {
-	Project  string // ADE project; empty: the only one, or an error when several
+	Project  string // ADE project; empty: the only one, else the first with sprints
 	Sprint   string // sprint title or key; empty: the current sprint, else the latest finished
 	Velocity int    // closed sprints in the velocity (default 3)
 	Mine     bool
@@ -227,6 +227,15 @@ func (c *Collector) Review(ctx context.Context, o ReviewOptions) (Review, error)
 		return Review{}, err
 	}
 	res, err := pickProject(results, o.Project)
+	note := ""
+	var several *severalProjectsError
+	if errors.As(err, &several) {
+		// No --project: take the first project with sprints, as the dashboard
+		// page does, and say so.
+		if res, err = several.first(); err == nil {
+			note = several.chose(res.Project)
+		}
+	}
 	if err != nil {
 		return Review{}, err
 	}
@@ -247,10 +256,14 @@ func (c *Collector) Review(ctx context.Context, o ReviewOptions) (Review, error)
 	if n <= 0 {
 		n = DefaultVelocitySprints
 	}
-	return BuildReviewLive(ctx, f, ReviewLiveInput{
+	r, err := BuildReviewLive(ctx, f, ReviewLiveInput{
 		Project: res.Project, Manifest: m, Sprint: sp, Sprints: res.Sprints, Me: res.Me, Items: res.Items,
 		Mine: o.Mine, Cal: cal, Now: c.now(), VelocityN: n,
 	})
+	if note != "" && err == nil {
+		r.Warnings = append(r.Warnings, note)
+	}
+	return r, err
 }
 
 func pickProject(results []forgesync.Result, name string) (forgesync.Result, error) {
@@ -282,7 +295,32 @@ func pickProject(results []forgesync.Result, name string) (forgesync.Result, err
 	for i, r := range ok {
 		names[i] = r.Project
 	}
-	return forgesync.Result{}, fmt.Errorf("several projects (%v): choose one with --project", names)
+	return forgesync.Result{}, &severalProjectsError{names: names, results: ok}
+}
+
+// severalProjectsError is pickProject's answer to an empty name with several
+// cached projects. Review recovers from it; other callers report it.
+type severalProjectsError struct {
+	names   []string
+	results []forgesync.Result
+}
+
+func (e *severalProjectsError) Error() string {
+	return fmt.Sprintf("several projects (%v): choose one with --project", e.names)
+}
+
+// first is the first cached project that has sprints.
+func (e *severalProjectsError) first() (forgesync.Result, error) {
+	for _, r := range e.results {
+		if len(r.Sprints) > 0 {
+			return r, nil
+		}
+	}
+	return forgesync.Result{}, e
+}
+
+func (e *severalProjectsError) chose(name string) string {
+	return fmt.Sprintf("several projects (%s): reviewing %s; choose another with --project", strings.Join(e.names, ", "), name)
 }
 
 // PickSprint finds the sprint to review: by title or key when named, else the

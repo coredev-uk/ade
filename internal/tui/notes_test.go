@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -163,4 +164,90 @@ func TestAgentMenuOffersNotesAndRemembersTheToggle(t *testing.T) {
 	d2 := &agentDialog{stage: agList, item: &domain.WorkItem{Ref: forge.Ref{Project: "g/t", IID: 1}}}
 	e.m.agt = d2
 	e.wantNot("your notes")
+}
+
+func TestNoteAddSavesADatedLineAndShowsItInTheDetailPane(t *testing.T) {
+	e, st := newNotesEnv(t)
+	e.m.w, e.m.h = 140, 48
+	e.press("N")
+	if e.m.nt == nil || !e.m.nt.adding {
+		t.Fatal("N on a Home item opens the quick-add form")
+	}
+	e.want("Note · "+trk(11).String(), "enter save", "tab or !")
+	e.press("enter")
+	e.want("write the note first")
+	e.typ("waiting for support")
+	e.press("enter")
+	if e.m.nt != nil {
+		t.Fatal("enter saves and closes the form")
+	}
+	got, _ := st.ReadNotes("sandbox-gitlab", trk(11))
+	if !strings.Contains(got, " waiting for support\n") || strings.Contains(got, "[blocked]") || !strings.HasPrefix(got, "- 20") {
+		t.Errorf("notes = %q: want one dated line", got)
+	}
+	e.want("notes", "waiting for support")
+	e.wantNot("blocked")
+
+	// A leading ! marks the next note blocked: the row and the pane say so.
+	e.press("N")
+	e.typ("!no API key yet")
+	e.want("[blocked] no API key yet")
+	e.press("enter")
+	got, _ = st.ReadNotes("sandbox-gitlab", trk(11))
+	if !strings.Contains(got, "[blocked] no API key yet\n") {
+		t.Errorf("notes = %q: want the blocked line", got)
+	}
+	e.want("blocked", "no API key yet")
+	if !strings.Contains(e.screen(), "▲blocked") {
+		t.Errorf("the row lacks the blocked marker:\n%s", e.screen())
+	}
+
+	// A later note that is not blocked clears it; tab toggles blocked in the form.
+	e.m.notes = nil
+	e.press("N")
+	e.typ("key arrived")
+	e.press("enter")
+	if records.Blocked(e.m.itemDatedNotes(e.m.homeRows[e.m.homeSel].item)) || strings.Contains(e.screen(), "▲blocked") {
+		t.Errorf("a later note did not clear the blocked state:\n%s", e.screen())
+	}
+	e.press("N", "tab")
+	if !e.m.nt.blocked {
+		t.Error("tab did not mark the note blocked")
+	}
+	e.press("esc")
+	if e.m.nt != nil {
+		t.Error("esc cancels the form")
+	}
+}
+
+func TestNoteDetailPaneHintAndNewestThree(t *testing.T) {
+	e, st := newNotesEnv(t)
+	e.m.w, e.m.h = 140, 48
+	e.want("N adds one")
+	base := time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)
+	for i, txt := range []string{"first", "second", "third", "fourth"} {
+		if err := st.AppendNote("sandbox-gitlab", trk(11), txt, base.Add(time.Duration(i)*time.Hour), false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.m.loadNotes()
+	e.want("fourth", "third", "second", "+ 1 older")
+	e.wantNot("first", "N adds one")
+}
+
+func TestNotesAreReadOncePerRefreshNotPerRender(t *testing.T) {
+	e, st := newNotesEnv(t)
+	e.m.w, e.m.h = 140, 48
+	if err := st.AppendNote("sandbox-gitlab", trk(11), "cached note", time.Now(), true); err != nil {
+		t.Fatal(err)
+	}
+	e.m.loadNotes()
+	e.want("cached note")
+	// Edited behind the model's back: the screen keeps the refresh's copy.
+	if err := st.WriteNotes("sandbox-gitlab", trk(11), "gone"); err != nil {
+		t.Fatal(err)
+	}
+	e.want("cached note")
+	e.m.setResults(e.m.results)
+	e.wantNot("cached note")
 }
