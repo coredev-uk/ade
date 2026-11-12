@@ -8,8 +8,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Kind is the family an editor belongs to; it decides how a line and a
@@ -42,17 +44,31 @@ type Env struct {
 	VSCodeIPC   string // VSCODE_IPC_HOOK_CLI: set in terminals VS Code started
 	Visual      string // VISUAL
 	Editor      string // EDITOR
+	// Headless is true on a Linux session with no display (a CDE, a web tty,
+	// plain ssh): a GUI launcher started there has no window to show.
+	Headless bool
+	// Home and RuntimeDir (XDG_RUNTIME_DIR) locate the VS Code server's remote
+	// CLI and its IPC sockets when PATH or the inherited environment is stale.
+	Home, RuntimeDir string
 	// LookPath finds a program on PATH; exec.LookPath when nil.
 	LookPath func(string) (string, error)
+	// Glob and ModTime read the file system (filepath.Glob and os.Stat when
+	// nil); tests replace them. ModTime reports false for a missing path.
+	Glob    func(pattern string) ([]string, error)
+	ModTime func(path string) (time.Time, bool)
 }
 
 // FromOS reads the real environment.
 func FromOS() Env {
+	home, _ := os.UserHomeDir()
 	return Env{
 		TermProgram: os.Getenv("TERM_PROGRAM"),
 		VSCodeIPC:   os.Getenv("VSCODE_IPC_HOOK_CLI"),
 		Visual:      os.Getenv("VISUAL"),
 		Editor:      os.Getenv("EDITOR"),
+		Headless:    runtime.GOOS == "linux" && os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "",
+		Home:        home,
+		RuntimeDir:  os.Getenv("XDG_RUNTIME_DIR"),
 	}
 }
 
@@ -89,6 +105,13 @@ type Editor struct {
 	// AppName is NVIM_APPNAME to run neovim with (ade-nvim started as plain
 	// nvim when the ade-nvim wrapper is not on PATH); empty for everything else.
 	AppName string
+	// Remote is true when Cmd is the VS Code server's remote CLI: `code`
+	// then talks to the VS Code window connected to this machine.
+	Remote bool
+	// IPC overrides VSCODE_IPC_HOOK_CLI for the launcher: the inherited
+	// socket is gone (VS Code reconnected after this shell started), so the
+	// newest live one is used instead.
+	IPC string
 }
 
 // Resolve applies host.editor (setting) to the environment:
@@ -105,8 +128,8 @@ type Editor struct {
 func Resolve(setting string, env Env) Editor {
 	switch setting {
 	case SettingCode:
-		if p := env.look("code"); p != "" {
-			return Editor{Kind: Code, Cmd: p, Name: "code"}
+		if ed, ok := env.codeEditor(); ok {
+			return ed
 		}
 	case SettingADENvim:
 		if p := env.look("ade-nvim"); p != "" {
@@ -125,8 +148,8 @@ func Resolve(setting string, env Env) Editor {
 		}
 	default: // auto, or a value validation would have rejected
 		if env.InVSCode() {
-			if p := env.look("code"); p != "" {
-				return Editor{Kind: Code, Cmd: p, Name: "code"}
+			if ed, ok := env.codeEditor(); ok {
+				return ed
 			}
 		}
 	}
@@ -170,14 +193,29 @@ func (e Editor) ArgvDir(dir string) []string {
 	return e.Argv(dir, 0, false)
 }
 
-// Command returns the exec.Cmd for Argv, with NVIM_APPNAME set when needed.
+// Command returns the exec.Cmd for Argv, with the environment the editor
+// needs (see Environ).
 func (e Editor) Command(path string, line int, wait bool) *exec.Cmd {
 	argv := e.Argv(path, line, wait)
 	cmd := exec.Command(argv[0], argv[1:]...)
-	if e.AppName != "" {
-		cmd.Env = append(os.Environ(), "NVIM_APPNAME="+e.AppName)
-	}
+	cmd.Env = e.Environ()
 	return cmd
+}
+
+// Environ is the process environment to run the editor with: nil (inherit)
+// unless NVIM_APPNAME or a repaired VSCODE_IPC_HOOK_CLI must be set.
+func (e Editor) Environ() []string {
+	var extra []string
+	if e.AppName != "" {
+		extra = append(extra, "NVIM_APPNAME="+e.AppName)
+	}
+	if e.IPC != "" {
+		extra = append(extra, "VSCODE_IPC_HOOK_CLI="+e.IPC)
+	}
+	if extra == nil {
+		return nil
+	}
+	return append(os.Environ(), extra...)
 }
 
 // PaneCommand is the program line a zellij editor pane runs in dir. A GUI
@@ -185,6 +223,9 @@ func (e Editor) Command(path string, line int, wait bool) *exec.Cmd {
 // the window and stays a shell.
 func (e Editor) PaneCommand(dir string) (prog string, args []string) {
 	if e.Kind == Code {
+		if e.IPC != "" {
+			return "sh", []string{"-c", `export VSCODE_IPC_HOOK_CLI="$3"; "$1" "$2"; exec "${SHELL:-sh}"`, "sh", e.Cmd, dir, e.IPC}
+		}
 		return "sh", []string{"-c", `"$1" "$2"; exec "${SHELL:-sh}"`, "sh", e.Cmd, dir}
 	}
 	if e.Kind == Shell {
@@ -203,6 +244,9 @@ func (e Editor) String() string {
 	}
 	if e.Kind == Shell {
 		return e.Name + " (" + strings.TrimSpace(e.Cmd) + ")"
+	}
+	if e.Remote {
+		return e.Name + " (remote CLI " + filepath.Clean(e.Cmd) + ")"
 	}
 	return e.Name + " (" + filepath.Clean(e.Cmd) + ")"
 }

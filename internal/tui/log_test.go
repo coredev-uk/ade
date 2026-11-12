@@ -300,7 +300,7 @@ func TestLogDetailShowsEveryField(t *testing.T) {
 	m := openLogPage(t, unicodeGlyphs, l, 140, 50)
 	m, _ = press(m, "j") // ai.summarize with the full ai block
 	out := ansi.Strip(m.render())
-	kv := func(k, v string) string { return pad(k, 10) + v }
+	kv := func(k, v string) string { return pad(unicodeGlyphs, k, 10) + v }
 	assertHas(t, "ai detail", out,
 		"ai.summarize", "✓ ok",
 		kv("actor", "user"), kv("target", "g/tracker#1"), kv("item", "g/tracker#1"), kv("outcome", "ok"),

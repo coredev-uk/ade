@@ -57,17 +57,28 @@ func (c *Client) MR(ctx context.Context, ref forge.Ref) (forge.MR, error) {
 		appr      wireApprovals
 		discs     []forge.Discussion
 		reviewers []wireReviewer
+		// The sub-resources are best effort: an old or reduced instance lacks
+		// the route, and the MR then reports "unknown". Whether that is the
+		// instance (not a deleted MR) is only known once the MR itself read.
+		noApprovals, noReviewers bool
 	)
 	base := mrPath(ref)
 	err := concurrently(
 		func() error { return c.getJSON(ctx, base, nil, false, &w) },
-		func() error { return c.getJSON(ctx, base+"/approvals", nil, false, &appr) },
+		func() error {
+			err := c.getJSON(ctx, base+"/approvals", nil, false, &appr)
+			noApprovals = unavailable(err)
+			if noApprovals {
+				return nil
+			}
+			return err
+		},
 		func() (err error) { discs, err = c.Discussions(ctx, ref); return },
 		func() error {
-			// Reviewer verdicts are best effort: an instance without the
-			// endpoint just has no "changes requested" signal.
+			// Without the endpoint there is no "changes requested" signal.
 			err := c.getJSON(ctx, base+"/reviewers", nil, true, &reviewers)
-			if errors.Is(err, forge.ErrUnavailable) || errors.Is(err, forge.ErrNotFound) {
+			noReviewers = unavailable(err)
+			if noReviewers {
 				return nil
 			}
 			return err
@@ -75,6 +86,12 @@ func (c *Client) MR(ctx context.Context, ref forge.Ref) (forge.MR, error) {
 	)
 	if err != nil {
 		return forge.MR{}, err
+	}
+	if noApprovals {
+		c.markUnavailable(FeatureApprovals)
+	}
+	if noReviewers {
+		c.markUnavailable(FeatureReviewers)
 	}
 	mr := w.mr(ref.Project)
 	mr.Approvals = appr.approvals()

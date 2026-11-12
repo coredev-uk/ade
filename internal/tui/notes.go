@@ -28,7 +28,8 @@ type notesDialog struct {
 	title     string
 	forgeName string
 	rec       records.Record
-	// missing is true when the item has no record yet (the first sync writes it).
+	item      domain.WorkItem // as the cache holds it: the record is made from it when missing
+	// missing is true when the record could not be made or read.
 	missing bool
 	scroll  int
 	warn    string
@@ -54,7 +55,7 @@ func (m model) openNotes() (model, tea.Cmd) {
 		return m, nil
 	}
 	it := m.homeRows[m.homeSel].item
-	d := &notesDialog{ref: it.Ref, title: it.Issue.Title}
+	d := &notesDialog{ref: it.Ref, title: it.Issue.Title, item: *it}
 	for _, r := range m.results {
 		if r.Project == it.Project {
 			d.forgeName = r.Forge
@@ -70,15 +71,23 @@ func (m model) openNotes() (model, tea.Cmd) {
 func (m model) notesLoad(d *notesDialog) {
 	d.warn, d.missing = "", false
 	if m.app == nil || d.forgeName == "" {
-		d.missing, d.warn = true, "the item's forge is unknown · press U to sync, then n again"
+		d.missing, d.warn = true, m.g.T("the item's forge is unknown · press U to sync, then n again")
 		return
 	}
-	rec, err := records.New(m.app.RecordsDir).Read(d.forgeName, d.ref)
+	st := records.New(m.app.RecordsDir)
+	rec, err := st.Read(d.forgeName, d.ref)
+	if errors.Is(err, records.ErrNoRecord) {
+		// The record is written by a sync, but notes must not wait for one:
+		// make it from the cached item (the next sync adds the comments).
+		if _, _, werr := st.WriteSnapshot(d.forgeName, d.item, nil, m.app.Config.Records.SnapshotComments); werr == nil {
+			rec, err = st.Read(d.forgeName, d.ref)
+		}
+	}
 	switch {
 	case errors.Is(err, records.ErrNoRecord):
 		d.missing, d.rec = true, rec
 	case err != nil:
-		d.warn = "the record could not be read · check the records directory (ade doctor)"
+		d.warn = m.g.T("the record could not be read · check the records directory (ade doctor)")
 	default:
 		d.rec = rec
 	}
@@ -95,7 +104,7 @@ func (m model) notesUpdate(msg tea.Msg) (model, tea.Cmd, bool) {
 		}
 		m.notesLoad(d)
 		if msg.err != nil {
-			d.warn = "the editor did not finish cleanly · what you saved is kept; press e to open it again"
+			d.warn = m.g.T("the editor did not finish cleanly · what you saved is kept; press e to open it again")
 		}
 		return m, nil, true
 	case tea.KeyPressMsg:
@@ -133,13 +142,13 @@ func (m model) notesKey(ks string) (model, tea.Cmd) {
 // its heading gets one first, so the cursor lands where the notes go.
 func (m model) notesEdit(d *notesDialog) (model, tea.Cmd) {
 	if d.missing {
-		d.warn = "no record yet · press U to sync; the first sync writes it"
+		d.warn = m.g.T("the record could not be made · check the records directory (ade doctor)")
 		return m, nil
 	}
 	st := records.New(m.app.RecordsDir)
 	if d.rec.NotesLine == 0 {
 		if err := st.WriteNotes(d.forgeName, d.ref, d.rec.Notes); err != nil {
-			d.warn = "the record could not be written · check the records directory (ade doctor)"
+			d.warn = m.g.T("the record could not be written · check the records directory (ade doctor)")
 			return m, nil
 		}
 		m.notesLoad(d)
@@ -158,8 +167,8 @@ func (m model) notesOverlay(w, h int) string {
 	dw := min(w, 100) // the shared dialog measure; blankFieldLayer centres it
 	inner := dw - 4
 	g := m.g
-	l := []string{stFaint.Render(ansi.Truncate(d.title, inner, "…")), ""}
-	guide := "yours · ADE never rewrites them"
+	l := []string{stFaint.Render(ansi.Truncate(d.title, inner, m.g.Ell)), ""}
+	guide := m.g.T("yours · ADE never rewrites them")
 	l = append(l, section("Notes", guide, inner, g))
 	body := m.notesBody(d, inner, max(4, h-16))
 	l = append(l, body...)
@@ -173,7 +182,7 @@ func (m model) notesOverlay(w, h int) string {
 		hint = keys("esc", "close")
 	}
 	l = append(l, "", hint)
-	return m.dialog("Notes · "+d.ref.String(), l, dw)
+	return m.dialog(m.g.T("Notes · ")+d.ref.String(), l, dw)
 }
 
 // notesBody wraps the notes into at most rows lines from the scroll offset,
@@ -181,11 +190,11 @@ func (m model) notesOverlay(w, h int) string {
 func (m model) notesBody(d *notesDialog, inner, rows int) []string {
 	g := m.g
 	if d.missing {
-		return []string{stFaint.Render(g.Info + " no record for this item yet · press U to sync; the first sync writes it")}
+		return []string{stFaint.Render(g.Info + m.g.T(" no record for this item, and it could not be made · check the records directory (ade doctor)"))}
 	}
 	text := strings.TrimSpace(d.rec.Notes)
 	if text == "" {
-		return []string{stFaint.Render(g.Info + " no notes yet · press e to write some")}
+		return []string{stFaint.Render(g.Info + m.g.T(" no notes yet · press e to write some"))}
 	}
 	lines := wrap(text, inner)
 	d.scroll = min(d.scroll, max(len(lines)-rows, 0))
@@ -195,16 +204,16 @@ func (m model) notesBody(d *notesDialog, inner, rows int) []string {
 		out = append(out, stFaint.Render(fmt.Sprintf("%s %d %s above", g.Up, d.scroll, plural(d.scroll, "line"))))
 	}
 	for _, ln := range lines[d.scroll:end] {
-		out = append(out, ansi.Truncate(ln, inner, "…"))
+		out = append(out, ansi.Truncate(ln, inner, m.g.Ell))
 	}
 	if end < len(lines) {
-		out = append(out, stFaint.Render(fmt.Sprintf("%s %d more %s · j scrolls", g.Down, len(lines)-end, plural(len(lines)-end, "line"))))
+		out = append(out, stFaint.Render(fmt.Sprintf(m.g.T("%s %d more %s · j scrolls"), g.Down, len(lines)-end, plural(len(lines)-end, "line"))))
 	}
 	return out
 }
 
 func (m model) notesOverlayLayer(w, h int) *lipgloss.Layer {
-	return blankFieldLayer(m.notesOverlay(w, h), w, h)
+	return blankFieldLayer(m.g, m.notesOverlay(w, h), w, h)
 }
 
 // itemNotes is the text of the item's notes ("" when none or unreadable): what

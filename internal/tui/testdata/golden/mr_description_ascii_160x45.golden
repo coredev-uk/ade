@@ -1,0 +1,45 @@
+ ADE  <- Home - api!1                                                                                                                                 no unread
+
+ #1 > api!1  Rate-limit the export endpoint
+ Ready - + CI passed - 1 of 2 approvals - 2 unresolved - ! it needs approval
+ [Overview] Threads 2  Diff 1  Review  CI +  History
+ Overview ---------------------------------------------------------------------------------------------- sandbox-dev - 1-rate-limit-the-export-endpoint -> main
+    |
+    *  draft     ade-demo-env/api!1 opened
+    |
+    *  ci        pipeline success
+    |
+    @  review    1 of 2 approvals - 2 unresolved
+    |
+    o  merged
+
+   you
+
+   Merge request --------------------------------------------------------------------------------------------------------------------------- ade-demo-env/api!1
+   state     opened
+   author    sandbox-dev
+   branch    1-rate-limit-the-export-endpoint -> main
+   reviewers reviewer-rae
+   approvals 1 of 2 approvals
+   pipeline  + CI passed
+   threads   2 unresolved - 1 resolved
+   merge     ! it needs approval
+
+   Description -----------------------------------------------------------------------------------------------------------------------------------------------
+   Exports hammer the API during the nightly batch.
+
+   Plan
+
+   - measure the current rate with `ade items`
+   [x] pick a limiter
+   [ ] add the middleware, see the design https://example.com/design/rate-limit
+
+   | Keep the limit per tenant, not per token.
+
+     limiter := rate.NewLimiter(50, 10)
+
+   Acceptance criteria
+
+   [x] 429 over the limit
+   [ ] documented
+ j/k scroll   tab tabs   a approve   R ready/draft   m merge   S submit review   P agents   esc back   ? keys

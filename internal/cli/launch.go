@@ -113,6 +113,7 @@ func hostEnv(ctx context.Context, a *app.App) (host.Env, error) {
 	env := host.Env{
 		Mode: a.Config.Host.Mode, InsideZellij: os.Getenv("ZELLIJ") != "",
 		InsideVSCode: os.Getenv("TERM_PROGRAM") == "vscode" || os.Getenv("VSCODE_IPC_HOOK_CLI") != "",
+		WebTTY:       host.WebTTY(os.Getenv),
 	}
 	if env.InsideZellij {
 		return env, nil

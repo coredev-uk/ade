@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	"github.com/coredev-uk/ade/internal/editor"
+	"github.com/coredev-uk/ade/internal/host"
+	"github.com/coredev-uk/ade/internal/watch"
 )
 
 func configChecks(o Options) []Check {
@@ -140,9 +142,22 @@ func pathChecks(o Options) []Check {
 		checks = append(checks, checkWritable(d.name, d.dir))
 	}
 	if o.Records != "" {
-		checks = append(checks, checkRecordsOutsideGit(o.Records))
+		checks = append(checks, checkRecordsOutsideGit(o.Records), checkFileWatching(o.Records))
 	}
 	return checks
+}
+
+// checkFileWatching reports how the dashboard learns of cache and record
+// changes: fsnotify, or polling every few seconds where it cannot be used
+// (some network filesystems, an inotify limit). Polling works, only slower.
+func checkFileWatching(dir string) Check {
+	c := Check{Group: "paths", Name: "file watching", Status: OK, Detail: "fsnotify: the dashboard and `ade item --watch` update the moment a file changes"}
+	if mode, reason := watch.Probe(nearestExisting(dir)); mode == watch.ModePoll {
+		c.Status = Warn
+		c.Detail = fmt.Sprintf("polling every %s: fsnotify is unavailable (%s)", watch.DefaultPollInterval, reason)
+		c.Fix = "nothing to do: updates arrive a couple of seconds late. On Linux raise fs.inotify.max_user_watches / max_user_instances to get instant updates"
+	}
+	return c
 }
 
 // checkRecordsOutsideGit warns when the records directory sits inside a git
@@ -224,11 +239,15 @@ func checkWritable(name, dir string) Check {
 
 func hostChecks(o Options) []Check {
 	detected := "plain terminal"
+	insideVSCode := o.Getenv("TERM_PROGRAM") == "vscode" || o.Getenv("VSCODE_IPC_HOOK_CLI") != ""
+	web := host.WebTTY(o.Getenv)
 	switch {
 	case o.Getenv("ZELLIJ") != "":
 		detected = "zellij"
 	case o.Getenv("TERM_PROGRAM") == "vscode":
 		detected = "vscode terminal"
+	case web:
+		detected = "web tty"
 	}
 	detail := "detected: " + detected
 	if o.Config != nil && o.Config.Host.Mode != "auto" && o.Config.Host.Mode != "" {
@@ -238,12 +257,16 @@ func hostChecks(o Options) []Check {
 	if o.Config != nil {
 		setting = o.Config.Host.Editor
 	}
-	ed := editor.Resolve(setting, editor.Env{
-		TermProgram: o.Getenv("TERM_PROGRAM"), VSCodeIPC: o.Getenv("VSCODE_IPC_HOOK_CLI"),
-		Visual: o.Getenv("VISUAL"), Editor: o.Getenv("EDITOR"),
-	})
+	ed := editor.Resolve(setting, editorEnv(o))
+	keys := "your own zellij config"
+	if (host.Env{InsideVSCode: insideVSCode, WebTTY: web}).UsesUnlockFirst(o.Getenv) {
+		keys = "ADE's unlock-first preset (the session starts locked; Ctrl-g unlocks zellij)"
+	} else if web {
+		keys = "default zellij keys: a browser takes Ctrl-w, Ctrl-t and Ctrl-n; set ADE_ZELLIJ_PRESET=unlock-first"
+	}
 	return []Check{
 		{Group: "host", Name: "host", Status: OK, Detail: detail},
 		{Group: "host", Name: "editor", Status: OK, Detail: ed.String()},
+		{Group: "host", Name: "zellij keys", Status: OK, Detail: keys},
 	}
 }

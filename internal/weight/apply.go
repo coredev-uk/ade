@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/coredev-uk/ade/internal/app"
 	"github.com/coredev-uk/ade/internal/audit"
@@ -49,7 +50,7 @@ func Resolve(ctx context.Context, a *app.App, open startwork.OpenFunc, arg strin
 	}
 	var ms []*config.Manifest
 	for _, pr := range a.Config.Projects {
-		m, err := project.FetchManifest(ctx, a, pr)
+		m, err := project.CachedManifest(ctx, a, pr)
 		if err != nil {
 			return nil, fmt.Errorf("manifest %s: %w", pr.Source, err)
 		}
@@ -83,7 +84,9 @@ func Resolve(ctx context.Context, a *app.App, open startwork.OpenFunc, arg strin
 		if err != nil {
 			return nil, err
 		}
-		return ResolveWith(ctx, f, m, ref)
+		return resolveWith(ctx, f, m, ref, func(ctx context.Context, group string) (forge.Caps, error) {
+			return startwork.CachedCaps(ctx, a, m.Forge, group, f)
+		})
 	}
 	return nil, fmt.Errorf("%s is not in the tracker project of any registered project", ref)
 }
@@ -91,43 +94,84 @@ func Resolve(ctx context.Context, a *app.App, open startwork.OpenFunc, arg strin
 // ResolveWith reads the issue, its capabilities and its children through an
 // open forge.
 func ResolveWith(ctx context.Context, f startwork.Forge, m *config.Manifest, ref forge.Ref) (*Target, error) {
-	is, err := f.Issue(ctx, ref)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", ref, err)
+	return resolveWith(ctx, f, m, ref, func(ctx context.Context, group string) (forge.Caps, error) {
+		return f.Capabilities(ctx, group)
+	})
+}
+
+// resolveWith reads the issue, the capabilities of its group and its links at
+// once, then the children at once: a dialog waits for the slowest read of
+// each step, not for their sum. capsOf may answer from a cache, since probing
+// capabilities costs several requests.
+func resolveWith(ctx context.Context, f startwork.Forge, m *config.Manifest, ref forge.Ref, capsOf func(context.Context, string) (forge.Caps, error)) (*Target, error) {
+	var (
+		is                    forge.Issue
+		caps                  forge.Caps
+		links                 []forge.Link
+		isErr, capErr, lnkErr error
+		wg                    sync.WaitGroup
+	)
+	wg.Add(3)
+	go func() { defer wg.Done(); is, isErr = f.Issue(ctx, ref) }()
+	go func() { defer wg.Done(); caps, capErr = capsOf(ctx, forge.Group(ref.Project)) }()
+	go func() { defer wg.Done(); links, lnkErr = f.Links(ctx, ref) }()
+	wg.Wait()
+	if isErr != nil {
+		return nil, fmt.Errorf("%s: %w", ref, isErr)
 	}
-	caps, err := f.Capabilities(ctx, forge.Group(ref.Project))
-	if err != nil {
-		return nil, fmt.Errorf("capabilities of %s: %w", ref.Project, err)
+	if capErr != nil {
+		return nil, fmt.Errorf("capabilities of %s: %w", ref.Project, capErr)
+	}
+	if lnkErr != nil {
+		return nil, fmt.Errorf("links of %s: %w", ref, lnkErr)
 	}
 	t := &Target{Project: m.Name, Manifest: m, Forge: f, Issue: is, Caps: caps}
-	links, err := f.Links(ctx, ref)
-	if err != nil {
-		return nil, fmt.Errorf("links of %s: %w", ref, err)
-	}
+
+	var kids []forge.Link
 	for _, l := range links {
-		if !domain.IsChildLink(l) || l.Ref == ref {
-			continue
+		if domain.IsChildLink(l) && l.Ref != ref && !slices.ContainsFunc(kids, func(k forge.Link) bool { return k.Ref == l.Ref }) {
+			kids = append(kids, l)
 		}
-		kid, err := f.Issue(ctx, l.Ref)
-		if err != nil {
-			return nil, fmt.Errorf("child %s: %w", l.Ref, err)
+	}
+	type kidRead struct {
+		issue forge.Issue
+		caps  forge.Caps
+		err   error
+	}
+	reads := make([]kidRead, len(kids))
+	wg.Add(len(kids))
+	for i, l := range kids {
+		go func() {
+			defer wg.Done()
+			r := &reads[i]
+			if r.issue, r.err = f.Issue(ctx, l.Ref); r.err != nil {
+				r.err = fmt.Errorf("child %s: %w", l.Ref, r.err)
+				return
+			}
+			r.caps = caps
+			if forge.Group(l.Ref.Project) != forge.Group(ref.Project) {
+				if r.caps, r.err = capsOf(ctx, forge.Group(l.Ref.Project)); r.err != nil {
+					r.err = fmt.Errorf("capabilities of %s: %w", l.Ref.Project, r.err)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	for i, l := range kids {
+		r := reads[i]
+		if r.err != nil {
+			return nil, r.err
 		}
 		// A relates_to link is also how unrelated issues are linked: only an
 		// issue that names this one as its parent (or a native sub-issue)
 		// follows the weight.
-		if l.Type != "sub_issue" && !slices.Contains(domain.ParentRefs(kid), ref) {
+		if l.Type != "sub_issue" && !slices.Contains(domain.ParentRefs(r.issue), ref) {
 			continue
 		}
-		if kid.State != "opened" || slices.ContainsFunc(t.Children, func(c Child) bool { return c.Issue.Ref == kid.Ref }) {
+		if r.issue.State != "opened" {
 			continue
 		}
-		kc := caps
-		if forge.Group(kid.Ref.Project) != forge.Group(ref.Project) {
-			if kc, err = f.Capabilities(ctx, forge.Group(kid.Ref.Project)); err != nil {
-				return nil, fmt.Errorf("capabilities of %s: %w", kid.Ref.Project, err)
-			}
-		}
-		t.Children = append(t.Children, Child{Issue: kid, Caps: kc})
+		t.Children = append(t.Children, Child{Issue: r.issue, Caps: r.caps})
 	}
 	return t, nil
 }

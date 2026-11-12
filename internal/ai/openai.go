@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/coredev-uk/ade/internal/billing"
 	"github.com/coredev-uk/ade/internal/config"
@@ -23,6 +25,9 @@ type openAI struct {
 	key  string
 	base string
 	hc   *http.Client
+	// noSchema is set once the endpoint refused a response_format: later
+	// structured calls go out as plain text without the failed round trip.
+	noSchema atomic.Bool
 }
 
 func newOpenAI(p config.AIProfile, key string, hc *http.Client) *openAI {
@@ -38,7 +43,24 @@ func (d *openAI) host() string {
 	return ""
 }
 
+// errSchemaRejected means the endpoint refused the response_format of a
+// structured call (an old gateway, or a model without JSON-schema support).
+var errSchemaRejected = errors.New("response_format not supported")
+
+// Complete sends the call. A call with a Schema asks for response_format
+// json_schema; when the gateway or its model rejects that, the call is
+// repeated once without it and the answer is parsed from text.
 func (d *openAI) Complete(ctx context.Context, c Call) (Response, error) {
+	structured := c.Schema != nil && !d.noSchema.Load()
+	r, err := d.complete(ctx, c, structured)
+	if structured && errors.Is(err, errSchemaRejected) {
+		d.noSchema.Store(true)
+		return d.complete(ctx, c, false)
+	}
+	return r, err
+}
+
+func (d *openAI) complete(ctx context.Context, c Call, structured bool) (Response, error) {
 	body := map[string]any{
 		"model": c.Model,
 		"messages": []map[string]string{
@@ -48,6 +70,12 @@ func (d *openAI) Complete(ctx context.Context, c Call) (Response, error) {
 	}
 	if c.MaxTokens > 0 {
 		body["max_tokens"] = c.MaxTokens
+	}
+	if structured {
+		body["response_format"] = map[string]any{
+			"type":        "json_schema",
+			"json_schema": map[string]any{"name": c.Schema.Name, "schema": c.Schema.JSON},
+		}
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
@@ -71,6 +99,9 @@ func (d *openAI) Complete(ctx context.Context, c Call) (Response, error) {
 	if resp.StatusCode/100 != 2 {
 		if stop := classifyStop("gateway", data); stop != nil {
 			return Response{}, stop
+		}
+		if structured && rejectsSchema(resp.StatusCode, data) {
+			return Response{}, errSchemaRejected
 		}
 		return Response{}, fmt.Errorf("openai-compat: HTTP %d: %s", resp.StatusCode, oneLine(string(data)))
 	}
@@ -101,6 +132,8 @@ func (d *openAI) Complete(ctx context.Context, c Call) (Response, error) {
 		Usage:    Usage{In: out.Usage.Prompt, Out: out.Usage.Compl, Cache: out.Usage.Details.Cached},
 		DestHost: d.host(),
 		Bytes:    len(raw),
+
+		Structured: structured,
 	}
 	if g := gatewayInfo(resp.Header); g != nil {
 		r.Gateway = g
@@ -115,6 +148,21 @@ func (d *openAI) Complete(ctx context.Context, c Call) (Response, error) {
 	}
 	r.CostSource = CostUnknown
 	return r, nil
+}
+
+// rejectsSchema reports whether an error response says the request's
+// response_format is what it refused.
+func rejectsSchema(status int, body []byte) bool {
+	if status != http.StatusBadRequest && status != http.StatusUnprocessableEntity {
+		return false
+	}
+	t := strings.ToLower(string(body))
+	for _, w := range []string{"response_format", "json_schema", "structured output", "structured_output"} {
+		if strings.Contains(t, w) {
+			return true
+		}
+	}
+	return false
 }
 
 func gatewayInfo(h http.Header) *GatewayInfo {

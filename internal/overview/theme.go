@@ -44,20 +44,34 @@ type glyphs struct {
 	Sep, Rule                       string
 	OK, Warn, Bad, Sync             string
 	Thread                          string
+	Ell                             string
+	ASCII                           bool
 }
+
+// T renders a literal of UI text in this glyph set (ascii: every non-ASCII
+// chrome rune becomes its ASCII stand-in). User and forge text never goes
+// through it.
+func (g glyphs) T(s string) string {
+	if !g.ASCII {
+		return s
+	}
+	return asciiRunes.Replace(s)
+}
+
+var asciiRunes = strings.NewReplacer("…", "...", "·", "-", "→", "->", "–", "-", "✉", "m", "✓", "+", "▲", "!", "✕", "x", "⟳", "~")
 
 var unicodeGlyphs = glyphs{
 	Done: "●", Train: "◉", Interchange: "◎", Ahead: "○",
 	Travelled: "━", ToCome: "─", Vertical: "┃",
 	Sep: "·", Rule: "─",
-	OK: "✓", Warn: "▲", Bad: "✕", Sync: "⟳", Thread: "✉",
+	OK: "✓", Warn: "▲", Bad: "✕", Sync: "⟳", Thread: "✉", Ell: "…",
 }
 
 var asciiGlyphs = glyphs{
 	Done: "*", Train: "@", Interchange: "%", Ahead: "o",
 	Travelled: "=", ToCome: "-", Vertical: "|",
 	Sep: "-", Rule: "-",
-	OK: "+", Warn: "!", Bad: "x", Sync: "~", Thread: "m",
+	OK: "+", Warn: "!", Bad: "x", Sync: "~", Thread: "m", Ell: "...", ASCII: true,
 }
 
 // glyphSet picks the vocabulary named by host.glyphs ("ascii", else unicode).

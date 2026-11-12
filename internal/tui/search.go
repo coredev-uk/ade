@@ -317,7 +317,7 @@ func (m model) searchBar(w int) string {
 	s := m.hs.search
 	prompt := stBold.Render("/") + " " + s.input
 	if s.typing {
-		prompt += stBold.Render("▏")
+		prompt += stBold.Render(m.g.Cursor)
 	}
 	n := len(m.homeRows)
 	right := stFaint.Render(fmt.Sprintf("%d %s", n, map[bool]string{true: "match", false: "matches"}[n == 1]))
@@ -327,8 +327,9 @@ func (m model) searchBar(w int) string {
 	case s.err != nil:
 		right = stBad.Render(m.g.Bad+" MR search failed ") + stFaint.Render(m.g.Sep+" ") + right
 	}
-	gap := max(1, w-3-lipgloss.Width(prompt)-lipgloss.Width(right))
-	return ansi.Truncate(" "+prompt+strings.Repeat(" ", gap)+right, w, "…")
+	gap := max(1, w-2-lipgloss.Width(prompt)-lipgloss.Width(right)) // ends where the rules end: w-1 cells
+	line := ansi.Truncate(" "+prompt+strings.Repeat(" ", gap)+right, w, m.g.Ell)
+	return line + strings.Repeat(" ", max(0, w-lipgloss.Width(line)))
 }
 
 // firstError keeps the first failure of several tries.

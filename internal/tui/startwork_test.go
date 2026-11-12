@@ -512,7 +512,7 @@ func TestStartDialogIsABlankFieldAtAFixedRow(t *testing.T) {
 	top := func(name string) {
 		t.Helper()
 		lines := strings.Split(e.screen(), "\n")
-		row := slices.IndexFunc(lines, func(ln string) bool { return strings.Contains(ln, "╭") })
+		row := slices.IndexFunc(lines, func(ln string) bool { return strings.Contains(ln, e.m.g.Border.TopLeft) })
 		if row != 1 {
 			t.Errorf("%s: dialog top at row %d, want 1:\n%s", name, row, strings.Join(lines, "\n"))
 		}
@@ -598,7 +598,7 @@ func TestDoneWarningWrapsTheRecoveryCommand(t *testing.T) {
 	out := e.screen()
 	wt := e.m.sw.result.Targets[0].Worktree
 	// Every path component survives on the screen, across however many lines.
-	flat := strings.NewReplacer("\n", "", " ", "", "│", "").Replace(out)
+	flat := strings.NewReplacer("\n", "", " ", "", e.m.g.Border.Left, "").Replace(out)
 	if !strings.Contains(flat, strings.ReplaceAll(wt, " ", "")) || !strings.Contains(out, "workspace not opened:") || !strings.Contains(flat, "adewsup--no-zellij") {
 		t.Errorf("the recovery command is cut (worktree %s):\n%s", wt, out)
 	}
@@ -688,7 +688,7 @@ func TestNarrowCrossRepoConfirmKeepsItsKeys(t *testing.T) {
 	out := e.screen()
 	e.want("◎ "+trk(8).String(), "┣━● api", "┗━● web", "+ forge child issue, link, branch, draft MR", "Quick actions",
 		"keep  add labels", "keep  request review", "enter confirm", "x keep/strip", "p next repo")
-	if !strings.Contains(out, "╰") {
+	if !strings.Contains(out, e.m.g.Border.BottomLeft) {
 		t.Errorf("the dialog's bottom border is cut off:\n%s", out)
 	}
 	if lines := strings.Count(out, "\n") + 1; lines > 24 {
@@ -728,7 +728,7 @@ func TestNarrowChooseKeepsGapsAboveRules(t *testing.T) {
 				continue
 			}
 			rules++
-			if prev := strings.Trim(lines[i-1], "│ "); prev == "" {
+			if prev := strings.Trim(lines[i-1], e.m.g.Border.Left+" "); prev == "" {
 				continue
 			}
 			t.Errorf("no blank row above the %q rule:\n%s", rule, strings.Join(lines, "\n"))
@@ -778,5 +778,66 @@ func TestStartDialogMainPaneToggleReachesTheWorkspace(t *testing.T) {
 	}
 	if got[0].Item.Ref.IID != 3 || got[0].Forge == "" {
 		t.Errorf("the request carries the item for the overview and skill: %+v", got[0])
+	}
+}
+
+// E edits the MR body in the dialog's own editor (bubbles textarea): enter is
+// a newline there, ctrl+s keeps the text and it is what the MR is created with;
+// esc throws the change away. Paste lands in it too.
+func TestInlineBodyEditorIsKeptAndSent(t *testing.T) {
+	e := newSWEnv(t)
+	e.selectRow(trk(3).String())
+	e.press("s", "enter")
+	e.want("e/E edit body")
+
+	e.press("E")
+	e.want("MR body · api", "editing", "Closes "+startwork.ChildPlaceholder, "ctrl+s keep", "enter newline")
+	e.press("esc")
+	if e.m.sw == nil || e.m.sw.body != nil || e.m.sw.ch.MRBody != "" {
+		t.Fatalf("esc should drop the edit and keep the dialog: %+v", e.m.sw)
+	}
+	e.wantNot("editing")
+
+	e.press("E")
+	e.press("enter")
+	e.typ("written inline")
+	next, _ := e.m.Update(tea.PasteMsg{Content: "\n- pasted one\n- pasted two"})
+	e.m = next.(model)
+	next, cmd := e.m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
+	e.m = next.(model)
+	e.settle(cmd)
+	if e.m.sw.body != nil {
+		t.Fatal("ctrl+s should close the editor")
+	}
+	e.want("edited by hand", "written inline", "- pasted one", "- pasted two")
+
+	e.press("enter")
+	api := e.m.sw.result.Targets[0]
+	mr, err := e.forge.MR(context.Background(), *api.MR)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(mr.Description, "written inline") || !strings.Contains(mr.Description, "- pasted two") || !strings.Contains(mr.Description, "Part of ade-demo-env/tracker#3") {
+		t.Errorf("MR description = %q", mr.Description)
+	}
+}
+
+func TestInlineBodyEditorNeedsAnMRStep(t *testing.T) {
+	e := newSWEnv(t)
+	e.selectRow(trk(3).String())
+	e.press("s", "m", "enter") // branch only: no MR in this run
+	if e.m.sw.stage != swConfirm {
+		t.Fatalf("stage = %v", e.m.sw.stage)
+	}
+	e.press("E")
+	if e.m.sw.body != nil {
+		t.Error("E opened a body editor though no MR is created")
+	}
+}
+
+func (e *swEnvT) typ(s string) {
+	e.t.Helper()
+	for _, r := range s {
+		e.press(string(r))
 	}
 }

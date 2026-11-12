@@ -17,8 +17,6 @@ import (
 	"github.com/coredev-uk/ade/internal/store"
 )
 
-const inboxPollEach = 2 * time.Second
-
 type page int
 
 const (
@@ -103,12 +101,17 @@ type model struct {
 	// (notes.go, weight.go).
 	nt *notesDialog
 	wt *weightDialog
+	// sm is the open sprint-move dialog, nil when closed (sprintmove.go).
+	sm *sprintDialog
 
 	// agt is the open agent dialog, nil when closed (agent.go).
 	agt *agentDialog
 
 	// ws is the running-instances view behind Home's Services strip (workspace.go).
 	ws wsState
+
+	// fw signals changes of the cache and the audit log (watch.go); nil: none.
+	fw *fileWatch
 }
 
 // --- messages ----------------------------------------------------------------
@@ -135,7 +138,7 @@ type (
 )
 
 func (m model) Init() tea.Cmd {
-	cmds := []tea.Cmd{m.loadStatus(), m.loadResults(), m.nc.poll(), tick(), m.loadAIChip()}
+	cmds := []tea.Cmd{m.loadStatus(), m.loadResults(), m.nc.poll(), tick(), m.loadAIChip(), m.watchStart()}
 	if m.app.Config.UpdateOnStart() {
 		cmds = append(cmds, func() tea.Msg { return startUpdateMsg{} })
 	}
@@ -227,10 +230,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if next, cmd, ok := m.weightUpdate(msg); ok {
 		return next, cmd
 	}
+	if next, cmd, ok := m.smUpdate(msg); ok {
+		return next, cmd
+	}
 	if next, cmd, ok := m.agentUpdate(msg); ok {
 		return next, cmd
 	}
 	if next, cmd, ok := m.homeUpdate(msg); ok {
+		return next, cmd
+	}
+	if next, cmd, ok := m.watchUpdate(msg); ok {
 		return next, cmd
 	}
 	switch msg := msg.(type) {
@@ -279,13 +288,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.onSpin()
 	case tickMsg:
 		m.nc.tick(time.Time(msg))
-		cmds := []tea.Cmd{tick()}
-		if time.Time(msg).Second()%int(inboxPollEach/time.Second) == 0 {
-			cmds = append(cmds, m.pollInbox()) // rows written by other ade processes
-		}
-		if time.Time(msg).Second()%aiChipEvery == 0 {
-			cmds = append(cmds, m.loadAIChip())
-		}
+		cmds := []tea.Cmd{tick()} // toast expiry, ages; the cache and the AI figure come from watch.go
 		if time.Time(msg).Second()%wsPollEach == 0 {
 			cmds = append(cmds, m.wsPoll())
 		}
@@ -305,6 +308,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onBudget(msg)
 	case logMsg:
 		return m.onLog(msg)
+	case tea.PasteMsg:
+		m.paste(msg)
+		return m, nil
 	case tea.KeyPressMsg:
 		return m.key(msg)
 	}
@@ -472,9 +478,7 @@ func (m model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		next, cmd := m.openSearch()
 		return next, cmd
 	case ":":
-		if m.mr == nil {
-			return m.openPalette(), nil
-		}
+		return m.openPalette(), nil
 	case "r":
 		next, cmd := m.restartOrRefresh()
 		return next, cmd
@@ -483,6 +487,9 @@ func (m model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return next, cmd
 	case "=":
 		next, cmd := m.openWeight()
+		return next, cmd
+	case ">":
+		next, cmd := m.openSprintMove()
 		return next, cmd
 	case "o":
 		next, cmd := m.openBrowser()

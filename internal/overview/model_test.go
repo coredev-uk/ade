@@ -30,7 +30,7 @@ func pane(t *testing.T, it domain.WorkItem, w, h int) (model, *cache) {
 	l := &Loader{Cache: c.st, Records: rs, Ref: it.Ref}
 	m := newModel(Options{Loader: l, Now: func() time.Time { return now }})
 	m = send(t, m, tea.WindowSizeMsg{Width: w, Height: h})
-	m = send(t, m, run(t, m.pollCmd(true)))
+	m = send(t, m, run(t, m.pollCmd()))
 	return m, c
 }
 
@@ -156,33 +156,29 @@ func TestQuitAndReloadKeys(t *testing.T) {
 	}
 	_, cmd := m.Update(key("r"))
 	lm, ok := run(t, cmd).(loadedMsg)
-	if !ok || !lm.reloaded || lm.reschedule {
-		t.Errorf("r = %+v: want a forced reload that does not start a second poll chain", lm)
+	if !ok || !lm.reloaded {
+		t.Errorf("r = %+v: want a forced reload", lm)
 	}
 }
 
-func TestPollTickReloadsOnlyOnChange(t *testing.T) {
+func TestChangeSignalReloadsOnlyOnChange(t *testing.T) {
 	m, c := pane(t, item(), 50, 30)
 
-	_, cmd := m.Update(tickMsg{})
+	_, cmd := m.Update(changedMsg{open: true})
 	if lm := run(t, cmd).(loadedMsg); lm.reloaded {
-		t.Error("a tick with an unchanged cache reloaded")
+		t.Error("a signal with an unchanged cache reloaded")
 	}
 
 	it := item()
 	it.Issue.Title = "Renamed by a sync"
 	it.Court, it.Reason = domain.CourtYou, "pipeline failed"
 	c.put(it)
-	_, cmd = m.Update(tickMsg{})
+	_, cmd = m.Update(changedMsg{open: true})
 	lm := run(t, cmd).(loadedMsg)
 	if !lm.reloaded {
-		t.Fatal("a tick after a sync did not reload")
+		t.Fatal("a signal after a sync did not reload")
 	}
-	next, cmd := m.Update(lm)
-	m = next.(model)
-	if cmd == nil {
-		t.Error("a poll result must schedule the next tick")
-	}
+	m = send(t, m, lm)
 	if s := strings.Join(screen(m), "\n"); !strings.Contains(s, "Renamed by a sync") || !strings.Contains(s, "✕ pipeline failed") {
 		t.Errorf("view did not follow the cache:\n%s", s)
 	}
@@ -191,7 +187,7 @@ func TestPollTickReloadsOnlyOnChange(t *testing.T) {
 func TestItemLeavingTheCacheKeepsTheLastView(t *testing.T) {
 	m, c := pane(t, item(), 50, 30)
 	c.put()
-	_, cmd := m.Update(tickMsg{})
+	_, cmd := m.Update(changedMsg{open: true})
 	m = send(t, m, run(t, cmd))
 	s := strings.Join(screen(m), "\n")
 	if !strings.Contains(s, "Rate-limit the export endpoint") || !strings.Contains(s, "not in cache any more") {
@@ -199,7 +195,7 @@ func TestItemLeavingTheCacheKeepsTheLastView(t *testing.T) {
 	}
 	// It comes back with the next sync.
 	c.put(item())
-	_, cmd = m.Update(tickMsg{})
+	_, cmd = m.Update(changedMsg{open: true})
 	m = send(t, m, run(t, cmd))
 	if s := strings.Join(screen(m), "\n"); strings.Contains(s, "not in cache any more") {
 		t.Errorf("still gone after it returned:\n%s", s)
@@ -210,7 +206,7 @@ func TestItemNotCachedYetSaysSoAndFillsInLater(t *testing.T) {
 	c := newCache(t)
 	l := &Loader{Cache: c.st, Records: records.New(t.TempDir()), Ref: item().Ref}
 	m := newModel(Options{Loader: l, Now: func() time.Time { return now }})
-	m = send(t, m, run(t, m.pollCmd(true)))
+	m = send(t, m, run(t, m.pollCmd()))
 	s := strings.Join(screen(m), "\n")
 	for _, want := range []string{"acme/tracker#15", "not in the cache yet", "never synced"} {
 		if !strings.Contains(s, want) {
@@ -218,7 +214,7 @@ func TestItemNotCachedYetSaysSoAndFillsInLater(t *testing.T) {
 		}
 	}
 	c.put(item())
-	_, cmd := m.Update(tickMsg{})
+	_, cmd := m.Update(changedMsg{open: true})
 	m = send(t, m, run(t, cmd))
 	if s := strings.Join(screen(m), "\n"); !strings.Contains(s, "Rate-limit the export endpoint") || strings.Contains(s, "not in the cache yet") {
 		t.Errorf("view after the sync:\n%s", s)
@@ -255,7 +251,7 @@ func TestEditKeyRunsTheEditorAndReloads(t *testing.T) {
 			return exec.Command("true"), nil
 		},
 	})
-	m = send(t, m, run(t, m.pollCmd(true)))
+	m = send(t, m, run(t, m.pollCmd()))
 	if s := strings.Join(screen(m), "\n"); !strings.Contains(s, "e notes") {
 		t.Errorf("footer lacks the e key:\n%s", s)
 	}

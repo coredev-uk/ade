@@ -101,8 +101,8 @@ type action struct {
 	NoteID   int64     `json:"note_id,omitempty"`
 	Resolved *bool     `json:"resolved,omitempty"`
 	SHA      string    `json:"sha,omitempty"`
-	// Message and SquashMessage are the commit messages a merge sends when a
-	// commit prefix applies.
+	// Message and SquashMessage are the commit messages a merge sends: the
+	// squash message carries the commit prefix when one applies.
 	Message       string `json:"message,omitempty"`
 	SquashMessage string `json:"squash_message,omitempty"`
 }
@@ -442,11 +442,8 @@ func newMRMergeCmd() *cobra.Command {
 				did, would = "set to merge when checks pass:", "set to merge when checks pass:"
 			}
 			msg := fmt.Sprintf("%s %s at %.8s", verb(c.dry, did, would), c.ref, o.SHA)
-			if c.dry && o.Message != "" {
-				msg += "\ncommit message:\n" + indent(o.Message)
-				if o.Squash && o.SquashMessage != "" {
-					msg += "\nsquash message:\n" + indent(o.SquashMessage)
-				}
+			if c.dry && o.Squash && o.SquashMessage != "" {
+				msg += "\nsquash message:\n" + indent(o.SquashMessage)
 			}
 			return out(cmd, action{Ref: c.ref, Action: "merge", DryRun: c.dry, SHA: o.SHA, Message: o.Message, SquashMessage: o.SquashMessage}, "%s", msg)
 		},

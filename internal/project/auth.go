@@ -4,13 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/git"
+	"github.com/coredev-uk/ade/internal/tlsca"
 )
 
 // forgeBase is the forge web URL, defaulting per kind for hand-built configs.
@@ -45,6 +48,9 @@ func cloneURL(f config.Forge, r config.Repo) (string, error) {
 	path := strings.TrimSuffix(strings.Trim(r.Path, "/"), ".git")
 	if f.GitProtocol == "https" {
 		return base + "/" + path + ".git", nil
+	}
+	if f.SSHPort != 0 && f.SSHPort != 22 {
+		return "ssh://git@" + net.JoinHostPort(u.Hostname(), strconv.Itoa(f.SSHPort)) + "/" + path + ".git", nil
 	}
 	return "git@" + u.Hostname() + ":" + path + ".git", nil
 }
@@ -128,5 +134,5 @@ func (s *Service) client(ctx context.Context, preferredForge, rawURL string) (gi
 	if err != nil {
 		return git.Client{}, fmt.Errorf("forge %s token: %w: %w", name, git.ErrCredentials, err)
 	}
-	return git.Client{Env: git.TokenEnv(rawURL, gitUser(f.Kind), tok)}, nil
+	return git.Client{Env: git.RemoteEnv(rawURL, gitUser(f.Kind), tok, tlsca.GitSettings(rawURL, f.CAFile))}, nil
 }

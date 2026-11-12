@@ -100,6 +100,11 @@ type Repo struct {
 	Requires      []string        `toml:"requires"`       // checkout dependencies (repo names)
 	Hooks         Hooks           `toml:"hooks"`
 	Tasks         map[string]Task `toml:"tasks"`
+	// Devshell says how a worktree's dev shell is entered for shell, omp and
+	// editor panes and for run-graph tasks: auto (default: direnv when the
+	// worktree has an .envrc, else nix develop when its flake.nix has a
+	// devShell), direnv, nix or none.
+	Devshell string `toml:"devshell"`
 }
 
 type Hooks struct {

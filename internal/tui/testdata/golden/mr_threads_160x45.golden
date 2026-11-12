@@ -1,0 +1,45 @@
+ ADE  ← Home · api!1                                                                                                                                  no unread
+
+ #1 › api!1  Rate-limit the export endpoint
+ Ready · ✓ CI passed · 1 of 2 approvals · 2 unresolved · ▲ it needs approval
+  Overview [Threads 2] Diff 1  Review  CI ✓  History
+ Threads ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 2 unresolved · 1 resolved
+   Unresolved (2) ──────────────────────────────────────────────   │ general
+ ▸ ● open    general  "Is a burst of 50 too high… reviewer-rae +1  │ ● open
+   ● open    general  "Please add a test for the 42… reviewer-rae  │
+   Resolved (1) ────────────────────────────────────────────────   │ reviewer-rae · 9 Nov
+   ✓ done    limit/bucket.go:6  "Nit: rename Bucket… reviewer-rae  │ Is a burst of 50 too high for small tenants? Support suggested 20.
+                                                                   │
+                                                                   │ sandbox-dev · 9 Nov
+                                                                   │ Keeping 50 for now; it matches the support agreement. Open to revisit.
+                                                                   │
+                                                                   │
+                                                                   │
+                                                                   │
+                                                                   │
+                                                                   │
+                                                                   │
+                                                                   │
+                                                                   │
+                                                                   │
+                                                                   │
+                                                                   │
+                                                                   │
+                                                                   │
+                                                                   │
+                                                                   │
+                                                                   │
+                                                                   │
+                                                                   │
+                                                                   │
+                                                                   │
+                                                                   │
+                                                                   │
+                                                                   │
+                                                                   │
+                                                                   │
+                                                                   │
+                                                                   │
+                                                                   │
+                                                                   │
+ j/k move   r reply   x resolve/reopen   tab tabs   a approve   R ready/draft   m merge   S submit review   P agents   esc back   ? keys

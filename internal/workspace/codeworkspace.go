@@ -411,16 +411,21 @@ func codeWorkspaceFor(ctx context.Context, a *app.App, req CodeRequest) (out Cod
 	return out, projectName, target, err
 }
 
-// OpenCodeWorkspace opens file in VS Code through the editor helper. Without
-// `code` on PATH nothing is started and hint says how to open it by hand; that
-// is not an error.
+// OpenCodeWorkspace opens file in VS Code through the editor helper. Inside a
+// VS Code terminal that is the window's own CLI (on a remote machine the
+// remote CLI, which opens it in the connected window). Where no window can be
+// reached (no `code`, or a web tty with no VS Code client) nothing is started
+// and hint says how to open it by hand; that is not an error.
 func OpenCodeWorkspace(ctx context.Context, file string) (opened bool, hint string, err error) {
-	ed := editor.Resolve(editor.SettingCode, editor.FromOS())
+	env := editor.FromOS()
+	ed := editor.Resolve(editor.SettingCode, env)
 	if ed.Kind != editor.Code {
-		return false, "code is not on PATH: open " + file + " in VS Code", nil
+		return false, env.NoCodeHint(file), nil
 	}
 	argv := ed.ArgvDir(file)
-	if err := exec.CommandContext(ctx, argv[0], argv[1:]...).Run(); err != nil {
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Env = ed.Environ()
+	if err := cmd.Run(); err != nil {
 		return false, "", fmt.Errorf("code: %w", err)
 	}
 	return true, "", nil

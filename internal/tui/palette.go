@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -45,6 +46,9 @@ func (p *palette) visible() []palEntry {
 	}
 	var hits []scored
 	for _, e := range p.all {
+		if !fuzzyFields(q, []string{e.name, e.cli}) {
+			continue
+		}
 		if s, ok := fuzzyScore(q, e.name+" "+e.cli); ok {
 			hits = append(hits, scored{e, s})
 		}
@@ -57,10 +61,26 @@ func (p *palette) visible() []palEntry {
 	return out
 }
 
-// press runs a key as if typed, for actions that are their key.
+// press runs a key as if typed, for actions that are their key. It goes
+// through Update so keys owned by overlays (agent menu `P`) work too.
 func (m model) press(s string) (model, tea.Cmd) {
-	next, cmd := m.key(tea.KeyPressMsg{Code: rune(s[0]), Text: s})
+	next, cmd := m.Update(pressMsg(s))
 	return next.(model), cmd
+}
+
+// pressMsg is the key press for a key name as help spells it.
+func pressMsg(s string) tea.KeyPressMsg {
+	switch s {
+	case "enter":
+		return tea.KeyPressMsg{Code: tea.KeyEnter}
+	case "tab":
+		return tea.KeyPressMsg{Code: tea.KeyTab}
+	case "shift+tab":
+		return tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}
+	case "esc":
+		return tea.KeyPressMsg{Code: tea.KeyEscape}
+	}
+	return tea.KeyPressMsg{Code: rune(s[0]), Text: s}
 }
 
 func pressEntry(name, key, cli string, needHome bool) palEntry {
@@ -76,11 +96,11 @@ func (m model) paletteEntries() []palEntry {
 	onHome := m.page == pageHome && m.mr == nil && !m.isAgilePage()
 	es := []palEntry{
 		{name: "Go to Home", run: func(m model) (model, tea.Cmd) {
-			m.page, m.showDetail, m.ag.kind = pageHome, false, agileNone
+			m.page, m.showDetail, m.ag.kind, m.mr = pageHome, false, agileNone, nil
 			return m, nil
 		}},
 		{name: "Go to Worktrees", cli: "ade project status", run: func(m model) (model, tea.Cmd) {
-			m.page, m.showDetail, m.ag.kind = pageTrees, false, agileNone
+			m.page, m.showDetail, m.ag.kind, m.mr = pageTrees, false, agileNone, nil
 			return m, nil
 		}},
 		page("Standup", "ade standup", func(m model) (model, tea.Cmd) { return m.openStandup() }),
@@ -97,13 +117,25 @@ func (m model) paletteEntries() []palEntry {
 		{name: "Help: keys", key: "?", run: func(m model) (model, tea.Cmd) { m.help = true; return m, nil }},
 		{name: "Quit", key: "q", run: func(m model) (model, tea.Cmd) { return m, tea.Quit }},
 	}
+	if m.mr != nil {
+		return append(m.mrEntries(), es...)
+	}
+	if m.page == pageTrees && !m.isAgilePage() {
+		trees := []palEntry{
+			pressEntry("Open workspace", "w", "ade ws up", false),
+			pressEntry("Open workspace with the other main pane (omp or editor)", "W", "ade ws up --layout agent", false),
+			{name: "VS Code workspace", key: "v", cli: "ade vscode workspace <ref> --open", run: func(m model) (model, tea.Cmd) { return m.press("v") }},
+			pressEntry("Copy the tree's path", "y", "", false),
+		}
+		return append(trees, es...)
+	}
 	if !onHome {
 		return es
 	}
 	home := []palEntry{
 		{name: "Search work items and open MRs", key: "/", needHome: true, run: func(m model) (model, tea.Cmd) { return m.openSearch() }},
 		{name: "Clear search and filters", needHome: true, run: func(m model) (model, tea.Cmd) { return m.clearFilters(), nil }},
-		{name: "Filter…", key: "f", needHome: true, run: func(m model) (model, tea.Cmd) { return m.openFilterPicker(), nil }},
+		{name: m.g.T("Filter…"), key: "f", needHome: true, run: func(m model) (model, tea.Cmd) { return m.openFilterPicker(), nil }},
 		{name: "Cycle project filter", key: "p", needHome: true, run: func(m model) (model, tea.Cmd) { return m.cycleProject() }},
 		{name: "Show or hide Activity", key: "e", needHome: true, run: func(m model) (model, tea.Cmd) { return m.toggleActivity(), nil }},
 		{name: "Open the item's MR page", key: "enter", needHome: true, run: func(m model) (model, tea.Cmd) {
@@ -123,6 +155,7 @@ func (m model) paletteEntries() []palEntry {
 		pressEntry("Open in browser", "o", "", true),
 		pressEntry("Notes", "n", "ade item <ref> --edit", true),
 		pressEntry("Set weight", "=", "ade issue weight <ref> <n>", true),
+		pressEntry("Move to the next sprint", ">", "ade issue move <ref>", true),
 	}
 	es = append(home, es...)
 	// Named filters and project choices, directly.
@@ -269,9 +302,9 @@ func (m model) paletteOverlay(w int) string {
 	var l []string
 	prompt := p.prompt
 	if prompt == "" {
-		prompt = "›"
+		prompt = m.g.Prompt
 	}
-	l = append(l, stBold.Render(prompt)+" "+p.input+stBold.Render("▏"), "")
+	l = append(l, stBold.Render(prompt)+" "+p.input+stBold.Render(m.g.Cursor), "")
 	top := 0
 	if p.sel >= paletteRows {
 		top = p.sel - paletteRows + 1
@@ -284,7 +317,7 @@ func (m model) paletteOverlay(w int) string {
 	for i := top; i < min(len(vis), top+paletteRows); i++ {
 		e := vis[i]
 		mark := "  "
-		name := pad(e.name, nameW)
+		name := pad(m.g, e.name, nameW)
 		if i == p.sel {
 			mark, name = stBold.Render(m.g.Selected)+" ", stBold.Render(name)
 		}
@@ -294,17 +327,21 @@ func (m model) paletteOverlay(w int) string {
 		}
 		rest := inner - lipgloss.Width(line) - 1
 		if hint := strings.TrimSpace(strings.Join([]string{e.key, e.cli}, "  ")); hint != "" && rest > 4 {
-			line += "  " + stFaint.Render(ansi.Truncate(hint, rest-2, "…"))
+			line += "  " + stFaint.Render(ansi.Truncate(hint, rest-2, m.g.Ell))
 		}
 		l = append(l, line)
 	}
 	if len(vis) == 0 {
 		l = append(l, stFaint.Render("Nothing is named like that."))
 	}
-	l = append(l, "", keys("up/down", "choose", "enter", "run", "esc", "close"))
+	row := keys("up/down", "choose", "enter", "run", "esc", "close")
+	if len(vis) > paletteRows {
+		row += stFaint.Render(fmt.Sprintf("   %d of %d", p.sel+1, len(vis)))
+	}
+	l = append(l, "", row)
 	return m.dialog(p.title, l, dw)
 }
 
 func (m model) paletteOverlayLayer(w, h int) *lipgloss.Layer {
-	return blankFieldLayer(m.paletteOverlay(w), w, h)
+	return blankFieldLayer(m.g, m.paletteOverlay(w), w, h)
 }

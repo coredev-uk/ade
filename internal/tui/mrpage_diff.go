@@ -9,6 +9,7 @@ import (
 
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/review"
+	"github.com/coredev-uk/ade/internal/syntax"
 )
 
 // The Diff tab: the file list, and the selected file's unified diff with line
@@ -51,16 +52,16 @@ func fileWord(f forge.DiffFile) string {
 
 // renameLabel is the path of a file, old → new for a rename: the shared
 // directory stays out of the braces (limit/{bucket.go → token_bucket.go}).
-func renameLabel(f forge.DiffFile) string {
+func renameLabel(g glyphs, f forge.DiffFile) string {
 	if f.OldPath == f.NewPath || f.OldPath == "" {
 		return f.NewPath
 	}
 	od, of := splitDir(f.OldPath)
 	nd, nf := splitDir(f.NewPath)
 	if od == nd {
-		return od + "{" + of + " → " + nf + "}"
+		return od + "{" + of + g.T(" → ") + nf + "}"
 	}
-	return f.OldPath + " → " + f.NewPath
+	return f.OldPath + g.T(" → ") + f.NewPath
 }
 
 func splitDir(p string) (dir, file string) {
@@ -71,7 +72,7 @@ func splitDir(p string) (dir, file string) {
 // fileLabel fits a path into n cells, giving up the directory and the old
 // name before the new basename: a rename reads limit/{a.go → b.go}, then
 // {a.go → b.go}, a.go → b.go, → b.go; a plain path loses its left end first.
-func fileLabel(f forge.DiffFile, n int) string {
+func fileLabel(g glyphs, f forge.DiffFile, n int) string {
 	if n <= 1 {
 		return ""
 	}
@@ -80,11 +81,11 @@ func fileLabel(f forge.DiffFile, n int) string {
 	if f.OldPath != f.NewPath && f.OldPath != "" {
 		od, of := splitDir(f.OldPath)
 		nd, _ := splitDir(f.NewPath)
-		tries = append(tries, renameLabel(f))
+		tries = append(tries, renameLabel(g, f))
 		if od == nd {
-			tries = append(tries, "{"+of+" → "+nf+"}")
+			tries = append(tries, "{"+of+g.T(" → ")+nf+"}")
 		}
-		tries = append(tries, of+" → "+nf, "→ "+nf)
+		tries = append(tries, of+g.T(" → ")+nf, g.T("→ ")+nf)
 	} else {
 		tries = append(tries, f.NewPath)
 	}
@@ -100,7 +101,7 @@ func fileLabel(f forge.DiffFile, n int) string {
 	if lipgloss.Width(tail) <= n {
 		return tail
 	}
-	return ansi.TruncateLeft(tail, lipgloss.Width(tail)-n+1, "…")
+	return ansi.TruncateLeft(tail, lipgloss.Width(tail)-n+lipgloss.Width(g.Ell), g.Ell)
 }
 
 func (m model) diffGuide() string {
@@ -123,7 +124,7 @@ func (m model) mrDiff(w, h int) string {
 		return ph
 	}
 	if len(d.diff.Files) == 0 {
-		return fit("   "+stFaint.Render("This merge request changes no files."), w, h)
+		return fit(m.g, "   "+stFaint.Render("This merge request changes no files."), w, h)
 	}
 	sel := clamp(p.fileSel, 0, len(d.diff.Files)-1)
 	if m.mrNarrow(w) {
@@ -133,7 +134,7 @@ func (m model) mrDiff(w, h int) string {
 		return m.fileLines(sel, w, h)
 	}
 	fw := clamp(w*3/10, 30, 44)
-	return columns(stRule.Render(" │ "), h, m.fileLines(sel, fw, h), m.codePane(d.diff.Files[sel], w-fw-3, h))
+	return columns(stRule.Render(m.g.Pane), h, m.fileLines(sel, fw, h), m.codePane(d.diff.Files[sel], w-fw-3, h))
 }
 
 func (m model) fileLines(sel, w, h int) string {
@@ -151,7 +152,7 @@ func (m model) fileLines(sel, w, h int) string {
 		if n := len(m.draftsOn(f)); n > 0 {
 			right += " " + stBold.Render(fmt.Sprintf("%s%d", g.Dirty, n))
 		}
-		label := fileLabel(f, w-3-2-lipgloss.Width(right)-1)
+		label := fileLabel(m.g, f, w-3-2-lipgloss.Width(right)-1)
 		if i == sel && !p.focusDiff {
 			label = stBold.Render(label)
 		}
@@ -163,7 +164,7 @@ func (m model) fileLines(sel, w, h int) string {
 	if sel >= h-1 {
 		top = sel - h + 2
 	}
-	return fit(strings.Join(out[min(top, len(out)):], "\n"), w, h)
+	return fit(m.g, strings.Join(out[min(top, len(out)):], "\n"), w, h)
 }
 
 // draftsOn lists the drafts anchored in f that will still matter (not denied).
@@ -205,8 +206,20 @@ func threadInFile(pos *forge.Position, f forge.DiffFile) bool {
 	return pos != nil && (pos.Path == f.NewPath || pos.Path == f.OldPath || pos.OldPath == f.OldPath && pos.OldPath != "")
 }
 
-// codeLine draws one numbered line of a diff in w cells.
-func (m model) codeLine(l review.Line, w int, cursor bool) string {
+// langPath is the path whose extension names the file's language: the old
+// path for a deleted file.
+func langPath(f forge.DiffFile) string {
+	if f.Deleted && f.OldPath != "" {
+		return f.OldPath
+	}
+	return f.NewPath
+}
+
+// codeLine draws one numbered line of a diff in w cells. The text is
+// syntax-highlighted by the file's extension (chroma; none for an unknown
+// language or under NO_COLOR, where keywords keep only their weight); the
+// +/- mark carries the added/removed ink either way.
+func (m model) codeLine(path string, l review.Line, w int, cursor bool) string {
 	num := func(n int) string {
 		if n == 0 {
 			return strings.Repeat(" ", numW)
@@ -224,11 +237,15 @@ func (m model) codeLine(l review.Line, w int, cursor bool) string {
 	case '-':
 		sign, style = "-", stBad
 	}
-	txt := ansi.Truncate(strings.ReplaceAll(l.Text, "\t", "    "), max(1, w-(numW*2+5)), "…")
+	text := strings.ReplaceAll(l.Text, "\t", "    ")
 	if cursor {
 		style = style.Bold(true)
 	}
-	return mark + stFaint.Render(num(l.Old)+" "+num(l.New)) + " " + style.Render(sign+txt)
+	room := max(1, w-(numW*2+5))
+	if hl := syntax.For(path, syntax.NoColor()); hl.Known() {
+		return mark + stFaint.Render(num(l.Old)+" "+num(l.New)) + " " + style.Render(sign) + ansi.Truncate(hl.Line(text), room, m.g.Ell)
+	}
+	return mark + stFaint.Render(num(l.Old)+" "+num(l.New)) + " " + style.Render(sign+ansi.Truncate(text, room, m.g.Ell))
 }
 
 // diffContext draws the few lines around a thread's position, for the Threads
@@ -254,7 +271,7 @@ func (m model) diffContext(d *mrData, pos *forge.Position, w int) []string {
 	}
 	var out []string
 	for i := max(0, at-2); i <= min(len(lines)-1, at+1); i++ {
-		out = append(out, m.codeLine(lines[i], w-1, i == at))
+		out = append(out, m.codeLine(langPath(f), lines[i], w-1, i == at))
 	}
 	return out
 }
@@ -285,7 +302,7 @@ func (m model) diffRows(f forge.DiffFile, w int) (rows []string, starts []bool, 
 		if i == p.lineCur {
 			cur = len(rows)
 		}
-		add(true, m.codeLine(l, w, p.focusDiff && i == p.lineCur))
+		add(true, m.codeLine(langPath(f), l, w, p.focusDiff && i == p.lineCur))
 		for _, th := range d.threads {
 			if threadInFile(th.Position, f) && threadOnLine(th.Position, l) {
 				add(false, m.inlineThread(th, indent, textW)...)
@@ -313,7 +330,7 @@ func (m model) inlineThread(th forge.Discussion, indent string, w int) []string 
 		state = stFaint.Render(g.OK + " resolved")
 	}
 	line := state + " " + stFaint.Render(n.Author.Username+": ") + stFaint.Render(oneLine(n.Body))
-	return []string{indent + stRule.Render(g.Vertical) + " " + ansi.Truncate(line, w-2, "…")}
+	return []string{indent + stRule.Render(g.Vertical) + " " + ansi.Truncate(line, w-2, m.g.Ell)}
 }
 
 // draftBlock draws a draft under its line: who wrote it, its state (and the
@@ -323,10 +340,10 @@ func (m model) draftBlock(dr review.Draft, indent string, w int) []string {
 	var who, keysHint, sev string
 	switch {
 	case dr.State == review.StateDenied:
-		who = stFaint.Render(fmt.Sprintf("%s %s draft %s denied · never posted", g.Dirty, dr.Source, g.Sep))
+		who = stFaint.Render(fmt.Sprintf(m.g.T("%s %s draft %s denied · never posted"), g.Dirty, dr.Source, g.Sep))
 	case dr.Source == review.SourceAgent && dr.State == review.StatePending:
 		who = stWarn.Render(fmt.Sprintf("%s agent draft %s pending triage", g.Dirty, g.Sep))
-		keysHint = stFaint.Render("y accept · n deny · e edit")
+		keysHint = stFaint.Render(m.g.T("y accept · n deny · e edit"))
 	case dr.Source == review.SourceAgent:
 		who = stBold.Render(fmt.Sprintf("%s agent draft %s accepted", g.Dirty, g.Sep))
 	default:
@@ -338,14 +355,14 @@ func (m model) draftBlock(dr review.Draft, indent string, w int) []string {
 		sev = stFaint.Render(sevWord(dr.Severity))
 	}
 	if long(dr) {
-		sev += stFaint.Render(" · ") + stWarn.Render("long")
+		sev += stFaint.Render(m.g.T(" · ")) + stWarn.Render("long")
 	}
 	bar := indent + stRule.Render(g.Vertical) + " "
 	// The head reads who and state, the keys that triage it, then the severity
 	// and `long`. When that does not fit it is packed again with the severity
 	// ahead of the keys and wrapped by whole segments: triage reads the
 	// severity first, so it is never cut.
-	dot := stFaint.Render(" · ")
+	dot := stFaint.Render(m.g.T(" · "))
 	segs := []string{who, keysHint, sev}
 	if keysHint != "" && lipgloss.Width(who+dot+keysHint+dot+sev) > w-2 {
 		segs = []string{who, sev, keysHint}
@@ -366,12 +383,12 @@ func (m model) draftBlock(dr review.Draft, indent string, w int) []string {
 	}
 	out := make([]string, 0, 8)
 	for _, h := range append(heads, line) {
-		out = append(out, bar+ansi.Truncate(h, w-2, "…"))
+		out = append(out, bar+ansi.Truncate(h, w-2, m.g.Ell))
 	}
 	body := strings.Split(lipgloss.Wrap(dr.Body, min(100, max(10, w-2)), " "), "\n") // a reading measure, not the pane's width
 	for i, ln := range body {
 		if i == 4 {
-			out = append(out, bar+stFaint.Render("…"))
+			out = append(out, bar+stFaint.Render(m.g.Ell))
 			break
 		}
 		if dr.State == review.StateDenied {
@@ -390,14 +407,14 @@ func (m model) codePane(f forge.DiffFile, w, h int) string {
 	p := m.mr
 	g := m.g
 	add, del := fileStat(f)
-	head := stBold.Render(ansi.Truncate(renameLabel(f), w-20, "…")) + stFaint.Render(fmt.Sprintf(" · %s · +%d -%d", fileWord(f), add, del))
+	head := stBold.Render(ansi.Truncate(renameLabel(m.g, f), w-20, m.g.Ell)) + stFaint.Render(fmt.Sprintf(m.g.T(" · %s · +%d -%d"), fileWord(f), add, del))
 	rows, starts, cur := m.diffRows(f, w)
 	if len(rows) == 0 {
 		msg := "The forge withheld this file's diff (collapsed or too large): open it on the forge."
 		if f.Renamed && f.Diff == "" {
 			msg = "Renamed without changes."
 		}
-		return fit(head+"\n"+stFaint.Render(msg), w, h)
+		return fit(m.g, head+"\n"+stFaint.Render(msg), w, h)
 	}
 	body := max(1, h-1)
 	top := max(0, min(cur-body/3, len(rows)-body))
@@ -412,5 +429,5 @@ func (m model) codePane(f forge.DiffFile, w, h int) string {
 	if top+body < len(rows) {
 		out[len(out)-1] = stFaint.Render(fmt.Sprintf("%s %d more rows %s j/k scrolls", g.Down, len(rows)-top-body+1, g.Sep))
 	}
-	return fit(strings.Join(out, "\n"), w, h)
+	return fit(m.g, strings.Join(out, "\n"), w, h)
 }

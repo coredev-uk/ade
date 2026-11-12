@@ -276,3 +276,32 @@ func TestCreateMRRunsQuickActions(t *testing.T) {
 		}
 	})
 }
+
+func TestSetMilestone(t *testing.T) {
+	forEachTier(t, func(t *testing.T, _ fake.Tier, c *gitlab.Client, _ *fake.Server) {
+		ctx := context.Background()
+		ref := issueRef(apiProj, 2)
+		ms, err := c.Milestones(ctx, group)
+		if err != nil || len(ms) < 3 {
+			t.Fatalf("milestones = %v, %v", ms, err)
+		}
+		if err := c.SetMilestone(ctx, ref, ms[2].ID); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := c.Issue(ctx, ref); err != nil || got.Milestone == nil || got.Milestone.ID != ms[2].ID {
+			t.Errorf("milestone = %+v, %v; want %d", got.Milestone, err, ms[2].ID)
+		}
+		if err := c.SetMilestone(ctx, ref, 0); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := c.Issue(ctx, ref); got.Milestone != nil {
+			t.Errorf("milestone after clearing = %+v", got.Milestone)
+		}
+		if err := c.SetMilestone(ctx, ref, 987654); err == nil {
+			t.Error("unknown milestone was accepted")
+		}
+		if err := c.SetMilestone(ctx, issueRef(apiProj, 999), ms[2].ID); !errors.Is(err, forge.ErrNotFound) {
+			t.Errorf("unknown issue: err = %v, want ErrNotFound", err)
+		}
+	})
+}

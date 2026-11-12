@@ -34,6 +34,9 @@ type Service struct {
 	OnProgress func(Progress)
 
 	tokens tokenCache
+	// cached makes manifest reads use the local copy of a remote source when
+	// there is one (CachedManifest), instead of fetching it again.
+	cached bool
 }
 
 // New returns a Service whose audit entries carry actor.

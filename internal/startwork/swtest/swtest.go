@@ -147,3 +147,13 @@ func (m *Mirror) CreateMR(ctx context.Context, d forge.MRDraft) (forge.MR, error
 	}
 	return m.Forge.CreateMR(ctx, d)
 }
+
+// SetMilestone forwards to the wrapped forge, which the embedded interface
+// would otherwise hide.
+func (m *Mirror) SetMilestone(ctx context.Context, ref forge.Ref, id int64) error {
+	mw, ok := m.Forge.(forge.MilestoneWriter)
+	if !ok {
+		return forge.ErrUnavailable
+	}
+	return mw.SetMilestone(ctx, ref, id)
+}

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/coredev-uk/ade/internal/app"
+	"github.com/coredev-uk/ade/internal/devshell"
 	"github.com/coredev-uk/ade/internal/ports"
 	"github.com/coredev-uk/ade/internal/store"
 )
@@ -63,6 +64,9 @@ type Manager struct {
 	LogDir   string // output logs and instance locks
 	// Grace is how long a stopping instance gets after SIGTERM before SIGKILL.
 	Grace time.Duration
+	// Devshell finds each tree's dev shell (direnv, nix develop); the zero
+	// value looks at PATH and the file system.
+	Devshell devshell.Finder
 
 	db    *sql.DB
 	ports *ports.Registry

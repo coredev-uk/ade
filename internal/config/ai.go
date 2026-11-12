@@ -37,8 +37,15 @@ func (c *Config) Profile(name string) (string, AIProfile, error) {
 }
 
 // Model returns the model id for role. A review role without its own model
-// uses draft's; a role without one falls back to explain.
+// uses draft's; a role without one (classify included) falls back to explain.
 func (p AIProfile) Model(role string) (string, error) {
+	m, _, err := p.ModelFrom(role)
+	return m, err
+}
+
+// ModelFrom is Model that also names the role whose entry supplied the id:
+// role itself, or the one it fell back to.
+func (p AIProfile) ModelFrom(role string) (model, from string, err error) {
 	chain := []string{role}
 	switch role {
 	case "review":
@@ -49,10 +56,10 @@ func (p AIProfile) Model(role string) (string, error) {
 	}
 	for _, r := range chain {
 		if m := p.Models[r]; m != "" {
-			return m, nil
+			return m, r, nil
 		}
 	}
-	return "", fmt.Errorf("no model configured for role %q: set models.%s on the profile", role, role)
+	return "", "", fmt.Errorf("no model configured for role %q: set models.%s on the profile", role, role)
 }
 
 // Key resolves the profile's API key from KeyEnv or KeyCmd. The omp driver

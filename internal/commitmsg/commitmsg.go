@@ -95,23 +95,6 @@ func hasPrefix(msg, prefix string) bool {
 	return !unicode.IsLetter(r) && !unicode.IsDigit(r)
 }
 
-// MergeMessage is the merge commit message ADE sends for an MR when a prefix
-// is configured, in the shape GitLab builds by default:
-//
-//	Merge branch 'source' into 'target'
-//
-//	<prefix> <MR title>
-//
-//	See merge request group/project!N
-//
-// ref is the MR as "group/project!N".
-func MergeMessage(prefix, source, target, title, ref string) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "Merge branch '%s' into '%s'\n\n%s\n", source, target, Apply(prefix, title))
-	fmt.Fprintf(&b, "\nSee merge request %s", ref)
-	return b.String()
-}
-
 // SquashMessage is the single commit a squash merge makes: the MR title,
 // prefixed.
 func SquashMessage(prefix, title string) string { return Apply(prefix, title) }

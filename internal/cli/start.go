@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/coredev-uk/ade/internal/app"
+	"github.com/coredev-uk/ade/internal/forgesync"
 	"github.com/coredev-uk/ade/internal/project"
 	"github.com/coredev-uk/ade/internal/startwork"
 	"github.com/coredev-uk/ade/internal/workspace"
@@ -123,6 +124,13 @@ func runStart(cmd *cobra.Command, arg string, f startFlags, onlyMR bool) error {
 	env := newStartEnv(a, f.noWorkspace || onlyMR, f.session)
 	env.Forge = r.Forge
 	_, res, err := env.Start(ctx, r, ch, f.dryRun)
+	if !f.dryRun && res.Created() > 0 {
+		// The new child and MR belong in the cache now: a running dashboard
+		// or `ade item --watch` shows them without a sync.
+		if _, rerr := forgesync.New(a).RefreshItem(ctx, r.Manifest, r.Forge, r.Item.Ref); rerr != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "ade: cache not refreshed (the next sync will): %v\n", rerr)
+		}
+	}
 	if jsonOut {
 		if perr := printJSON(cmd.OutOrStdout(), res); perr != nil {
 			return perr

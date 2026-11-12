@@ -330,6 +330,39 @@ func TestGatherFlagsSkipPromptsAndEOFIsAnError(t *testing.T) {
 	}
 }
 
+// A self-hosted host typed at the prompt gets the CA and ssh-port questions;
+// a bad port is an error, 22 is the default and stores nothing, and https
+// cloning or the public host never asks.
+func TestGatherAsksSSHPortForSelfHostedHost(t *testing.T) {
+	t.Setenv("GITLAB_TOKEN", "")
+	run := func(answers ...string) (onboard.Answers, string, error) {
+		out := &bytes.Buffer{}
+		pr := &prompter{in: bufio.NewReader(strings.NewReader(strings.Join(answers, "\n") + "\n")), out: out}
+		a, _, err := gather(pr, initFlags{})
+		return a, out.String(), err
+	}
+	// forge, host, token env, clone over, [CA, ssh port], projects (blank), root (blank)
+	a, out, err := run("gitlab", "git.corp.example", "GL", "ssh", "", "2222", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.SSHPort != 2222 || !strings.Contains(out, "SSH port of the forge [22]") {
+		t.Errorf("ssh port = %d, prompt shown: %q", a.SSHPort, out)
+	}
+	if a, _, err = run("gitlab", "git.corp.example", "GL", "ssh", "", "", "", ""); err != nil || a.SSHPort != 0 {
+		t.Errorf("default port: %d, %v", a.SSHPort, err)
+	}
+	if _, _, err = run("gitlab", "git.corp.example", "GL", "ssh", "", "ssh-port"); err == nil || !strings.Contains(err.Error(), "not a number") {
+		t.Errorf("err = %v, want not a number", err)
+	}
+	if _, out, err = run("gitlab", "git.corp.example", "GL", "https", "", "", ""); err != nil || strings.Contains(out, "SSH port") {
+		t.Errorf("https cloning asked for an ssh port: %v %q", err, out)
+	}
+	if _, out, err = run("gitlab", "", "GL", "ssh", "", ""); err != nil || strings.Contains(out, "SSH port") || strings.Contains(out, "CA bundle") {
+		t.Errorf("gitlab.com asked a self-hosted question: %v %q", err, out)
+	}
+}
+
 func TestVersionCommand(t *testing.T) {
 	old := Version
 	Version = "1.2.3-test"

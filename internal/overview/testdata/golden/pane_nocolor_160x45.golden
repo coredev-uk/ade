@@ -1,0 +1,45 @@
+ [1macme/tracker#15[m[1m  Rate-limit the export endpoint[m
+
+ [m●[m[m━━[m[m●[m[m━━[m[m●[m[m━━[m[m●[m[m━━[m[m●[m[m━━[m[1m◉[m[2m──[m[2m○[m  [1mreview[m
+ [2mas st br dr ci rv mg[m
+ [2mreviewers[m[2m · [m[2m2 unresolved threads[m
+
+ [2mweight    [m5w
+ [2msprint    [mSprint 42 · [2mends Fri 13 Nov[m · 3d left
+ [2mtype      [mfeature[2m · [mapi
+ [2mworkflow  [min review
+ [2mstate     [mopened
+ [2massignees [mpaul
+
+ [1mCode[m [2m─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[m [2m1 issue[m
+ [m┃[m [1mapi#3[m[1m  Limiter middleware[m
+ [m┃[m [2mno MR yet[m
+
+ [1mDescription[m [2m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[m [2m1/2 tasks[m
+ Exports hammer the API during the nightly batch.
+
+ [1mPlan[m
+
+ • [1mmeasure[m the current rate with `ade items`[m
+ [x] pick a limiter
+ [ ] add the middleware, see [4mthe design[m https://example.com/design/rate-limit[m
+
+ ┃ Keep the limit per tenant, not per token.
+
+   limiter := rate.NewLimiter(50, 10)
+
+ [1mAcceptance[m [2m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[m [2m1/3 done[m
+ [x] 429 over the limit
+ [ ] documented, with the `Retry-After` header explained in the reference
+ [ ] dashboard shows it
+
+ [2mnotes[m [2m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[m
+ ask support about [1m50 req/min[m
+
+ 1. check the tenant list
+ 2. then `ade sync`
+
+
+
+
+ [2msynced 4m ago   j/k scroll   r reload   q quit[m

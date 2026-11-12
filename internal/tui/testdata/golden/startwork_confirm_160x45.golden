@@ -1,0 +1,45 @@
+ ADE  Home · worktrees                                                                                                                                no unread
+                              ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+                              │ Start work · ade-demo-env/tracker#3                                                              │
+                              │                                                                                                  │
+                              │  Confirm ─────────────────────────────────────────────────────── 5 forge writes · 2 local steps  │
+                              │ ●━ api ade-demo-env/api                                                                          │
+                              │ ┣━ + forge create child issue in ade-demo-env/api: Retry failed webhook deliveries               │
+                              │ ┣━ + forge link ade-demo-env/tracker#3 relates_to the child (and Parent: line)                   │
+                              │ ┣━ + forge create branch <child iid>-retry-failed-webhook-deliveries from main                   │
+                              │ ┣━ + forge open draft MR <child iid>-retry-failed-webhook-deliveries → main from template Defau… │
+                              │ ┣━ + local fetch, add worktree …/root/demo-gl/api/<child iid>-retry-failed-webhook-deliveries    │
+                              │ ┗━ + local open workspace for api                                                                │
+                              │ ┃ + forge set workflow::in progress on ade-demo-env/tracker#3                                    │
+                              │                                                                                                  │
+                              │  MR · api ──────────────────────────────────────────────────────────────────── template Default  │
+                              │ ┃ Closes <child issue, created first>                                                            │
+                              │ ┃                                                                                                │
+                              │ ┃ Part of ade-demo-env/tracker#3                                                                 │
+                              │ ┃                                                                                                │
+                              │ ┃ ## What                                                                                        │
+                              │ ┃                                                                                                │
+                              │ ┃ /label ~"type::story"                                                                          │
+                              │ ┃ /assign_reviewer @reviewer-rae                                                                 │
+                              │                                                                                                  │
+                              │  Quick actions ──────────────────────────────────── the forge runs these when the MR is created  │
+                              │ ▸ keep  add labels ~type::story /label ~"type::story"                                            │
+                              │   keep  request review from @reviewer-rae /assign_reviewer @reviewer-rae                         │
+                              │                                                                                                  │
+                              │ enter confirm   x keep/strip   e/E edit body   esc back                                          │
+                              ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ j/k move   enter open   / search   : palette   f filter: all   o browser   w workspace   U refresh   ? keys   q quit

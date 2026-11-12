@@ -1,0 +1,45 @@
+ acme/tracker#15  Rate-limit the export endpoint
+
+ ●━━●━━●━━●━━●━━◉──○  review
+ as st br dr ci rv mg
+ reviewers · 2 unresolved threads
+
+ weight    5w
+ sprint    Sprint 42 · ends Fri 13 Nov · 3d left
+ type      feature · api
+ workflow  in review
+ state     opened
+ assignees paul
+
+ Code ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 1 issue
+ ┃ api#3  Limiter middleware
+ ┃ no MR yet
+
+ Description ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 1/2 tasks
+ Exports hammer the API during the nightly batch.
+
+ Plan
+
+ • measure the current rate with `ade items`
+ [x] pick a limiter
+ [ ] add the middleware, see the design https://example.com/design/rate-limit
+
+ ┃ Keep the limit per tenant, not per token.
+
+   limiter := rate.NewLimiter(50, 10)
+
+ Acceptance ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 1/3 done
+ [x] 429 over the limit
+ [ ] documented, with the `Retry-After` header explained in the reference
+ [ ] dashboard shows it
+
+ notes ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ask support about 50 req/min
+
+ 1. check the tenant list
+ 2. then `ade sync`
+
+
+
+
+ synced 4m ago   j/k scroll   r reload   q quit

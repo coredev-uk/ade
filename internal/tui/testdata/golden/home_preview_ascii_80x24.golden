@@ -1,0 +1,24 @@
+ ADE  Home - worktrees                                                no unread
+
+g/tracker#1  Rate-limit the export endpoint
+Sprint 42 - weight 5
+
+ *  assigned  -
+ |
+ *  started
+ |
+ *  branch
+ |
+ *  draft
+ |
+ *  ci
+ |
+ @  review
+ |
+ o  merged
+
+you - 2 unresolved threads
+
+Exports hammer the API during the nightly batch.
+
+ j/k move   enter open   / search   : palette   f all   tab details   ? keys

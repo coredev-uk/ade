@@ -164,8 +164,9 @@ func RenderSkill(in SkillInput) string {
 	line("## Commits")
 	line("")
 	if in.CommitPrefix != "" {
-		line("Every commit message starts with `%s` and a space, e.g. `%s Add the rate limit`. The worktree's", in.CommitPrefix, in.CommitPrefix)
-		line("`git config ade.commitPrefix` holds it and a commit-msg hook may add it for you; never write it twice.")
+		line("Only the first commit of the merge request starts with `%s` and a space, e.g. `%s Add the rate limit`;", in.CommitPrefix, in.CommitPrefix)
+		line("later commits are plain, imperative messages. The worktree's `git config ade.commitPrefix` holds it and a")
+		line("commit-msg hook may add it for you; never write it twice.")
 	} else {
 		line("The project sets no commit prefix; write plain, imperative messages like the existing history.")
 	}

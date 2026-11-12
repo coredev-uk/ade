@@ -2,202 +2,116 @@ package tui
 
 import (
 	"strings"
-	"unicode"
 
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/x/ansi"
 )
 
-// editor is the small multi-line text field behind every inline comment,
-// reply and summary. Review comments are short by house style (two sentences),
-// so there is no scrolling model beyond keeping the cursor line visible; a
-// long write-up belongs in $EDITOR (PLAN 6.2).
+// editor is the multi-line text field behind every inline comment, reply and
+// summary: a bubbles textarea (soft wrap, word movement, selection, paste)
+// dressed in the dashboard's ink, with no line numbers, no prompt and no
+// painted background. Enter, esc and tab belong to the dialog around it;
+// alt+enter or ctrl+j insert a newline. Review comments are short by house
+// style (two sentences); a long write-up belongs in $EDITOR (PLAN 6.2).
 type editor struct {
-	text []rune
-	cur  int // rune index in text, 0..len(text)
+	ta textarea.Model
 }
+
+// maxEditorLines caps what a paste can bring in; the view shows only the
+// last rows that fit and scrolls with the cursor.
+const maxEditorLines = 10000
 
 func newEditor(s string) editor {
-	r := []rune(s)
-	return editor{text: r, cur: len(r)}
+	ta := textarea.New()
+	ta.ShowLineNumbers = false
+	ta.Prompt = ""
+	ta.EndOfBufferCharacter = ' '
+	ta.DynamicHeight = true
+	ta.MinHeight = 1
+	ta.MaxContentHeight = maxEditorLines
+	ta.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("alt+enter", "ctrl+j"))
+	ta.SetStyles(editorStyles())
+	ta.SetValue(s)
+	_ = ta.Focus() // the cursor is static: no blink command to run
+	return editor{ta: ta}
 }
 
-func (e *editor) String() string { return string(e.text) }
-
-func (e *editor) insert(s string) {
-	r := []rune(s)
-	e.text = append(e.text[:e.cur], append(r, e.text[e.cur:]...)...)
-	e.cur += len(r)
+// editorStyles is the textarea in the terminal's own ground: no background
+// anywhere, a faint placeholder, the cursor a reverse-video cell (it shows
+// under NO_COLOR too) that does not blink.
+func editorStyles() textarea.Styles {
+	plain := textarea.StyleState{
+		Base: lipgloss.NewStyle(), Text: lipgloss.NewStyle(), CursorLine: lipgloss.NewStyle(),
+		LineNumber: lipgloss.NewStyle(), CursorLineNumber: lipgloss.NewStyle(),
+		EndOfBuffer: lipgloss.NewStyle(), Prompt: lipgloss.NewStyle(),
+		Placeholder: stFaint, Selection: lipgloss.NewStyle().Reverse(true),
+	}
+	return textarea.Styles{
+		Focused: plain,
+		Blurred: plain,
+		Cursor:  textarea.CursorStyle{Color: lipgloss.NoColor{}, Shape: tea.CursorBlock, Blink: false},
+	}
 }
 
-// lineBounds is the rune range of the logical line holding the cursor.
-func (e *editor) lineBounds() (start, end int) {
-	start = e.cur
-	for start > 0 && e.text[start-1] != '\n' {
-		start--
-	}
-	end = e.cur
-	for end < len(e.text) && e.text[end] != '\n' {
-		end++
-	}
-	return start, end
-}
+func (e *editor) String() string { return e.ta.Value() }
 
-// handle applies one key and reports whether the editor consumed it.
-// Enter, esc and tab belong to the dialog around the editor.
-func (e *editor) handle(k tea.KeyPressMsg) bool {
-	if k.Text != "" && k.Mod&(tea.ModCtrl|tea.ModAlt) == 0 {
-		e.insert(k.Text)
-		return true
+// handle applies a key press or a paste to the text. Enter, esc and tab are
+// left to the dialog: it reports false for them.
+func (e *editor) handle(msg tea.Msg) bool {
+	if k, ok := msg.(tea.KeyPressMsg); ok {
+		switch k.String() {
+		case "enter", "esc", "tab", "shift+tab":
+			return false
+		}
 	}
-	switch k.String() {
-	case "alt+enter", "ctrl+j":
-		e.insert("\n")
-	case "backspace", "ctrl+h":
-		if e.cur > 0 {
-			e.text = append(e.text[:e.cur-1], e.text[e.cur:]...)
-			e.cur--
-		}
-	case "delete", "ctrl+d":
-		if e.cur < len(e.text) {
-			e.text = append(e.text[:e.cur], e.text[e.cur+1:]...)
-		}
-	case "left", "ctrl+b":
-		e.cur = max(0, e.cur-1)
-	case "right", "ctrl+f":
-		e.cur = min(len(e.text), e.cur+1)
-	case "home", "ctrl+a":
-		e.cur, _ = e.lineBounds()
-	case "end", "ctrl+e":
-		_, e.cur = e.lineBounds()
-	case "ctrl+u": // to the start of the line
-		s, _ := e.lineBounds()
-		e.text = append(e.text[:s], e.text[e.cur:]...)
-		e.cur = s
-	case "ctrl+w", "alt+backspace": // the word before the cursor
-		i := e.cur
-		for i > 0 && unicode.IsSpace(e.text[i-1]) {
-			i--
-		}
-		for i > 0 && !unicode.IsSpace(e.text[i-1]) {
-			i--
-		}
-		e.text = append(e.text[:i], e.text[e.cur:]...)
-		e.cur = i
-	case "up":
-		e.vertical(-1)
-	case "down":
-		e.vertical(1)
-	default:
-		return false
-	}
+	e.ta, _ = e.ta.Update(msg)
 	return true
 }
 
-// vertical moves between logical lines, keeping the column where it can.
-func (e *editor) vertical(d int) {
-	s, _ := e.lineBounds()
-	col := e.cur - s
-	if d < 0 {
-		if s == 0 {
-			e.cur = 0
-			return
-		}
-		prevEnd := s - 1
-		ps := prevEnd
-		for ps > 0 && e.text[ps-1] != '\n' {
-			ps--
-		}
-		e.cur = min(ps+col, prevEnd)
-		return
-	}
-	_, end := e.lineBounds()
-	if end >= len(e.text) {
-		e.cur = len(e.text)
-		return
-	}
-	ns := end + 1
-	ne := ns
-	for ne < len(e.text) && e.text[ne] != '\n' {
-		ne++
-	}
-	e.cur = min(ns+col, ne)
-}
-
-// vline is one visual line: a rune range of the text.
-type vline struct{ start, end int }
-
-// wrap lays the text out in lines of at most w cells, soft-wrapping at spaces
-// (a word longer than the line is cut) and breaking at newlines.
-func (e *editor) wrap(w int) []vline {
-	w = max(w, 4)
-	var out []vline
-	start, width, lastSpace := 0, 0, -1
-	for i, r := range e.text {
-		if r == '\n' {
-			out = append(out, vline{start, i})
-			start, width, lastSpace = i+1, 0, -1
-			continue
-		}
-		rw := lipgloss.Width(string(r))
-		if width+rw > w {
-			brk := i
-			if lastSpace > start {
-				brk = lastSpace + 1
-			}
-			out = append(out, vline{start, brk})
-			start = brk
-			width = lipgloss.Width(string(e.text[start:i]))
-			lastSpace = -1
-			for j := start; j < i; j++ {
-				if e.text[j] == ' ' {
-					lastSpace = j
-				}
-			}
-		}
-		if r == ' ' {
-			lastSpace = i
-		}
-		width += rw
-	}
-	return append(out, vline{start, len(e.text)})
-}
-
-// view draws the editor in a box w cells wide and at most rows high, with the
-// cursor as a reverse-video cell (visible under NO_COLOR too). A faint
+// view draws the editor in a box w cells wide and at most rows high, one row
+// while it is empty or short. The cursor is a reverse-video cell; a faint
 // placeholder shows while it is empty.
 func (e *editor) view(w, rows int, placeholder string) []string {
-	if len(e.text) == 0 {
-		return []string{stBold.Reverse(true).Render(" ") + stFaint.Render(ansi.Truncate(placeholder, w-1, "…"))}
-	}
-	lines := e.wrap(w - 1) // one spare cell for a cursor at the end of a full line
-	cl := len(lines) - 1
-	for i, l := range lines {
-		if e.cur >= l.start && (e.cur < l.end || (e.cur == l.end && (i == len(lines)-1 || lines[i+1].start != l.end))) {
-			cl = i
-			break
-		}
-	}
-	top := max(0, min(cl-rows+1, len(lines)-rows))
+	e.ta.Placeholder = placeholder
+	e.ta.MaxHeight = max(rows, 1)
+	e.ta.SetWidth(max(w, 4))
+	e.ta, _ = e.ta.Update(nil) // re-lays out at this width and scrolls to the cursor
 	var out []string
-	for i := top; i < min(len(lines), top+rows); i++ {
-		l := lines[i]
-		txt := string(e.text[l.start:l.end])
-		if i == cl {
-			rel := e.cur - l.start
-			r := []rune(txt)
-			rel = min(rel, len(r))
-			cell := " "
-			if rel < len(r) {
-				cell = string(r[rel])
-			}
-			txt = string(r[:rel]) + stBold.Reverse(true).Render(cell)
-			if rel < len(r) {
-				txt += string(r[rel+1:])
-			}
-		}
-		out = append(out, strings.TrimRight(txt, "\n"))
+	for _, ln := range strings.Split(e.ta.View(), "\n") {
+		// The textarea pads every row to its width; the cursor cell is a
+		// styled reverse-video space and so survives the trim.
+		out = append(out, strings.TrimRight(ln, " "))
 	}
 	return out
+}
+
+// editing is the editor that pasted text goes to: the open comment, reply,
+// edit, deny or submit dialog's, or the Start work dialog's MR body.
+func (m *model) editing() *editor {
+	if m.sw != nil && m.sw.body != nil {
+		return m.sw.body
+	}
+	if m.mr == nil || m.mr.modal == nil {
+		return nil
+	}
+	switch m.mr.modal.kind {
+	case modalReply, modalComment, modalEditDraft, modalDeny, modalSubmit:
+		return &m.mr.modal.ed
+	}
+	return nil
+}
+
+// paste puts bracketed-paste text into the open editor; the Deny reason is a
+// one-liner, so its newlines become spaces.
+func (m *model) paste(msg tea.PasteMsg) {
+	e := m.editing()
+	if e == nil {
+		return
+	}
+	if m.sw == nil && m.mr.modal.kind == modalDeny {
+		msg.Content = strings.Join(strings.Fields(msg.Content), " ")
+	}
+	e.handle(msg)
 }

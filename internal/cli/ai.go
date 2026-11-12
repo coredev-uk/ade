@@ -698,12 +698,49 @@ func firstLine(s string) string {
 
 // --- models ------------------------------------------------------------------
 
+// roleUse is one role of a profile and the model that serves it.
+type roleUse struct {
+	Role  string `json:"role"`
+	Model string `json:"model"`
+	// From is the role whose entry supplied Model when Role has none of its own.
+	From string `json:"from,omitempty"`
+	// Offered is whether the driver lists Model; false means the gateway
+	// would likely reject it. Unknown (nil) when the model list was empty.
+	Offered *bool `json:"offered,omitempty"`
+}
+
+// roleUses resolves every role of p, fallbacks included, against the models
+// the driver offers.
+func roleUses(p config.AIProfile, offered []string) []roleUse {
+	var out []roleUse
+	for _, role := range config.AIRoles {
+		m, from, err := p.ModelFrom(role)
+		if err != nil {
+			continue
+		}
+		u := roleUse{Role: role, Model: m}
+		if from != role {
+			u.From = from
+		}
+		if len(offered) > 0 {
+			ok := slices.Contains(offered, m)
+			u.Offered = &ok
+		}
+		out = append(out, u)
+	}
+	return out
+}
+
 func newAIModelsCmd() *cobra.Command {
 	var profile string
 	cmd := &cobra.Command{
 		Use:   "models",
-		Short: "List the models the profile's driver or gateway offers",
-		Args:  cobra.NoArgs,
+		Short: "List the models the profile's driver or gateway offers and which role uses which",
+		Long: `Lists the model ids the active profile's gateway (or provider) offers and marks
+the roles that use each: explain, classify, draft, plan, implement, review.
+A role without its own model shows the one it falls back to (classify uses
+explain's). A configured model the gateway does not list is flagged.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			a := appFrom(cmd)
 			name, p, err := a.Config.Profile(profile)
@@ -723,11 +760,38 @@ func newAIModelsCmd() *cobra.Command {
 				return err
 			}
 			slices.Sort(ms)
+			uses := roleUses(p, ms)
 			if jsonOut {
-				return printJSON(cmd.OutOrStdout(), map[string]any{"profile": name, "driver": p.Driver, "models": ms})
+				return printJSON(cmd.OutOrStdout(), map[string]any{"profile": name, "driver": p.Driver, "models": ms, "roles": uses})
 			}
+			w := cmd.OutOrStdout()
+			rolesOf := func(model string) string {
+				var rs []string
+				for _, u := range uses {
+					if u.Model != model {
+						continue
+					}
+					r := u.Role
+					if u.From != "" {
+						r += " (via " + u.From + ")"
+					}
+					rs = append(rs, r)
+				}
+				return strings.Join(rs, ", ")
+			}
+			tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 			for _, m := range ms {
-				fmt.Fprintln(cmd.OutOrStdout(), m)
+				if rs := rolesOf(m); rs != "" {
+					fmt.Fprintf(tw, "%s\t%s\n", m, rs)
+				} else {
+					fmt.Fprintln(tw, m)
+				}
+			}
+			_ = tw.Flush()
+			for _, u := range uses {
+				if u.Offered != nil && !*u.Offered {
+					fmt.Fprintf(w, "\nwarning: %s uses %q, which the gateway does not list\n", u.Role, u.Model)
+				}
 			}
 			return nil
 		},

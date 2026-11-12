@@ -167,6 +167,10 @@ func TestVSCodeWorkspaceOfABaselineTreeHasNoItem(t *testing.T) {
 
 func TestVSCodeWorkspaceOpenRunsCodeOrHints(t *testing.T) {
 	e := newCodeEnv(t)
+	// A desktop session (no web tty): without `code` the hint names the launcher.
+	t.Setenv("DISPLAY", ":0")
+	t.Setenv("TERM_PROGRAM", "")
+	t.Setenv("VSCODE_IPC_HOOK_CLI", "")
 	t.Setenv("PATH", t.TempDir())
 	out, err := e.run("g/tracker#15", "--open")
 	if err != nil || !strings.Contains(out, "code is not on PATH") {

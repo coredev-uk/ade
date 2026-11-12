@@ -26,15 +26,11 @@ type Backend interface {
 var Dial = func(ctx context.Context, name string, f config.Forge) (Backend, error) {
 	switch f.Kind {
 	case "gitlab":
-		tok, err := f.Token(ctx)
+		c, err := gitlab.Open(ctx, name, f)
 		if err != nil {
-			return nil, fmt.Errorf("forge %s: %w", name, err)
+			return nil, err
 		}
-		base := f.URL
-		if base == "" {
-			base = "https://gitlab.com"
-		}
-		return gitlab.New(base, tok), nil
+		return c, nil
 	case "github":
 		tok, err := f.Token(ctx)
 		if err != nil {

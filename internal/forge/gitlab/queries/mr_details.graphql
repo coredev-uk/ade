@@ -1,0 +1,58 @@
+# The detail a sync reads of up to 25 merge requests of one project in one
+# request: pipeline, approvals, reviewer verdicts and every conversation with
+# its note authors. REST needs four calls per merge request for the same.
+query MRDetails($path: ID!, $iids: [String!], $first: Int!) {
+  project(fullPath: $path) {
+    mergeRequests(iids: $iids, first: $first) {
+      nodes {
+        iid
+        approvalsRequired
+        approvedBy {
+          nodes {
+            id
+            username
+            name
+          }
+        }
+        headPipeline {
+          id
+          status
+          path
+          updatedAt
+        }
+        reviewers {
+          nodes {
+            id
+            username
+            name
+            mergeRequestInteraction {
+              reviewState
+            }
+          }
+        }
+        discussions(first: 100) {
+          pageInfo {
+            hasNextPage
+          }
+          nodes {
+            id
+            resolvable
+            resolved
+            notes(first: 100) {
+              pageInfo {
+                hasNextPage
+              }
+              nodes {
+                system
+                author {
+                  id
+                  username
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -624,7 +624,7 @@ func TestCommitPrefixFromWorktreeConfig(t *testing.T) {
 	if got := e.m.commitPrefix(ctx, r); got != "" {
 		t.Fatalf("no prefix configured, got %q", got)
 	}
-	if err := commitprefix.WriteWorktreeConfig(ctx, e.wt, 42, "GL-42"); err != nil {
+	if err := commitprefix.WriteWorktreeConfig(ctx, e.wt, 42, "GL-42", ""); err != nil {
 		t.Fatal(err)
 	}
 	prefix := e.m.commitPrefix(ctx, r)
@@ -645,5 +645,30 @@ func TestCommitPrefixFromWorktreeConfig(t *testing.T) {
 		if got := sh(t, e.wt, "log", "-1", "--format=%s"); got != tc.want {
 			t.Errorf("commit subject = %q, want %q", got, tc.want)
 		}
+	}
+}
+
+// Only the first commit ahead of the MR target carries the prefix.
+func TestFirstCommitOnly(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	if !commitprefix.FirstCommit(ctx, e.wt) {
+		t.Fatal("no target recorded: the prefix must still apply")
+	}
+	base := sh(t, e.wt, "rev-parse", "HEAD") // any rev works as the target
+	if err := commitprefix.WriteWorktreeConfig(ctx, e.wt, 42, "GL-42", base); err != nil {
+		t.Fatal(err)
+	}
+	if !commitprefix.FirstCommit(ctx, e.wt) {
+		t.Fatal("no commits ahead of the target yet: want first")
+	}
+	if err := os.WriteFile(filepath.Join(e.wt, "first.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := commitAll(ctx, e.wt, Author{Name: "T", Email: "t@example.com"}, "GL-42 first"); err != nil {
+		t.Fatal(err)
+	}
+	if commitprefix.FirstCommit(ctx, e.wt) {
+		t.Fatal("a commit is ahead of the target: not first any more")
 	}
 }

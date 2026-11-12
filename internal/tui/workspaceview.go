@@ -82,7 +82,7 @@ func (m model) chipText(c svcChip) string {
 func (m model) serviceChipLines(chips []svcChip, w int) []string {
 	var out []string
 	for _, c := range attentionFirst(chips) {
-		out = append(out, ansi.Truncate(m.chipText(c), w, "…"))
+		out = append(out, ansi.Truncate(m.chipText(c), w, m.g.Ell))
 	}
 	return out
 }

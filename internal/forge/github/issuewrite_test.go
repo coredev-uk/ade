@@ -326,3 +326,27 @@ func headCommitMessage(t *testing.T, srv *fake.Server, project, sha string) stri
 	}
 	return out.Message
 }
+
+func TestSetMilestone(t *testing.T) {
+	c, _ := newClient(t)
+	ctx := context.Background()
+	ref := forge.Ref{Project: apiProj, IID: 1, Kind: forge.KindIssue}
+	ms, err := c.Milestones(ctx, apiProj)
+	if err != nil || len(ms) < 2 {
+		t.Fatalf("milestones = %v, %v", ms, err)
+	}
+	for _, m := range ms[:2] {
+		if err := c.SetMilestone(ctx, ref, m.ID); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := c.Issue(ctx, ref); err != nil || got.Milestone == nil || got.Milestone.Title != m.Title {
+			t.Errorf("milestone = %+v, %v; want %s", got.Milestone, err, m.Title)
+		}
+	}
+	if err := c.SetMilestone(ctx, ref, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Issue(ctx, ref); got.Milestone != nil {
+		t.Errorf("milestone after clearing = %+v", got.Milestone)
+	}
+}

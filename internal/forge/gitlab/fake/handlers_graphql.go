@@ -27,6 +27,10 @@ func (s *Server) graphql(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if strings.Contains(req.Query, "query MRDetails") {
+		s.mrDetails(w, req.Variables)
+		return
+	}
 	if strings.Contains(req.Query, "issueSetIteration") {
 		s.setIterationMutation(w, req.Variables)
 		return

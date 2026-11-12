@@ -38,7 +38,9 @@ type Env struct {
 	// new zellij session created from it); such a session runs with ADE's
 	// unlock-first config so no key collides with VS Code.
 	InsideVSCode bool
-	Session      zellij.State // state of SessionName; ignored unless zellij is usable
+	// WebTTY is true in a browser terminal, which captures keys of its own.
+	WebTTY  bool
+	Session zellij.State // state of SessionName; ignored unless zellij is usable
 }
 
 // Decide maps the environment to an action. mode "zellij" behaves like auto
@@ -64,11 +66,41 @@ func Decide(e Env) (a Action, ok bool) {
 	return Attach, true
 }
 
+// PresetEnv is the environment variable that forces zellij's keybinding
+// preset: "unlock-first" always uses ADE's preset, "default" (or "none")
+// never does. Unset, the preset follows the terminal (see UsesUnlockFirst).
+const PresetEnv = "ADE_ZELLIJ_PRESET"
+
+// WebTTY reports whether the terminal looks like a browser terminal (Coder's
+// web terminal, ttyd). A browser takes Ctrl-W, Ctrl-T, Ctrl-N and friends for
+// itself, so such a terminal wants the same unlock-first preset as VS Code.
+// ADE_WEB_TTY=1 says so explicitly. Without it the guess is Coder's
+// reconnecting-pty: a Coder workspace ($CODER=true) whose terminal is not an
+// ssh session and not VS Code's.
+func WebTTY(getenv func(string) string) bool {
+	switch getenv("ADE_WEB_TTY") {
+	case "1", "true":
+		return true
+	case "0", "false":
+		return false
+	}
+	return getenv("CODER") == "true" && getenv("SSH_CONNECTION") == "" && getenv("SSH_TTY") == "" &&
+		getenv("TERM_PROGRAM") != "vscode" && getenv("VSCODE_IPC_HOOK_CLI") == ""
+}
+
 // UsesUnlockFirst says whether zellij should run with ADE's unlock-first
-// config: inside VS Code, unless the user pointed zellij at a config of their
-// own with $ZELLIJ_CONFIG_FILE.
+// config: inside VS Code or a web tty, unless the user pointed zellij at a
+// config of their own with $ZELLIJ_CONFIG_FILE. ADE_ZELLIJ_PRESET overrides
+// the guess in both directions, and unlike detection it also beats
+// $ZELLIJ_CONFIG_FILE: asking for the preset by name is explicit.
 func (e Env) UsesUnlockFirst(getenv func(string) string) bool {
-	return e.InsideVSCode && getenv("ZELLIJ_CONFIG_FILE") == ""
+	switch getenv(PresetEnv) {
+	case "unlock-first":
+		return true
+	case "default", "none":
+		return false
+	}
+	return (e.InsideVSCode || e.WebTTY) && getenv("ZELLIJ_CONFIG_FILE") == ""
 }
 
 // Argv builds the zellij command line for a Create or Attach action.

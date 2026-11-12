@@ -247,6 +247,16 @@ func (s *Server) updateIssue(w http.ResponseWriter, r *http.Request) {
 	for _, l := range splitLabels(str(p, "remove_labels")) {
 		is.Labels = slices.DeleteFunc(is.Labels, func(x string) bool { return x == l })
 	}
+	if _, has := p["milestone_id"]; has {
+		if id := int64(intOf(p, "milestone_id")); id == 0 {
+			is.Milestone = nil
+		} else if i := slices.IndexFunc(s.st.milestones, func(m *milestone) bool { return m.ID == id }); i >= 0 {
+			is.Milestone = s.st.milestones[i]
+		} else {
+			badRequest(w, "milestone_id is invalid")
+			return
+		}
+	}
 	is.Updated = s.st.clock
 	writeJSON(w, http.StatusOK, s.issueJSON(is, is.Project))
 }

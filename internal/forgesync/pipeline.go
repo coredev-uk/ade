@@ -13,13 +13,13 @@ import (
 	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/domain"
 	"github.com/coredev-uk/ade/internal/forge"
+	"github.com/coredev-uk/ade/internal/startwork"
 	"github.com/coredev-uk/ade/internal/store"
 )
 
 const (
 	// activityWindow bounds how far back code-repo issues and MRs are listed.
 	activityWindow = 60 * 24 * time.Hour
-	cacheTTL       = 24 * time.Hour
 	defaultOverlap = 1
 
 	issueOpened = "opened"
@@ -77,15 +77,15 @@ func (p *pipeline) overlap() int {
 }
 
 func (p *pipeline) me(ctx context.Context) (forge.User, error) {
-	return cachedValue(p.st, "forgesync:me:"+p.forgeName, cacheTTL, p.now, func() (forge.User, error) {
+	return store.Cached(p.st, startwork.MeKey(p.forgeName), startwork.CacheTTL, p.now, func() (forge.User, error) {
 		return p.f.Me(ctx)
 	})
 }
 
 func (p *pipeline) caps(ctx context.Context) (forge.Caps, error) {
 	group := forge.Group(p.m.Tracker.Project)
-	key := "forgesync:caps:" + p.forgeName + ":" + group
-	return cachedValue(p.st, key, cacheTTL, p.now, func() (forge.Caps, error) {
+	key := startwork.CapsKey(p.forgeName, group)
+	return store.Cached(p.st, key, startwork.CacheTTL, p.now, func() (forge.Caps, error) {
 		return p.f.Capabilities(ctx, group)
 	})
 }
@@ -529,15 +529,16 @@ func collectReviews(repos []repoData) []forge.MR {
 }
 
 // mrDetails fetches full detail (pipeline, approvals, threads) once for every
-// open MR attached to an item or awaiting my review.
+// open MR attached to an item or awaiting my review. A forge that can batch
+// (forge.MRDetailer) reads them in a few requests; others one by one.
 func (p *pipeline) mrDetails(ctx context.Context, roots []root, reviews []forge.MR) (map[forge.Ref]forge.MR, error) {
-	var refs []forge.Ref
+	var open []forge.MR
 	seen := map[forge.Ref]bool{}
 	add := func(mrs []forge.MR) {
 		for _, mr := range mrs {
 			if mr.State == mrOpened && !seen[mr.Ref] {
 				seen[mr.Ref] = true
-				refs = append(refs, mr.Ref)
+				open = append(open, mr)
 			}
 		}
 	}
@@ -546,16 +547,26 @@ func (p *pipeline) mrDetails(ctx context.Context, roots []root, reviews []forge.
 	}
 	add(reviews)
 
-	got := make([]forge.MR, len(refs))
-	err := parallel(ctx, len(refs), func(ctx context.Context, i int) (err error) {
-		got[i], err = p.f.MR(ctx, refs[i])
+	got := make([]forge.MR, len(open))
+	if b, ok := p.f.(forge.MRDetailer); ok {
+		caps, err := p.caps(ctx)
 		if err != nil {
-			err = fmt.Errorf("%s: %w", refs[i], err)
+			return nil, fmt.Errorf("capabilities: %w", err)
 		}
-		return err
-	})
-	if err != nil {
-		return nil, err
+		if got, err = b.MRDetails(ctx, open, caps); err != nil {
+			return nil, err
+		}
+	} else {
+		err := parallel(ctx, len(open), func(ctx context.Context, i int) (err error) {
+			got[i], err = p.f.MR(ctx, open[i].Ref)
+			if err != nil {
+				err = fmt.Errorf("%s: %w", open[i].Ref, err)
+			}
+			return err
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 	out := make(map[forge.Ref]forge.MR, len(got))
 	for _, mr := range got {

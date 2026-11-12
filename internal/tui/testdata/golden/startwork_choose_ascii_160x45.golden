@@ -1,0 +1,45 @@
+ ADE  Home - worktrees                                                                                                                                no unread
+                              +--------------------------------------------------------------------------------------------------+
+                              | Start work - ade-demo-env/tracker#3                                                              |
+                              |                                                                                                  |
+                              | Retry failed webhook deliveries                                                                  |
+                              |                                                                                                  |
+                              |  Repos ------------------------------------------------------------------- app::api routes here  |
+                              | > [x] api       ade-demo-env/api                                                                 |
+                              |   [ ] web       ade-demo-env/web                                                                 |
+                              |   [ ] tracker   ade-demo-env/tracker  - work lives in the tracker project                        |
+                              |                                                                                                  |
+                              |  What to create ------------------------------------------------------------------------------   |
+                              |   * Draft MR     child, link, branch, draft MR, worktree                                         |
+                              |   o Branch only  child, link, branch, worktree; M opens the MR later                             |
+                              |   o Browse       worktree on the default branch; no forge write                                  |
+                              |                                                                                                  |
+                              |  Child issue ---------------------------------------------------------- conventions.child_issue  |
+                              |   * auto    a child when the repo is not the tracker's                                           |
+                              |   o always  always a child issue                                                                 |
+                              |   o never   none: branch and MR reference the tracker issue                                      |
+                              |                                                                                                  |
+                              |  Main pane  * editor  o omp  o shell  a toggles - your editor beside lazygit, the overview an... |
+                              |                                                                                                  |
+                              | space select   m mode   c child   a main pane   enter continue   esc cancel                      |
+                              +--------------------------------------------------------------------------------------------------+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ j/k move   enter open   / search   : palette   f filter: all   o browser   w workspace   U refresh   ? keys   q quit

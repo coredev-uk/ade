@@ -68,8 +68,8 @@ func ClassifyJob(forgeName string, in ClassifyInput) (Job, error) {
 		fmt.Fprintf(&b, "Allowed app values: %s\n", strings.Join(sortedCopy(in.KnownApps), ", "))
 	}
 	return Job{
-		Feature: "classify", Role: RoleExplain, PromptVersion: classifyVersion,
-		System: classifySystem, Prompt: b.String(),
+		Feature: "classify", Role: RoleClassify, PromptVersion: classifyVersion,
+		System: classifySystem, Prompt: b.String(), Schema: classifySchema,
 		Forge: forgeName, Ref: in.Issue.Ref, Name: "classify",
 		MaxTokens: 200,
 	}, nil
@@ -80,6 +80,19 @@ func sortedCopy(s []string) []string {
 	slices.Sort(out)
 	return out
 }
+
+// classifySchema is the answer shape ParseSuggestion reads, for gateways that
+// enforce a response_format.
+var classifySchema = &Schema{Name: "classify", JSON: map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"type":   map[string]any{"type": "string"},
+		"apps":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+		"reason": map[string]any{"type": "string"},
+	},
+	"required":             []string{"type", "apps", "reason"},
+	"additionalProperties": false,
+}}
 
 // Suggestion is the labels classification proposes. Nothing is applied here.
 type Suggestion struct {

@@ -5,6 +5,7 @@ import (
 	"maps"
 	"net/url"
 	"slices"
+	"strings"
 )
 
 // Valid values for the AI tables, shared with the packages that switch on them.
@@ -12,7 +13,7 @@ var (
 	AIDrivers       = []string{"omp", "anthropic", "openai-compat"}
 	AIBillingSource = []string{"litellm", "omp", "anthropic", "openai", "moonshot", "openrouter", "none"}
 	AgentDrivers    = []string{"omp", "claude", "codex"}
-	AIRoles         = []string{"explain", "draft", "plan", "implement", "review"}
+	AIRoles         = []string{"explain", "classify", "draft", "plan", "implement", "review"}
 )
 
 func validateAI(s *issues, c *Config) {
@@ -74,7 +75,65 @@ func validateProfile(s *issues, path string, p AIProfile) {
 	if p.Billing.Source != "" && !oneOf(p.Billing.Source, AIBillingSource...) {
 		s.errorf(path+".billing.source", "unknown source %q: want one of %v", p.Billing.Source, AIBillingSource)
 	}
+	for role, model := range p.Models {
+		if strings.TrimSpace(model) == "" {
+			s.errorf(path+".models."+role, "model id must not be empty")
+		}
+	}
+	validateGateway(s, path, p)
 	if p.Billing.WeeklySoftUSD < 0 {
 		s.errorf(path+".billing.weekly_soft_usd", "must not be negative")
 	}
+}
+
+// validateGateway checks the settings an HTTP driver (a LiteLLM gateway in
+// particular) adds to a profile.
+func validateGateway(s *issues, path string, p AIProfile) {
+	if p.Timeout.Duration < 0 {
+		s.errorf(path+".timeout", "must not be negative")
+	}
+	if p.Driver == "omp" && (len(p.ExtraHeaders) > 0 || p.Timeout.Duration != 0) {
+		s.warnf(path, "extra_headers and timeout only apply to the HTTP drivers; the omp driver ignores them")
+	}
+	for _, name := range slices.Sorted(maps.Keys(p.ExtraHeaders)) {
+		hp := path + ".extra_headers." + name
+		switch {
+		case !validHeaderName(name):
+			s.errorf(hp, "%q is not a valid HTTP header name", name)
+		case strings.EqualFold(name, "authorization"):
+			s.errorf(hp, "Authorization is set from key_env/key_cmd; do not repeat it here")
+		case strings.ContainsAny(p.ExtraHeaders[name], "\r\n\x00"):
+			s.errorf(hp, "the value is not a valid HTTP header value")
+		}
+	}
+	if p.Billing.Source == "litellm" {
+		switch {
+		case p.Driver != "openai-compat":
+			s.errorf(path+".billing.source", "litellm billing reads a LiteLLM gateway: use driver = \"openai-compat\"")
+		case p.KeyEnv == "" && p.KeyCmd == "":
+			s.errorf(path, "a litellm gateway needs key_env or key_cmd (the virtual key)")
+		}
+		if len(p.Models) == 0 {
+			s.warnf(path+".models", "no models: set at least explain (and classify for a small classifier) to name the gateway's model aliases")
+		}
+		if u, err := url.Parse(p.BaseURL); err == nil && u.Host != "" && strings.Trim(u.Path, "/") == "" {
+			s.warnf(path+".base_url", "%q has no path: LiteLLM serves the OpenAI API under /v1", p.BaseURL)
+		}
+	}
+}
+
+// validHeaderName reports whether name is an RFC 9110 token.
+func validHeaderName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case strings.ContainsRune("!#$%&'*+-.^_`|~", r):
+		default:
+			return false
+		}
+	}
+	return true
 }

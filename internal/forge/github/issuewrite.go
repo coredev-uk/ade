@@ -185,6 +185,25 @@ func (c *Client) SetIteration(_ context.Context, ref forge.Ref, _ int64) error {
 	return fmt.Errorf("github: iteration of %s: %w", ref, forge.ErrUnavailable)
 }
 
+var _ forge.MilestoneWriter = (*Client)(nil)
+
+// SetMilestone implements forge.MilestoneWriter. The id is resolved to the
+// issue's repository by title (see milestoneIn); 0 clears the milestone.
+func (c *Client) SetMilestone(ctx context.Context, ref forge.Ref, milestoneID int64) error {
+	if err := wantAny(ref); err != nil {
+		return err
+	}
+	var number any // null clears
+	if milestoneID != 0 {
+		n, err := c.milestoneIn(ctx, ref.Project, milestoneID)
+		if err != nil {
+			return err
+		}
+		number = n
+	}
+	return c.send(ctx, http.MethodPatch, issuePath(ref), map[string]any{"milestone": number}, nil)
+}
+
 // Branches implements forge.IssueWriter through the matching-refs listing,
 // which matches by prefix.
 func (c *Client) Branches(ctx context.Context, project, prefix string) ([]string, error) {

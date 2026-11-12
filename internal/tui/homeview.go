@@ -93,7 +93,7 @@ func lineOf(it *domain.WorkItem) string {
 
 func weightText(g glyphs, w *int) string {
 	if w == nil {
-		return stFaint.Render("–")
+		return stFaint.Render(g.T("–"))
 	}
 	return fmt.Sprintf("%dw", *w)
 }
@@ -130,7 +130,7 @@ func courtFit(g glyphs, it *domain.WorkItem, w int) string {
 	if failed {
 		mark = lipgloss.Width(g.Bad) + 1
 	}
-	reason := fitWords(it.Reason, w-lipgloss.Width(c)-lipgloss.Width(sep)-mark)
+	reason := fitWords(g, it.Reason, w-lipgloss.Width(c)-lipgloss.Width(sep)-mark)
 	if reason == "" {
 		return c
 	}
@@ -145,18 +145,19 @@ func courtFit(g glyphs, it *domain.WorkItem, w int) string {
 
 // fitWords shortens plain text to w cells at a word boundary, ending in "…".
 // A single word longer than w is cut with an ellipsis.
-func fitWords(s string, w int) string {
+func fitWords(g glyphs, s string, w int) string {
+	s = g.T(s)
 	if lipgloss.Width(s) <= w {
 		return s
 	}
 	if w <= 1 {
 		return ""
 	}
-	cut := ansi.Truncate(s, w-1, "")
+	cut := ansi.Truncate(s, w-lipgloss.Width(g.Ell), "")
 	if i := strings.LastIndexAny(cut, " ·:"); i > 0 {
 		cut = strings.TrimRight(cut[:i], " ·:")
 	}
-	return cut + "…"
+	return cut + g.Ell
 }
 
 // newMark flags unread notifications on a row with a word, not a dot: dots
@@ -205,10 +206,10 @@ func (m model) homeList(w, h int) string {
 	lay := layoutFor(w, refW, courtW)
 	// Gaps: ref|title|track|badge|weight|court; the badge and its gap go when
 	// they would leave the title under minTitleForBadge cells.
-	titleW := max(12, w-3-lay.refW-lay.trackW()-lay.weightW-lay.courtW-4*2-lay.badgeGap())
+	titleW := max(12, w-4-lay.refW-lay.trackW()-lay.weightW-lay.courtW-4*2-lay.badgeGap())
 	if lay.badgeW > 0 && titleW < minTitleForBadge {
 		lay.badgeW = 0
-		titleW = max(12, w-3-lay.refW-lay.trackW()-lay.weightW-lay.courtW-4*2)
+		titleW = max(12, w-4-lay.refW-lay.trackW()-lay.weightW-lay.courtW-4*2)
 	}
 	idx := 0
 	legend := false // the station names appear once, above the first project that has tracks
@@ -224,7 +225,7 @@ func (m model) homeList(w, h int) string {
 			legend = true
 		}
 		if res.Err != "" {
-			out = append(out, "   "+stBad.Render(m.g.Bad+" sync failed: ")+ansi.Truncate(res.Err, w-20, "…"))
+			out = append(out, "   "+stBad.Render(m.g.Bad+" sync failed: ")+ansi.Truncate(res.Err, w-20, m.g.Ell))
 		}
 		shown := false
 		for sec := secMine; sec <= secSearch; sec++ {
@@ -234,13 +235,13 @@ func (m model) homeList(w, h int) string {
 			}
 			if start == idx {
 				if sec == secMine && narrowed == "" && res.Err == "" {
-					out = append(out, subRule(sec.title(), "nothing assigned", w, m.g),
+					out = append(out, subRule(sec.title(m.g), "nothing assigned", w, m.g),
 						"   "+stFaint.Render("Nothing assigned to you in this project."))
 				}
 				continue
 			}
 			shown = true
-			out = append(out, subRule(sec.title(), m.sectionGuide(res, sec, idx-start), w, m.g))
+			out = append(out, subRule(sec.title(m.g), m.sectionGuide(res, sec, idx-start), w, m.g))
 			for i := start; i < idx; i++ {
 				if i == m.homeSel {
 					selLine = len(out)
@@ -264,7 +265,7 @@ func (m model) homeList(w, h int) string {
 	if selLine >= h-1 {
 		top = selLine - h + 2
 	}
-	return fit(strings.Join(out[min(top, len(out)):], "\n"), w, h)
+	return fit(m.g, strings.Join(out[min(top, len(out)):], "\n"), w, h)
 }
 
 // badgeGap is the two-cell gap the badge column adds, 0 without the column.
@@ -366,7 +367,7 @@ func (m model) legend(lay homeLayout, titleW int) string {
 		if col < 3 {
 			n = n[:1]
 		}
-		b.WriteString(pad(n, col))
+		b.WriteString(pad(m.g, n, col))
 	}
 	lead := strings.Repeat(" ", 3+lay.refW+2+titleW+2)
 	return stFaint.Render(lead + strings.TrimRight(b.String(), " "))
@@ -405,7 +406,7 @@ func (m model) sectionGuide(res *forgesync.Result, sec homeSection, n int) strin
 				you++
 			}
 		}
-		return fmt.Sprintf("%d %s · %d waiting on you", n, plural(n, "item"), you)
+		return fmt.Sprintf(m.g.T("%d %s · %d waiting on you"), n, plural(n, "item"), you)
 	}
 }
 
@@ -434,17 +435,17 @@ func (m model) homeRowLine(r homeRow, lay homeLayout, selected bool, titleW int,
 	}
 	if r.mr != nil {
 		mr := r.mr
-		ref := pad(m.shortRefOf(r), lay.refW)
+		ref := pad(m.g, m.shortRefOf(r), lay.refW)
 		title := mr.Title
 		if selected {
 			title = stBold.Render(title)
 		}
-		left := mark + stFaint.Render(ref) + "  " + pad(ansi.Truncate(title, titleW-lipgloss.Width(unread), "…")+unread, titleW)
+		left := mark + stFaint.Render(ref) + "  " + pad(m.g, ansi.Truncate(title, titleW-lipgloss.Width(unread), m.g.Ell)+unread, titleW)
 		right := stFaint.Render(mr.Author.Username) + stFaint.Render(" "+m.g.Sep+" ") + mrStatus(m.g, mr)
-		return left + "  " + strings.Repeat(" ", lay.trackW()+lay.badgeGap()+2+lay.weightW) + "  " + ansi.Truncate(right, lay.courtW, "…")
+		return left + "  " + strings.Repeat(" ", lay.trackW()+lay.badgeGap()+2+lay.weightW) + "  " + ansi.Truncate(right, lay.courtW, m.g.Ell)
 	}
 	it := r.item
-	ref := pad(m.shortRefOf(r), lay.refW)
+	ref := pad(m.g, m.shortRefOf(r), lay.refW)
 	title := it.Issue.Title
 	if selected {
 		title = stBold.Render(title)
@@ -456,27 +457,27 @@ func (m model) homeRowLine(r homeRow, lay homeLayout, selected bool, titleW int,
 		if lay.trackW() < len(label) {
 			label = "? triage"
 		}
-		tr = stFaint.Render(pad(label, lay.trackW()))
+		tr = stFaint.Render(pad(m.g, label, lay.trackW()))
 	}
 	badge := ""
 	if lay.badgeW > 0 {
 		badge = m.rowBadge(it) + "  "
 	}
 	return mark + stFaint.Render(ref) + "  " + titleCell + "  " + tr + "  " + badge +
-		pad(weightText(m.g, it.Weight), lay.weightW) + "  " + courtFit(m.g, it, lay.courtW)
+		pad(m.g, weightText(m.g, it.Weight), lay.weightW) + "  " + courtFit(m.g, it, lay.courtW)
 }
 
-// titleCell is the title, then the epic faint after it when the cell has
-// room for both.
+// titleCell is the title, the unread mark, then the epic faint after them when
+// the cell has room: both follow the title directly, never the cell's edge.
 func (m model) titleCell(it *domain.WorkItem, title string, titleW int, unread string) string {
 	room := titleW - lipgloss.Width(unread)
 	epic := ""
 	if e := it.Issue.Epic; e != "" && titleW >= 36 {
 		epicW := min(lipgloss.Width(e)+3, max(room/3, 8))
-		epic = stFaint.Render(ansi.Truncate(" "+m.g.Sep+" "+e, epicW, "…"))
+		epic = stFaint.Render(ansi.Truncate(" "+m.g.Sep+" "+e, epicW, m.g.Ell))
 		room -= lipgloss.Width(epic)
 	}
-	return pad(pad(ansi.Truncate(title, room, "…"), room)+epic+unread, titleW)
+	return pad(m.g, ansi.Truncate(title, room, m.g.Ell)+unread+epic, titleW)
 }
 
 func contains(s []string, v string) bool {
@@ -521,7 +522,7 @@ func (m model) rowBadge(it *domain.WorkItem) string {
 			p = stWarn.Render(m.g.Sync)
 		}
 	}
-	return pad(t, badgeCells-2) + " " + pad(p, 1)
+	return pad(m.g, t, badgeCells-2) + " " + pad(m.g, p, 1)
 }
 
 func mrStatus(g glyphs, mr *forge.MR) string {
@@ -564,7 +565,7 @@ func (m model) homeDetail(w int) string {
 func (m model) itemDetail(it *domain.WorkItem, w int) string {
 	g := m.g
 	var l []string
-	l = append(l, stBold.Render(ansi.Truncate(it.Ref.String()+"  "+it.Issue.Title, w, "…")))
+	l = append(l, stBold.Render(ansi.Truncate(it.Ref.String()+"  "+it.Issue.Title, w, m.g.Ell)))
 	var meta []string
 	for _, v := range []string{it.Type, strings.Join(it.Apps, "+")} {
 		if v != "" {
@@ -582,9 +583,9 @@ func (m model) itemDetail(it *domain.WorkItem, w int) string {
 	if it.Issue.Epic != "" {
 		meta = append(meta, "epic "+it.Issue.Epic)
 	}
-	l = append(l, stFaint.Render(ansi.Truncate(strings.Join(meta, " "+g.Sep+" "), w, "…")))
+	l = append(l, stFaint.Render(ansi.Truncate(strings.Join(meta, " "+g.Sep+" "), w, m.g.Ell)))
 	if it.Workflow != "" || it.WantWorkflow != "" {
-		lbl := "label " + orDash(it.Workflow)
+		lbl := "label " + orDash(m.g, it.Workflow)
 		if it.Drift {
 			l = append(l, stWarn.Render(g.Warn+" "+lbl+" "+g.Sep+" stage says "+it.WantWorkflow))
 		} else {
@@ -607,9 +608,7 @@ func (m model) itemDetail(it *domain.WorkItem, w int) string {
 	}
 	if d := strings.TrimSpace(it.Issue.Description); d != "" {
 		l = append(l, "")
-		for _, line := range strings.Split(lipgloss.Wrap(d, w, " "), "\n")[:min(8, strings.Count(lipgloss.Wrap(d, w, " "), "\n")+1)] {
-			l = append(l, stFaint.Render(line))
-		}
+		l = append(l, m.mdPreview(d, w, 8)...)
 	}
 	return strings.Join(l, "\n")
 }
@@ -630,13 +629,13 @@ func (m model) stationLines(it *domain.WorkItem, w int) []string {
 		case st == it.Stage:
 			glyph = line.Bold(true).Render(g.Train)
 		}
-		label := pad(name, 9)
+		label := pad(m.g, name, 9)
 		if st == it.Stage {
 			label = stBold.Render(label)
 		}
-		l = append(l, " "+glyph+"  "+label+" "+ansi.Truncate(evidence[i], w-14, "…"))
+		l = append(l, " "+glyph+"  "+label+" "+ansi.Truncate(evidence[i], w-14, m.g.Ell))
 		if i < len(domain.Stations)-1 {
-			conn := stFaint.Render("│")
+			conn := stFaint.Render(m.g.Thin)
 			if st < it.Stage || it.Stage == domain.StageDone {
 				conn = line.Render(g.Vertical)
 			}
@@ -652,7 +651,7 @@ func (m model) stationEvidence(it *domain.WorkItem) []string {
 	for _, a := range it.Issue.Assignees {
 		who = append(who, a.Username)
 	}
-	ev[domain.StageAssigned] = stFaint.Render(orDash(strings.Join(who, ", ")))
+	ev[domain.StageAssigned] = stFaint.Render(orDash(m.g, strings.Join(who, ", ")))
 	var kids []string
 	for _, c := range it.Children {
 		kids = append(kids, c.Ref.String())
@@ -694,8 +693,8 @@ func (m model) stationEvidence(it *domain.WorkItem) []string {
 func (m model) mrDetail(mr *forge.MR, w int) string {
 	gl := m.g
 	l := []string{
-		stBold.Render(ansi.Truncate(mr.Ref.String()+"  "+mr.Title, w, "…")),
-		stFaint.Render(ansi.Truncate(mr.Author.Username+" "+gl.Sep+" "+mr.SourceBranch+" → "+mr.TargetBranch, w, "…")),
+		stBold.Render(ansi.Truncate(mr.Ref.String()+"  "+mr.Title, w, m.g.Ell)),
+		stFaint.Render(ansi.Truncate(mr.Author.Username+" "+gl.Sep+" "+mr.SourceBranch+m.g.T(" → ")+mr.TargetBranch, w, m.g.Ell)),
 		"",
 		mrStatus(gl, mr),
 	}
@@ -706,17 +705,14 @@ func (m model) mrDetail(mr *forge.MR, w int) string {
 	l = append(l, stFaint.Render(fmt.Sprintf("%s %s %d unresolved %s %d resolved", approvals, gl.Sep, mr.Unresolved, gl.Sep, mr.Resolved)))
 	if d := strings.TrimSpace(mr.Description); d != "" {
 		l = append(l, "")
-		wrapped := strings.Split(lipgloss.Wrap(d, w, " "), "\n")
-		for _, line := range wrapped[:min(8, len(wrapped))] {
-			l = append(l, stFaint.Render(line))
-		}
+		l = append(l, m.mdPreview(d, w, 8)...)
 	}
 	return strings.Join(l, "\n")
 }
 
-func orDash(s string) string {
+func orDash(g glyphs, s string) string {
 	if s == "" {
-		return "–"
+		return g.T("–")
 	}
 	return s
 }

@@ -57,7 +57,8 @@ func TestNotesDialogWithoutNotesOrRecord(t *testing.T) {
 	e.want("no notes yet · press e to write some")
 	e.press("esc")
 
-	// An item that was never synced has no record: say so, and do not start an editor.
+	// An item the sync has not written a record for gets one from the cache:
+	// notes never wait for a sync.
 	e.m.results[0].Items = append(e.m.results[0].Items, e.item(12, "Never synced"))
 	e.m.rebuildHome("")
 	e.selectRow(trk(12).String())
@@ -66,11 +67,14 @@ func TestNotesDialogWithoutNotesOrRecord(t *testing.T) {
 	notesExec = func(*exec.Cmd, func(error) tea.Msg) tea.Cmd { called = true; return nil }
 	t.Cleanup(func() { notesExec = old })
 	e.open(model.openNotes)
-	e.want("no record for this item yet")
+	e.want("no notes yet · press e to write some")
+	e.wantNot("press U")
+	if _, err := records.New(e.app.RecordsDir).Read("sandbox-gitlab", trk(12)); err != nil {
+		t.Fatalf("opening the dialog did not make the record: %v", err)
+	}
 	e.press("e")
-	e.want("no record yet")
-	if called {
-		t.Error("an editor was started for an item without a record")
+	if !called {
+		t.Error("e did not open the editor on the record made from the cache")
 	}
 }
 

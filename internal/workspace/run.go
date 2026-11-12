@@ -242,7 +242,8 @@ func (m *Manager) spawn(in *Instance) (*exec.Cmd, <-chan struct{}, error) {
 		return nil, nil, err
 	}
 	defer logf.Close()
-	cmd := exec.Command("sh", "-c", in.Cmd)
+	argv := in.Devshell.Wrap([]string{"sh", "-c", in.Cmd})
+	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = in.Dir
 	cmd.Env = os.Environ()
 	for _, k := range slices.Sorted(maps.Keys(in.Env)) {

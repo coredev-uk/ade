@@ -44,7 +44,14 @@ func (c *Client) Capabilities(ctx context.Context, group string) (forge.Caps, er
 	}
 	caps.BlocksLinks = caps.Iterations || caps.ApprovalRules
 	if caps.Cadences, caps.Epics, err = c.probeGraphQL(ctx, group); err != nil {
-		return forge.Caps{}, err
+		if !graphqlMissing(err) {
+			return forge.Caps{}, err
+		}
+		// An instance without (a usable) GraphQL schema has no cadences and
+		// no Epic work item type: say so once and carry on.
+		c.markUnavailable(FeatureCadences)
+		c.markUnavailable(FeatureWorkItems)
+		caps.Cadences, caps.Epics = false, false
 	}
 	return caps, nil
 }

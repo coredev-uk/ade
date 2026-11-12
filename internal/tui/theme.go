@@ -2,11 +2,12 @@ package tui
 
 import (
 	"hash/fnv"
+	"strings"
 
 	"charm.land/lipgloss/v2"
 )
 
-// Interchange (see .impeccable/surfaces/internal-tui.md): the terminal's own
+// Interchange (see DESIGN.md): the terminal's own
 // ground and ink; colour only as line inks, state marks, and the train.
 
 var lineInks = []string{"#e0453a", "#3b7dd8", "#e8a33d", "#3fa66b", "#b05fd0", "#2bb3b3"}
@@ -43,8 +44,23 @@ type glyphs struct {
 	Selected, Sep, Rule                            string
 	OK, Warn, Bad, Info, Unread                    string
 	Up, Down, Dirty, Sync                          string
-	Thread                                         string // unresolved review threads on a row
+	Thread                                         string          // unresolved review threads on a row
+	Thin, Pane, Prompt, Cursor, Ell                string          // faint connector, pane separator, palette prompt, input cursor, ellipsis
+	Border                                         lipgloss.Border // dialogs and pop-ups
+	ASCII                                          bool
 }
+
+// T renders a literal of UI text in this glyph set: in ascii every
+// non-ASCII chrome rune becomes its ASCII stand-in. User and forge text never
+// goes through it.
+func (g glyphs) T(s string) string {
+	if !g.ASCII {
+		return s
+	}
+	return asciiRunes.Replace(s)
+}
+
+var asciiRunes = strings.NewReplacer("…", "...", "·", "-", "→", "->", "←", "<-", "–", "-", "›", ">", "▏", "|", "✉", "m", "✓", "+", "▲", "!", "✕", "x", "✎", "~", "⟳", "~")
 
 var unicodeGlyphs = glyphs{
 	Done: "●", Train: "◉", Interchange: "◎", Ahead: "○",
@@ -52,6 +68,7 @@ var unicodeGlyphs = glyphs{
 	Selected: "▸", Sep: "·", Rule: "─",
 	OK: "✓", Warn: "▲", Bad: "✕", Info: "●", Unread: "●",
 	Up: "↑", Down: "↓", Dirty: "✎", Sync: "⟳", Thread: "✉",
+	Thin: "│", Pane: " │ ", Prompt: "›", Cursor: "▏", Ell: "…", Border: lipgloss.RoundedBorder(),
 }
 
 var asciiGlyphs = glyphs{
@@ -60,6 +77,8 @@ var asciiGlyphs = glyphs{
 	Selected: ">", Sep: "-", Rule: "-",
 	OK: "+", Warn: "!", Bad: "x", Info: "*", Unread: "*",
 	Up: "^", Down: "v", Dirty: "~", Sync: "~", Thread: "m",
+	Thin: "|", Pane: " | ", Prompt: ">", Cursor: "|", Ell: "...", ASCII: true,
+	Border: lipgloss.Border{Top: "-", Bottom: "-", Left: "|", Right: "|", TopLeft: "+", TopRight: "+", BottomLeft: "+", BottomRight: "+"},
 }
 
 func glyphSet(name string) glyphs {

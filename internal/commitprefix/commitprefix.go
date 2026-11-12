@@ -22,6 +22,7 @@ import (
 const (
 	KeyParent = "ade.parent"       // the tracker issue's iid
 	KeyPrefix = "ade.commitPrefix" // the expanded commit prefix; absent when none is configured
+	KeyTarget = "ade.target"       // the MR's target branch; absent when unknown
 )
 
 // ForIssues expands the manifest's commit_prefix for an item whose tracker
@@ -77,10 +78,13 @@ func Owns(wi domain.WorkItem, ref forge.Ref) bool {
 
 // WriteWorktreeConfig records an item's worktree in its own git config
 // (extensions.worktreeConfig, so the values are per worktree, also in a bare
-// repo's worktrees): ade.parent is the tracker iid (when known, > 0) and
-// ade.commitPrefix the expanded prefix; an empty prefix removes a stale one.
+// repo's worktrees): ade.parent is the tracker iid (when known, > 0),
+// ade.commitPrefix the expanded prefix and ade.target the MR's target branch
+// (when known); an empty prefix or target removes a stale one. The prefix goes
+// on the MR's first commit only, which a hook finds out with
+// `git rev-list --count <ade.target>..HEAD`.
 // It is idempotent and cheap to call each time a workspace opens.
-func WriteWorktreeConfig(ctx context.Context, worktreeDir string, parent int, prefix string) error {
+func WriteWorktreeConfig(ctx context.Context, worktreeDir string, parent int, prefix, target string) error {
 	g := git.Client{}
 	common, err := g.Run(ctx, worktreeDir, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil {
@@ -92,6 +96,11 @@ func WriteWorktreeConfig(ctx context.Context, worktreeDir string, parent int, pr
 	}
 	if parent > 0 {
 		if err := setWorktree(ctx, g, worktreeDir, KeyParent, strconv.Itoa(parent)); err != nil {
+			return err
+		}
+	}
+	if target != "" {
+		if err := setWorktree(ctx, g, worktreeDir, KeyTarget, target); err != nil {
 			return err
 		}
 	}
@@ -144,9 +153,57 @@ func setWorktree(ctx context.Context, g git.Client, dir, key, value string) erro
 
 // Read is the commit prefix recorded for the worktree at dir, "" when none.
 func Read(ctx context.Context, dir string) string {
-	out, err := git.Client{}.Run(ctx, dir, "config", "--get", KeyPrefix)
+	return readKey(ctx, dir, KeyPrefix)
+}
+
+// ReadTarget is the MR target branch recorded for the worktree at dir, "" when
+// none is known.
+func ReadTarget(ctx context.Context, dir string) string {
+	return readKey(ctx, dir, KeyTarget)
+}
+
+func readKey(ctx context.Context, dir, key string) string {
+	out, err := git.Client{}.Run(ctx, dir, "config", "--get", key)
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(out)
+}
+
+// FirstCommit reports whether a commit made now in the worktree at dir would
+// be the MR's first one: the branch has no commits ahead of the MR target
+// (ade.target; the local branch, else origin/<target>). Only that commit
+// carries the prefix. With no recorded or resolvable target it is true, so the
+// prefix is applied rather than lost.
+func FirstCommit(ctx context.Context, dir string) bool {
+	target := ReadTarget(ctx, dir)
+	if target == "" {
+		return true
+	}
+	g := git.Client{}
+	for _, ref := range []string{target, "origin/" + target} {
+		out, err := g.Run(ctx, dir, "rev-list", "--count", ref+"..HEAD")
+		if err != nil {
+			continue
+		}
+		return strings.TrimSpace(out) == "0"
+	}
+	return true
+}
+
+// TargetBranch is the MR target branch of wi's MR whose source is the branch
+// checked out in the worktree at dir, for the repo at forge path repoPath.
+// "" when there is no such MR.
+func TargetBranch(ctx context.Context, wi domain.WorkItem, repoPath, dir string) string {
+	out, err := git.Client{}.Run(ctx, dir, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return ""
+	}
+	branch := strings.TrimSpace(out)
+	for _, mr := range wi.MRs {
+		if mr.Ref.Project == repoPath && mr.SourceBranch == branch {
+			return mr.TargetBranch
+		}
+	}
+	return ""
 }

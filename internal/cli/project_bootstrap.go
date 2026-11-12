@@ -440,8 +440,25 @@ func printBootstrapNext(w io.Writer, fcfg config.Forge, d *bootstrap.Draft, r bo
 		fmt.Fprintf(w, "       ade project bootstrap --forge %s --group %s%s --publish\n", r.Forge, f.group, repeatedFlags(f))
 	}
 	step("teammates, once it is on %s:", d.Tracker.Path)
-	fmt.Fprintf(w, "       ade init --yes --forge %s --token-env %s --project '%s'\n",
-		fcfg.Kind, onboard.DefaultTokenEnv(fcfg.Kind), gitSource(fcfg, d.Tracker.Path))
+	fmt.Fprintf(w, "       ade init --yes --forge %s%s --token-env %s --project '%s'\n",
+		fcfg.Kind, selfHostedFlags(fcfg), onboard.DefaultTokenEnv(fcfg.Kind), gitSource(fcfg, d.Tracker.Path))
+}
+
+// selfHostedFlags are the `ade init` flags a teammate needs for a self-hosted
+// forge: its address (with any path prefix), the CA bundle and the ssh port.
+// The CA path is the author's own, so it is named, not copied.
+func selfHostedFlags(f config.Forge) string {
+	var s string
+	if f.URL != "" && strings.TrimRight(f.URL, "/") != onboard.PublicURL(f.Kind) {
+		s += " --host " + shellQuote(f.URL)
+	}
+	if f.CAFile != "" {
+		s += " --ca-file <path to your CA bundle>"
+	}
+	if f.SSHPort != 0 && f.SSHPort != 22 {
+		s += fmt.Sprintf(" --ssh-port %d", f.SSHPort)
+	}
+	return s
 }
 
 // repeatedFlags renders the flags that must be given again for the same result.

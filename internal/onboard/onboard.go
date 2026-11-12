@@ -30,13 +30,18 @@ type Answers struct {
 	TokenEnv    string
 	TokenCmd    string
 	GitProtocol string // ssh | https
+	CAFile      string // PEM bundle of a self-hosted forge's CA (absolute path)
+	SSHPort     int    // ssh port when not 22
 	Root        string // paths.root
+	// AI, when set, adds a gateway profile and makes it the active one.
+	AI *AIGateway
 }
 
 // Forge is the config entry the answers describe.
 func (a Answers) Forge() config.Forge {
 	return config.Forge{
 		Kind: a.Kind, URL: a.URL, TokenEnv: a.TokenEnv, TokenCmd: a.TokenCmd, GitProtocol: a.GitProtocol,
+		CAFile: a.CAFile, SSHPort: a.SSHPort,
 	}
 }
 
@@ -53,6 +58,13 @@ func (a Answers) Validate() error {
 		return fmt.Errorf("git protocol %q: want ssh or https", a.GitProtocol)
 	case a.Root == "":
 		return errors.New("projects root is empty")
+	case a.SSHPort < 0 || a.SSHPort > 65535:
+		return fmt.Errorf("ssh port %d is not a port", a.SSHPort)
+	case a.CAFile != "" && !filepath.IsAbs(a.CAFile):
+		return fmt.Errorf("ca file %q must be an absolute path", a.CAFile)
+	}
+	if a.AI != nil {
+		return a.AI.Validate()
 	}
 	return nil
 }
@@ -150,6 +162,7 @@ type fileConfig struct {
 	User   fileUser             `toml:"user"`
 	Forges map[string]fileForge `toml:"forges"`
 	Paths  filePaths            `toml:"paths"`
+	AI     *fileAI              `toml:"ai,omitempty"`
 }
 
 type fileUser struct {
@@ -162,6 +175,8 @@ type fileForge struct {
 	TokenEnv    string `toml:"token_env,omitempty"`
 	TokenCmd    string `toml:"token_cmd,omitempty"`
 	GitProtocol string `toml:"git_protocol"`
+	CAFile      string `toml:"ca_file,omitempty"`
+	SSHPort     int    `toml:"ssh_port,omitempty"`
 }
 
 type filePaths struct {
@@ -186,8 +201,10 @@ func Render(a Answers) ([]byte, error) {
 		User: fileUser{Handle: a.Handle},
 		Forges: map[string]fileForge{a.ForgeName: {
 			Kind: a.Kind, URL: a.URL, TokenEnv: a.TokenEnv, TokenCmd: a.TokenCmd, GitProtocol: a.GitProtocol,
+			CAFile: a.CAFile, SSHPort: a.SSHPort,
 		}},
 		Paths: filePaths{Root: a.Root},
+		AI:    a.AI.file(),
 	})
 	return buf.Bytes(), err
 }

@@ -99,14 +99,30 @@ func Reason(err error) string {
 // longest matching insteadOf prefix, so this beats a user rule such as
 // "https://host/ -> ssh://git@host/" that would silently bypass the token.
 func TokenEnv(remoteURL, user, token string) []string {
-	cred := base64.StdEncoding.EncodeToString([]byte(user + ":" + token))
-	return []string{
-		"GIT_CONFIG_COUNT=2",
-		"GIT_CONFIG_KEY_0=http.extraHeader",
-		"GIT_CONFIG_VALUE_0=Authorization: Basic " + cred,
-		"GIT_CONFIG_KEY_1=url." + remoteURL + ".insteadOf",
-		"GIT_CONFIG_VALUE_1=" + remoteURL,
+	return RemoteEnv(remoteURL, user, token, nil)
+}
+
+// RemoteEnv is TokenEnv plus extra git config pairs (key, value), such as the
+// scoped http.sslCAInfo of a self-hosted forge (see package tlsca). An empty
+// token adds no credentials and no insteadOf pin; only extra applies.
+func RemoteEnv(remoteURL, user, token string, extra [][2]string) []string {
+	var kv [][2]string
+	if token != "" {
+		cred := base64.StdEncoding.EncodeToString([]byte(user + ":" + token))
+		kv = append(kv,
+			[2]string{"http.extraHeader", "Authorization: Basic " + cred},
+			[2]string{"url." + remoteURL + ".insteadOf", remoteURL})
 	}
+	kv = append(kv, extra...)
+	if len(kv) == 0 {
+		return nil
+	}
+	env := []string{"GIT_CONFIG_COUNT=" + strconv.Itoa(len(kv))}
+	for i, p := range kv {
+		n := strconv.Itoa(i)
+		env = append(env, "GIT_CONFIG_KEY_"+n+"="+p[0], "GIT_CONFIG_VALUE_"+n+"="+p[1])
+	}
+	return env
 }
 
 // Run executes git in dir (empty means the process cwd) and returns stdout.

@@ -112,3 +112,68 @@ func TestProfileModelFallsBackAndSecretsResolve(t *testing.T) {
 		t.Fatal("ai.mode off")
 	}
 }
+
+func TestGatewayProfileValidation(t *testing.T) {
+	ok := loadConfig(t, `
+[ai]
+profile = "gw"
+[ai.profiles.gw]
+driver = "openai-compat"
+base_url = "https://litellm.example.internal/v1"
+key_env = "ADE_TEST_LLM_KEY"
+timeout = "90s"
+extra_headers = { "x-litellm-tags" = "ade" }
+models = { explain = "big", classify = "small-classifier" }
+billing = { source = "litellm" }
+`)
+	if issues := ok.Validate(); len(issues) != 0 {
+		t.Fatalf("issues: %v", issues)
+	}
+	p := ok.AI.Profiles["gw"]
+	if m, _ := p.Model("classify"); m != "small-classifier" || p.Timeout.Seconds() != 90 || p.ExtraHeaders["x-litellm-tags"] != "ade" {
+		t.Fatalf("%+v", p)
+	}
+	if m, from, _ := p.ModelFrom("draft"); m != "big" || from != "explain" {
+		t.Fatalf("draft = %q from %q", m, from)
+	}
+	delete(p.Models, "classify")
+	if m, from, _ := p.ModelFrom("classify"); m != "big" || from != "explain" {
+		t.Fatalf("classify must fall back to explain, got %q from %q", m, from)
+	}
+
+	for name, tc := range map[string]struct{ toml, path string }{
+		"litellm billing on the wrong driver": {`driver = "anthropic"
+key_env = "K"
+billing = { source = "litellm" }`, "ai.profiles.gw.billing.source"},
+		"litellm without a key": {`driver = "openai-compat"
+base_url = "https://x.example/v1"
+billing = { source = "litellm" }`, "ai.profiles.gw"},
+		"authorization header": {`driver = "openai-compat"
+base_url = "https://x.example/v1"
+key_env = "K"
+extra_headers = { Authorization = "Bearer x" }`, "ai.profiles.gw.extra_headers.Authorization"},
+		"bad header name": {`driver = "openai-compat"
+base_url = "https://x.example/v1"
+key_env = "K"
+extra_headers = { "bad name" = "x" }`, "ai.profiles.gw.extra_headers.bad name"},
+		"empty model": {`driver = "openai-compat"
+base_url = "https://x.example/v1"
+key_env = "K"
+models = { classify = " " }`, "ai.profiles.gw.models.classify"},
+		"unknown role": {`driver = "openai-compat"
+base_url = "https://x.example/v1"
+key_env = "K"
+models = { triage = "m" }`, "ai.profiles.gw.models.triage"},
+	} {
+		cfg := loadConfig(t, "[ai.profiles.gw]\n"+tc.toml+"\n")
+		found := false
+		for _, is := range cfg.Validate() {
+			if is.Path == tc.path && is.Severity == SeverityError {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s: no error at %s in %v", name, tc.path, cfg.Validate())
+		}
+	}
+}

@@ -110,10 +110,10 @@ func TestCourtWordCarriesGlyph(t *testing.T) {
 }
 
 func TestTruncLeftKeepsTail(t *testing.T) {
-	if got := truncLeft("/home/dev/code/ade/projects/demo-gl/api/main", 20); got != "…/demo-gl/api/main" {
+	if got := truncLeft(unicodeGlyphs, "/home/dev/code/ade/projects/demo-gl/api/main", 20); got != "…/demo-gl/api/main" {
 		t.Errorf("truncLeft = %q", got)
 	}
-	if got := truncLeft("/a/b", 20); got != "/a/b" {
+	if got := truncLeft(unicodeGlyphs, "/a/b", 20); got != "/a/b" {
 		t.Errorf("short path changed: %q", got)
 	}
 }

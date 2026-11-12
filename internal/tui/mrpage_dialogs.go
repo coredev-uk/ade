@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"charm.land/bubbles/v2/viewport"
+
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -87,8 +89,9 @@ type mrModal struct {
 	prefix               string // merge: the commit prefix that applies to the item, "" for none
 
 	job        forge.Job // log viewer
-	log        []string
-	logTop     int
+	logView    viewport.Model
+	logLines   int  // lines in the log
+	logTail    bool // open on the last lines: set until the first draw knows the height
 	logLoading bool
 	logErr     error
 }
@@ -100,8 +103,13 @@ func (md *mrModal) setLog(msg mrResultMsg) {
 		return
 	}
 	jl, _ := msg.out.(jobLog)
-	md.log = strings.Split(strings.TrimRight(strings.ReplaceAll(jl.text, "\r", ""), "\n"), "\n")
-	md.logTop = 1 << 30 // clamped when drawn: opens on the tail
+	lines := strings.Split(strings.TrimRight(strings.ReplaceAll(jl.text, "\r", ""), "\n"), "\n")
+	for i, ln := range lines {
+		lines[i] = stripCtl(ln)
+	}
+	md.logView = viewport.New()
+	md.logView.SetContentLines(lines)
+	md.logLines, md.logTail = len(lines), true
 }
 
 // --- keys ----------------------------------------------------------------------
@@ -161,17 +169,21 @@ func (m *model) modalKey(k tea.KeyPressMsg) tea.Cmd {
 	case modalLog:
 		switch ks {
 		case "j", "down":
-			md.logTop++
+			md.logView.ScrollDown(1)
 		case "k", "up":
-			md.logTop = max(0, min(md.logTop, len(md.log))-1)
+			md.logView.ScrollUp(1)
 		case "g", "home":
-			md.logTop = 0
+			md.logView.GotoTop()
 		case "G", "end":
-			md.logTop = 1 << 30
+			md.logView.GotoBottom()
 		case "pgdown", "ctrl+d", "space":
-			md.logTop += 10
+			md.logView.ScrollDown(10)
 		case "pgup", "ctrl+u":
-			md.logTop = max(0, min(md.logTop, len(md.log))-10)
+			md.logView.ScrollUp(10)
+		case "right", "l":
+			md.logView.ScrollRight(8)
+		case "left", "h":
+			md.logView.ScrollLeft(8)
 		}
 	}
 	return nil
@@ -219,7 +231,7 @@ func (m *model) mergeKey(md *mrModal, ks string) tea.Cmd {
 // the full width, so no cut fragments of the page show around it.
 func (m model) dialog(title string, lines []string, w int) string {
 	body := append([]string{stBold.Render(title), ""}, lines...)
-	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(colRule)).
+	return lipgloss.NewStyle().Border(m.g.Border).BorderForeground(lipgloss.Color(colRule)).
 		Padding(0, 1).Width(w).Render(strings.Join(body, "\n"))
 }
 
@@ -237,24 +249,24 @@ func (m model) mrOverlay(w, h int) string {
 	editorRows := 5
 	switch md.kind {
 	case modalReply:
-		title = "Reply · " + p.data.ref.String()
+		title = m.g.T("Reply · ") + p.data.ref.String()
 		for _, t := range p.data.threadList() {
 			if t.d.ID == md.thread {
-				l = append(l, stFaint.Render(m.g.Vertical)+" "+stFaint.Render(ansi.Truncate(t.where()+" · "+t.first().Author.Username+`: "`+oneLine(t.first().Body)+`"`, inner-3, "…")), "")
+				l = append(l, stFaint.Render(m.g.Vertical)+" "+stFaint.Render(ansi.Truncate(t.where()+m.g.T(" · ")+t.first().Author.Username+`: "`+oneLine(t.first().Body)+`"`, inner-3, m.g.Ell)), "")
 				break
 			}
 		}
 		if md.aiNote != "" {
-			l = append(l, stFaint.Render(ansi.Truncate(md.aiNote, inner, "…")))
+			l = append(l, stFaint.Render(ansi.Wrap(md.aiNote, inner, "")))
 		}
 		l = append(l, md.ed.view(inner, editorRows, "your reply")...)
 	case modalComment, modalEditDraft:
-		title = "Comment · " + md.target.String()
+		title = m.g.T("Comment · ") + md.target.String()
 		if md.kind == modalEditDraft {
 			title = "Edit comment"
 		}
 		if md.target.text != "" {
-			l = append(l, stFaint.Render(m.g.Vertical)+" "+stFaint.Render(ansi.Truncate(md.target.text, inner-3, "…")), "")
+			l = append(l, stFaint.Render(m.g.Vertical)+" "+stFaint.Render(ansi.Truncate(md.target.text, inner-3, m.g.Ell)), "")
 		}
 		l = append(l, m.severityChips(md.sev, inner), "")
 		l = append(l, md.ed.view(inner, editorRows, "one point, problem first, at most two sentences")...)
@@ -289,7 +301,7 @@ func (m model) severityChips(sel, w int) string {
 			parts = append(parts, stFaint.Render(" "+word+" "))
 		}
 	}
-	return ansi.Truncate(strings.Join(parts, " "), w, "…")
+	return ansi.Truncate(strings.Join(parts, " "), w, m.g.Ell)
 }
 
 func (m model) modalHint(md *mrModal) string {
@@ -301,7 +313,7 @@ func (m model) modalHint(md *mrModal) string {
 	case modalComment:
 		return keys("enter", "add draft", "tab", "severity", "alt+enter", "newline", "esc", "cancel")
 	case modalEditDraft:
-		return keys("enter", "save", "tab", "severity", "esc", "cancel")
+		return keys("enter", "save", "tab", "severity", "alt+enter", "newline", "esc", "cancel")
 	case modalDeny:
 		return keys("enter", "deny", "esc", "cancel")
 	case modalSubmit:
@@ -312,7 +324,7 @@ func (m model) modalHint(md *mrModal) string {
 		}
 		return keys("enter", "merge", "s", "squash", "d", "delete branch", "w", "when CI passes", "esc", "cancel")
 	}
-	return keys("j/k", "scroll", "g/G", "top/bottom", "esc", "close")
+	return keys("j/k", "scroll", "h/l", "sideways", "g/G", "top/bottom", "esc", "close")
 }
 
 func checkbox(g glyphs, on bool, label string) string {
@@ -357,15 +369,15 @@ func (m model) submitDialog(md *mrModal, inner int) (string, []string) {
 	}
 	l := []string{v + stBold.Render(fmt.Sprintf("%d %s", n, plural(n, "comment"))) + " " + goes + " out as one batch: one notification for the author"}
 	if pending > 0 {
-		l = append(l, v+stWarn.Render(fmt.Sprintf("%s %d agent %s still pending", m.g.Warn, pending, plural(pending, "draft")))+stFaint.Render(" · they stay drafts until triaged"))
+		l = append(l, v+stWarn.Render(fmt.Sprintf("%s %d agent %s still pending", m.g.Warn, pending, plural(pending, "draft")))+stFaint.Render(m.g.T(" · they stay drafts until triaged")))
 	}
 	if denied > 0 {
-		l = append(l, v+stFaint.Render(fmt.Sprintf("%d denied · never posted", denied)))
+		l = append(l, v+stFaint.Render(fmt.Sprintf(m.g.T("%d denied · never posted"), denied)))
 	}
 	l = append(l, "", stFaint.Render("Summary (optional)"))
 	l = append(l, md.ed.view(inner, 4, "an overall note, posted with the batch")...)
 	l = append(l, "", checkbox(m.g, md.approve, "also approve "+shortHead(d.mr.HeadSHA)))
-	return "Submit review · " + d.ref.String(), l
+	return m.g.T("Submit review · ") + d.ref.String(), l
 }
 
 func shortHead(sha string) string {
@@ -380,10 +392,10 @@ func (m model) mergeDialog(md *mrModal, inner int) (string, []string) {
 	mr := d.mr
 	v := mergeVerdict(mr)
 	vl := stFaint.Render(m.g.Vertical) + " "
-	l := []string{vl + stBold.Render(mr.SourceBranch) + stFaint.Render(" → ") + stBold.Render(mr.TargetBranch)}
+	l := []string{vl + stBold.Render(mr.SourceBranch) + stFaint.Render(m.g.T(" → ")) + stBold.Render(mr.TargetBranch)}
 	switch {
 	case v.ok:
-		l = append(l, vl+stOK.Render(m.g.OK+" mergeable")+stFaint.Render(" · head "+shortHead(mr.HeadSHA)+" is what you reviewed"))
+		l = append(l, vl+stOK.Render(m.g.OK+" mergeable")+stFaint.Render(m.g.T(" · head ")+shortHead(mr.HeadSHA)+" is what you reviewed"))
 	case v.autoOK:
 		l = append(l, vl+stWarn.Render(m.g.Warn+" not mergeable yet: "+v.why))
 	default:
@@ -392,38 +404,40 @@ func (m model) mergeDialog(md *mrModal, inner int) (string, []string) {
 	if mr.Unresolved > 0 {
 		l = append(l, vl+stFaint.Render(fmt.Sprintf("%d unresolved %s", mr.Unresolved, plural(mr.Unresolved, "thread"))))
 	}
-	l = append(l, vl+stFaint.Render(approvalsText(mr)+" · "+ciText(m.g, mr.Pipeline)))
+	l = append(l, vl+stFaint.Render(approvalsText(mr)+m.g.T(" · ")+ciText(m.g, mr.Pipeline)))
 	if v.ok || v.autoOK {
 		l = append(l, "",
 			checkbox(m.g, md.squash, "s  squash commits"),
 			checkbox(m.g, md.remove, "d  delete the source branch"),
 			checkbox(m.g, md.auto, "w  merge when the pipeline succeeds"))
-		if md.prefix != "" {
-			l = append(l, "", vl+stFaint.Render(ansi.Truncate("commit: "+commitmsg.Apply(md.prefix, mr.Title), max(10, inner-2), "…")))
+		if md.prefix != "" && md.squash {
+			l = append(l, "", vl+stFaint.Render(ansi.Truncate("squash commit: "+commitmsg.Apply(md.prefix, mr.Title), max(10, inner-2), m.g.Ell)))
 		}
 	}
-	return "Merge · " + d.ref.String() + " · " + ansi.Truncate(mr.Title, max(10, inner-20), "…"), l
+	return m.g.T("Merge · ") + d.ref.String() + m.g.T(" · ") + ansi.Truncate(mr.Title, max(10, inner-20), m.g.Ell), l
 }
 
 func (m model) logDialog(md *mrModal, inner, h int) (string, []string) {
-	title := "Job log · " + md.job.Name
+	title := m.g.T("Job log · ") + md.job.Name
 	rows := max(5, h-12)
 	switch {
 	case md.logLoading:
-		return title, []string{stFaint.Render(spinnerFrame(m.g, m.mr.spin) + " reading the log tail…")}
+		return title, []string{stFaint.Render(spinnerFrame(m.g, m.mr.spin) + m.g.T(" reading the log tail…"))}
 	case md.logErr != nil:
 		return title, []string{stBad.Render(m.g.Bad + " " + shortCause(md.logErr))}
-	case len(md.log) == 0:
+	case md.logLines == 0:
 		return title, []string{stFaint.Render("The job has no log.")}
 	}
-	top := clamp(md.logTop, 0, max(0, len(md.log)-rows))
-	md.logTop = top
-	var l []string
-	for _, ln := range md.log[top:min(len(md.log), top+rows)] {
-		l = append(l, ansi.Truncate(stripCtl(ln), inner, "…"))
+	md.logView.SetWidth(inner)
+	rows = min(rows, md.logLines) // a short log gets a short dialog
+	md.logView.SetHeight(rows)
+	if md.logTail {
+		md.logView.GotoBottom()
+		md.logTail = false
 	}
-	guide := fmt.Sprintf("%d-%d of %d lines · last %d KiB of the log", top+1, min(len(md.log), top+rows), len(md.log), logTail>>10)
-	return title + stFaint.Render(" · "+guide), l
+	top := md.logView.YOffset()
+	guide := fmt.Sprintf(m.g.T("%d-%d of %d lines · last %d KiB of the log"), top+1, min(md.logLines, top+rows), md.logLines, logTail>>10)
+	return title + stFaint.Render(m.g.T(" · ")+guide), strings.Split(md.logView.View(), "\n")
 }
 
 // stripCtl drops ANSI colour from CI output: the log is shown in ADE's own ink.
@@ -432,7 +446,7 @@ func stripCtl(s string) string { return ansi.Strip(s) }
 // spinnerFrame is the progress mark: braille dots, or | / - \ in the ascii
 // glyph set.
 func spinnerFrame(g glyphs, n int) string {
-	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	frames := []string{g.T("⠋"), g.T("⠙"), g.T("⠹"), g.T("⠸"), g.T("⠼"), g.T("⠴"), g.T("⠦"), g.T("⠧"), g.T("⠇"), g.T("⠏")}
 	if g.Selected == ">" {
 		frames = []string{"|", "/", "-", "\\"}
 	}

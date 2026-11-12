@@ -13,6 +13,7 @@ import (
 	"github.com/coredev-uk/ade/internal/audit"
 	"github.com/coredev-uk/ade/internal/billing"
 	"github.com/coredev-uk/ade/internal/budget"
+	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/ledger"
 )
 
@@ -149,7 +150,7 @@ func (m model) budgetHeaderLeft() string {
 func (m model) budgetFooter(w int) string {
 	r := "refresh providers"
 	if m.bud.refreshing {
-		r = "refreshing…"
+		r = m.g.T("refreshing…")
 	}
 	if w < twoPaneMinW {
 		if m.showDetail {
@@ -169,17 +170,17 @@ func (m model) budgetBody(w, h int) string {
 		if m.bud.err != nil {
 			return toolError(g, "could not read the budget", m.bud.err, "r tries again", w, h)
 		}
-		return fit(" "+stFaint.Render("reading the ledger…"), w, h)
+		return fit(m.g, " "+stFaint.Render(m.g.T("reading the ledger…")), w, h)
 	}
 	if w < twoPaneMinW {
 		if m.showDetail {
-			return fit(scrollDetail(g, m.budgetDetail(w-2), m.bud.dscroll, h), w, h)
+			return fit(m.g, scrollDetail(g, m.budgetDetail(w-2), m.bud.dscroll, h), w, h)
 		}
 		return m.budgetList(w, h)
 	}
 	listW := w * 64 / 100
-	right := fit(scrollDetail(g, m.budgetDetail(w-listW-4), m.bud.dscroll, h), w-listW-3, h) // one cell of right margin
-	return columns(stRule.Render(" │ "), h, m.budgetList(listW, h), right)
+	right := fit(m.g, scrollDetail(g, m.budgetDetail(w-listW-4), m.bud.dscroll, h), w-listW-3, h) // one cell of right margin
+	return columns(stRule.Render(m.g.Pane), h, m.budgetList(listW, h), right)
 }
 
 // budgetStatus is the one line above the caps: whether the figures came from
@@ -327,11 +328,11 @@ func (m model) budgetList(w, h int) string {
 		add(bkProfile, i, func(lead string, sel bool) string {
 			station, active := stFaint.Render(g.Ahead), strings.Repeat(" ", 7)
 			if p.Active {
-				station, active = stBold.Render(g.Train), stBold.Render(pad("active", 7))
+				station, active = stBold.Render(g.Train), stBold.Render(pad(m.g, "active", 7))
 			}
-			head := lead + station + " " + label(pad(p.Name, nameW), sel) + " " + active + " "
+			head := lead + station + " " + label(pad(m.g, p.Name, nameW), sel) + " " + active + " "
 			if w >= 90 { // the driver is in the details when the list is narrow
-				head += stFaint.Render(pad(p.Driver, driverW)) + " "
+				head += stFaint.Render(pad(m.g, p.Driver, driverW)) + " "
 			}
 			return head + m.providerFigure(p, w-lipgloss.Width(head))
 		})
@@ -362,7 +363,7 @@ func (m model) budgetList(w, h int) string {
 				case d.Calls == 0:
 					note = stFaint.Render("  no calls")
 				}
-				return lead + label(pad(fmtDay(d.Key), 10), sel) + "  " + spendBar(g, d.CostUSD, maxDay, 14) + "  " + padLeft(usd(d.CostUSD), 8) + note
+				return lead + label(pad(m.g, fmtDay(d.Key), 10), sel) + "  " + spendBar(g, d.CostUSD, maxDay, 14) + "  " + padLeft(usd(d.CostUSD), 8) + note
 			})
 		}
 		out = append(out, "", guideRule(g, "By feature", []string{"last 30 days", countWord(rep.Calls, "call"), fmt.Sprintf("%d cache %s", rep.CacheHits, plural(rep.CacheHits, "hit"))}, w))
@@ -405,7 +406,7 @@ func (m model) budgetList(w, h int) string {
 	}
 	for i, r := range rep.Rates {
 		add(bkReview, i, func(lead string, sel bool) string {
-			return lead + label(pad(r.Profile, rw), sel) + " " + m.reviewSummary(r)
+			return lead + label(pad(m.g, r.Profile, rw), sel) + " " + m.reviewSummary(r)
 		})
 	}
 
@@ -413,7 +414,7 @@ func (m model) budgetList(w, h int) string {
 	if selLine >= h-1 {
 		top = selLine - h + 2
 	}
-	return fit(strings.Join(out[min(top, len(out)):], "\n"), w, h)
+	return fit(m.g, strings.Join(out[min(top, len(out)):], "\n"), w, h)
 }
 
 func padLeft(s string, n int) string {
@@ -441,7 +442,7 @@ func (m model) bucketRows(add func(budKind, int, func(string, bool) string), lab
 			if b.CacheHits > 0 {
 				calls += g.sep() + fmt.Sprintf("%d cached", b.CacheHits)
 			}
-			return lead + label(pad(name(b), nameW), sel) + "  " + spendBar(g, b.CostUSD, maxCost, 12) + "  " + padLeft(usd(b.CostUSD), 8) + "  " + stFaint.Render(calls)
+			return lead + label(pad(m.g, name(b), nameW), sel) + "  " + spendBar(g, b.CostUSD, maxCost, 12) + "  " + padLeft(usd(b.CostUSD), 8) + "  " + stFaint.Render(calls)
 		})
 	}
 }
@@ -497,7 +498,7 @@ func (m model) capWords(c budget.Cap) string {
 // the state in words.
 func (m model) capRow(c budget.Cap, label func(string, bool) string, sel bool, w int) string {
 	g := m.g
-	head := label(pad(c.Period, 7), sel)
+	head := label(pad(m.g, c.Period, 7), sel)
 	switch capStateOf(c) {
 	case capNoSprint:
 		if c.LimitUSD > 0 {
@@ -552,7 +553,7 @@ func (m model) providerFigure(p budget.ProfileView, w int) string {
 			s += stFaint.Render(g.sep()) + stWarn.Render(g.Warn+" stale")
 		}
 	}
-	return ansi.Truncate(s, max(w, 1), "…")
+	return ansi.Truncate(s, max(w, 1), m.g.Ell)
 }
 
 // figureText is "gateway $0.0080 of $0.01 · resets 12 Nov". A soft limit
@@ -620,7 +621,7 @@ func (m model) budgetDetail(w int) []string {
 	}
 	r := rows[clamp(m.bud.sel, 0, len(rows)-1)]
 	g := m.g
-	kv := func(k, v string) string { return stFaint.Render(pad(k, 10)) + v }
+	kv := func(k, v string) string { return stFaint.Render(pad(m.g, k, 10)) + v }
 	prose := func(l []string, s string, style lipgloss.Style) []string {
 		for _, line := range wrap(s, w-1) {
 			l = append(l, style.Render(line))
@@ -694,7 +695,7 @@ func (m model) budgetDetail(w int) []string {
 		l = prose(l, "Rates are shares of the drafts you triaged. A draft deleted unsent counts as denied.", stFaint)
 	}
 	for i, s := range l {
-		l[i] = ansi.Truncate(s, w, "…")
+		l[i] = ansi.Truncate(s, w, m.g.Ell)
 	}
 	return l
 }
@@ -707,7 +708,7 @@ func (m model) profileDetail(p budget.ProfileView, w int, kv func(k, v string) s
 		kind = "active " + g.Sep + " driver " + p.Driver
 	}
 	l := []string{title, stFaint.Render(kind), ""}
-	roles := []string{"explain", "draft", "plan", "implement", "review"}
+	roles := slices.Clone(config.AIRoles)
 	for _, r := range slices.Sorted(maps.Keys(p.Models)) {
 		if !slices.Contains(roles, r) {
 			roles = append(roles, r)
@@ -773,7 +774,7 @@ func (m model) profileDetail(p budget.ProfileView, w int, kv func(k, v string) s
 			l = append(l, stFaint.Render(ln))
 		}
 		if p.Provider == nil {
-			l = append(l, "", stFaint.Render("no figure yet · r reads the provider again"))
+			l = append(l, "", stFaint.Render(m.g.T("no figure yet · r reads the provider again")))
 		} else {
 			l = append(l, "", stFaint.Render("r reads the provider again"))
 		}

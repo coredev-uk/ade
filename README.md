@@ -1,12 +1,15 @@
 # ADE
 
+[![CI](https://github.com/coredev-uk/ade/actions/workflows/ci.yml/badge.svg)](https://github.com/coredev-uk/ade/actions/workflows/ci.yml)
+
 An agentic development environment for the terminal. One dashboard, inside its own [zellij](https://zellij.dev) session, replaces the GitLab/GitHub web workflow for the projects you work on: issues, merge requests and reviews, sprints, per-ticket worktrees and dev tabs (editor or omp agent, lazygit, services), AI summaries and agent runs with hard budget caps, and notifications. It is one static Go binary; GitLab is the work forge, GitHub covers personal projects.
 
 The spec is [docs/PLAN.md](docs/PLAN.md) (phases 0–7 are implemented), product constraints are in [PRODUCT.md](PRODUCT.md), the visual system in [DESIGN.md](DESIGN.md).
 
 ## Getting started
 
-Full guide: **[docs/setup.md](docs/setup.md)** (installing Nix, tools, tokens, first run, troubleshooting).
+Full guide: **[docs/setup.md](docs/setup.md)** (installing Nix, tools, tokens, first run, troubleshooting). Unattended machine setup (Coder workspaces, new laptops): `ade setup`, see [Coder / CDE](docs/setup.md#coder--cde).
+Self-hosted GitLab (internal CA, path prefix, custom ssh port) and headless Coder workspaces: [docs/setup.md](docs/setup.md#self-hosted-gitlab); every dashboard action is also reachable by name from `:`.
 
 ```sh
 # 1. Nix with flakes (skip if you have it): https://nixos.org/download or https://determinate.systems/nix-installer
@@ -45,3 +48,5 @@ go test ./...
 golangci-lint run ./...
 nix flake check
 ```
+
+The dashboard and the overview pane have golden-file tests (`internal/tui/testdata/golden`, `internal/overview/testdata/golden`). After a deliberate UI change, `go test ./internal/tui ./internal/overview -run TestGolden -update` rewrites them; read the diff before committing.

@@ -80,7 +80,7 @@ func (m model) mrReview(w, h int) string {
 	if line == "" {
 		return m.mrReviewList(w, h)
 	}
-	return fit(line+"\n\n"+m.mrReviewList(w, h-2), w, h)
+	return fit(m.g, line+"\n\n"+m.mrReviewList(w, h-2), w, h)
 }
 
 func (m model) mrReviewList(w, h int) string {
@@ -88,7 +88,7 @@ func (m model) mrReviewList(w, h int) string {
 	d := p.data
 	g := m.g
 	if len(d.drafts) == 0 {
-		return fit("   "+stFaint.Render("No drafts yet. In the Diff tab, c comments on a line; agent review drafts land here to be accepted, edited, or denied.\n   Nothing reaches the forge until S submits."), w, h)
+		return fit(m.g, "   "+stFaint.Render("No drafts yet. In the Diff tab, c comments on a line; agent review drafts land here to be accepted, edited, or denied.\n   Nothing reaches the forge until S submits."), w, h)
 	}
 	list := triageOrder(d.drafts)
 	sel := clamp(p.revSel, 0, len(list)-1)
@@ -103,13 +103,13 @@ func (m model) mrReviewList(w, h int) string {
 			bar := "     " + stRule.Render(g.Vertical) + " "
 			for j, ln := range strings.Split(lipgloss.Wrap(dr.Body, min(100, max(10, w-9)), " "), "\n") {
 				if j == 6 {
-					out = append(out, bar+stFaint.Render("…"))
+					out = append(out, bar+stFaint.Render(m.g.Ell))
 					break
 				}
 				out = append(out, bar+ln)
 			}
 			if dr.Source == review.SourceAgent && dr.State == review.StatePending {
-				out = append(out, bar+stFaint.Render("y accept · e edit · n deny · s severity"))
+				out = append(out, bar+stFaint.Render(m.g.T("y accept · e edit · n deny · s severity")))
 			}
 			out = append(out, "")
 		}
@@ -118,7 +118,7 @@ func (m model) mrReviewList(w, h int) string {
 	if selLine >= h-1 {
 		top = selLine - h + 2
 	}
-	return fit(strings.Join(out[min(top, len(out)):], "\n"), w, h)
+	return fit(m.g, strings.Join(out[min(top, len(out)):], "\n"), w, h)
 }
 
 func (m model) draftRow(dr review.Draft, selected bool, w int) string {
@@ -127,19 +127,22 @@ func (m model) draftRow(dr review.Draft, selected bool, w int) string {
 	if selected {
 		mark = " " + stBold.Render(g.Selected) + " "
 	}
-	sev := pad(sevWord(dr.Severity), 10)
+	sev := pad(m.g, sevWord(dr.Severity), 10)
 	if dr.Severity == review.SeverityBlocking {
-		sev = stWarn.Render(pad(g.Warn+" blocking", 10))
+		sev = stWarn.Render(pad(m.g, g.Warn+" blocking", 10))
 	}
 
 	var who string
 	switch dr.State {
 	case review.StatePending:
-		who = stWarn.Bold(true).Render("agent · pending")
+		who = stWarn.Render(m.g.T("agent · pending"))
+		if selected {
+			who = stWarn.Bold(true).Render(m.g.T("agent · pending"))
+		}
 	case review.StateDenied:
-		who = stFaint.Render(string(dr.Source) + " · denied")
+		who = stFaint.Render(string(dr.Source) + m.g.T(" · denied"))
 	default:
-		who = string(dr.Source) + " · accepted"
+		who = string(dr.Source) + m.g.T(" · accepted")
 	}
 	// The who column is right-aligned so it ends on the section rule's right
 	// edge (the rule and the row are both w-1 cells).
@@ -150,11 +153,11 @@ func (m model) draftRow(dr review.Draft, selected bool, w int) string {
 	}
 	loc := draftLoc(dr)
 	room := w - 3 - 10 - 1 - 16 - 1 - 1
-	loc = ansi.Truncate(loc, max(8, room-lipgloss.Width(flag)), "…")
+	loc = ansi.Truncate(loc, max(8, room-lipgloss.Width(flag)), m.g.Ell)
 	if selected {
 		loc = stBold.Render(loc)
 	}
-	return mark + sev + " " + pad(loc+flag, max(8, room)) + " " + who
+	return mark + sev + " " + pad(m.g, loc+flag, max(8, room)) + " " + who
 }
 
 // --- adding, editing, triaging ---------------------------------------------------
@@ -195,7 +198,7 @@ func (m *model) beginComment() {
 	if l.Kind == '-' {
 		t.line, t.side = l.Old, review.SideOld
 	}
-	p.modal = &mrModal{kind: modalComment, target: t}
+	p.modal = &mrModal{kind: modalComment, target: t, ed: newEditor("")}
 }
 
 // commitComment saves the comment dialog as a new draft, or the edit dialog as
@@ -404,5 +407,5 @@ func (m *model) beginSubmit() {
 		return
 	}
 	d.refreshDrafts(m.reviews)
-	p.modal = &mrModal{kind: modalSubmit}
+	p.modal = &mrModal{kind: modalSubmit, ed: newEditor("")}
 }

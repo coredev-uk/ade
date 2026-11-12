@@ -110,7 +110,7 @@ func loadHistory(log *audit.Log, item string, limit int) tea.Cmd {
 // lines, the last line says how many were left out.
 func historyView(g glyphs, entries []audit.Entry, w, h int) string {
 	if len(entries) == 0 {
-		return fit(" "+stFaint.Render("No recorded actions on this item yet."), w, h)
+		return fit(g, " "+stFaint.Render("No recorded actions on this item yet."), w, h)
 	}
 	shown, more := entries, 0
 	if len(entries) > h && h > 1 {
@@ -121,13 +121,13 @@ func historyView(g glyphs, entries []audit.Entry, w, h int) string {
 	out := make([]string, 0, len(shown)+1)
 	for _, e := range shown {
 		mark, word := outcomeMark(g, e)
-		left := " " + stFaint.Render(pad(relAge(now, e.TS), 9)) + " " + mark + " " + strings.ReplaceAll(e.Action, ".", " ")
-		out = append(out, rightAligned(left, word+outcomeTail(g, e), w))
+		left := " " + stFaint.Render(pad(g, relAge(now, e.TS), 9)) + " " + mark + " " + strings.ReplaceAll(e.Action, ".", " ")
+		out = append(out, rightAligned(g, left, word+outcomeTail(g, e), w))
 	}
 	if more > 0 {
 		out = append(out, " "+stFaint.Render(fmt.Sprintf("+%d earlier %s ade audit shows them all", more, g.Sep)))
 	}
-	return fit(strings.Join(out, "\n"), w, h)
+	return fit(g, strings.Join(out, "\n"), w, h)
 }
 
 // --- log page ---------------------------------------------------------------------
@@ -179,17 +179,17 @@ func (m model) logBody(w, h int) string {
 		return toolError(g, "could not read the audit log", l.err, "r tries again", w, h)
 	}
 	if !l.loaded {
-		return fit(" "+stFaint.Render("reading the audit log…"), w, h)
+		return fit(m.g, " "+stFaint.Render(m.g.T("reading the audit log…")), w, h)
 	}
 	if w < twoPaneMinW {
 		if m.showDetail {
-			return fit(scrollDetail(g, m.logDetail(w-2), l.dscroll, h), w, h)
+			return fit(m.g, scrollDetail(g, m.logDetail(w-2), l.dscroll, h), w, h)
 		}
 		return m.logList(w, h)
 	}
 	listW := w * 64 / 100
-	right := fit(scrollDetail(g, m.logDetail(w-listW-4), l.dscroll, h), w-listW-3, h)
-	return columns(stRule.Render(" │ "), h, m.logList(listW, h), right)
+	right := fit(m.g, scrollDetail(g, m.logDetail(w-listW-4), l.dscroll, h), w-listW-3, h)
+	return columns(stRule.Render(m.g.Pane), h, m.logList(listW, h), right)
 }
 
 // toolBodyH is the height the body of a tool page gets: the screen less the
@@ -226,7 +226,7 @@ func toolError(g glyphs, title string, err error, fix string, w, h int) string {
 	for _, ln := range hardWrap(err.Error(), max(w-4, 10)) {
 		l = append(l, "   "+ln)
 	}
-	return fit(strings.Join(append(l, "", "   "+stFaint.Render(fix)), "\n"), w, h)
+	return fit(g, strings.Join(append(l, "", "   "+stFaint.Render(fix)), "\n"), w, h)
 }
 
 // logList draws the filtered entries, grouped under one rule per day, with
@@ -263,7 +263,7 @@ func (m model) logList(w, h int) string {
 			msg = "No entry matches the filters. c clears them."
 		}
 		out = append(out, "", "   "+stFaint.Render(msg))
-		return fit(strings.Join(out, "\n"), w, h)
+		return fit(m.g, strings.Join(out, "\n"), w, h)
 	}
 
 	cols := m.logCols(w)
@@ -292,7 +292,7 @@ func (m model) logList(w, h int) string {
 	if selLine >= h-1 {
 		top = selLine - h + 2
 	}
-	return fit(strings.Join(out[min(top, len(out)):], "\n"), w, h)
+	return fit(m.g, strings.Join(out[min(top, len(out)):], "\n"), w, h)
 }
 
 // logCols are the column widths of the list, fitted to its width.
@@ -333,18 +333,18 @@ func (m model) logCols(w int) logCols {
 func (m model) logRow(e audit.Entry, sel bool, c logCols) string {
 	g := m.g
 	lead := "   "
-	action := pad(e.Action, c.action)
+	action := pad(m.g, e.Action, c.action)
 	if sel {
 		lead = " " + stBold.Render(g.Selected) + " "
 		action = stBold.Render(action)
 	}
 	line := lead + stFaint.Render(e.TS.Local().Format("15:04")) + "  "
 	if c.actor > 0 {
-		line += stFaint.Render(pad(e.Actor, c.actor)) + " "
+		line += stFaint.Render(pad(m.g, e.Actor, c.actor)) + " "
 	}
 	mark, word := outcomeMark(g, e)
 	status := mark + " " + word + outcomeTail(g, e)
-	line += action + " " + pad(entrySubject(e), c.subject) + " " + strings.Repeat(" ", max(0, c.status-lipgloss.Width(status))) + status
+	line += action + " " + pad(m.g, entrySubject(e), c.subject) + " " + strings.Repeat(" ", max(0, c.status-lipgloss.Width(status))) + status
 	return line
 }
 
@@ -371,7 +371,7 @@ func (m model) logDetail(w int) []string {
 		for i, line := range hardWrap(v, w-keyW) {
 			key := strings.Repeat(" ", keyW)
 			if i == 0 {
-				key = stFaint.Render(pad(k, keyW))
+				key = stFaint.Render(pad(m.g, k, keyW))
 			}
 			l = append(l, key+style.Render(line))
 		}

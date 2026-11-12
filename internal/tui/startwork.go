@@ -69,6 +69,8 @@ type startDialog struct {
 	action  int // quick action under the cursor
 	result  *startwork.Result
 
+	body *editor // the MR body being edited in the dialog (E); nil otherwise
+
 	warn string // one line under the dialog body
 	err  error
 }
@@ -331,10 +333,14 @@ func (m model) swFinished(msg swDoneMsg) (model, tea.Cmd, bool) {
 		return m, nil, true
 	}
 	d.stage, d.result, d.err = swDone, &msg.res, msg.err
-	// What was created changes Home's rows: refresh both loops.
+	// What was created changes Home's row and the worktrees list: read this
+	// one item again and the worktrees' status, not every project.
 	var cmd tea.Cmd
-	if msg.res.Created() > 0 && m.svc != nil {
-		cmd = m.refresh()
+	if msg.res.Created() > 0 {
+		cmd = m.refreshItem(d.res.Manifest, d.res.Forge, d.ref)
+		if m.svc != nil {
+			cmd = tea.Batch(cmd, m.loadStatus())
+		}
 	}
 	return m, cmd, true
 }
@@ -348,6 +354,9 @@ func (m model) swKey(k tea.KeyPressMsg) (model, tea.Cmd) {
 	case swChoose:
 		return m.swChooseKey(d, ks)
 	case swConfirm:
+		if d.body != nil {
+			return m.swBodyKey(d, k)
+		}
 		return m.swConfirmKey(d, ks)
 	case swDone, swFailed:
 		if ks == "esc" || ks == "enter" || ks == "q" {
@@ -512,6 +521,8 @@ func (m model) swConfirmKey(d *startDialog, ks string) (model, tea.Cmd) {
 		return m.swNextTemplate(d)
 	case "e":
 		return m.swEdit(d)
+	case "E":
+		d.swEditHere()
 	case "enter":
 		if d.plan.Pending() == 0 && d.plan.Writes() == 0 && !d.hasLocalWork() {
 			m.sw = nil
@@ -553,6 +564,44 @@ func (m model) swNextTemplate(d *startDialog) (model, tea.Cmd) {
 	d.ch.MRBody, d.ch.StripActions = "", nil
 	d.stage = swPlanning
 	return m, m.swDiscover(d)
+}
+
+// swEditHere opens the previewed repo's MR body in the dialog's own editor (a
+// bubbles textarea), for a quick change that needs no editor of the host. The
+// body is kept with ctrl+s; esc throws the change away.
+func (d *startDialog) swEditHere() {
+	if d.preview >= len(d.plan.Targets) || d.ch.Mode != startwork.ModeDraft {
+		return
+	}
+	tp := d.plan.Targets[d.preview]
+	if tp.Found.MR != nil || !hasStep(d.plan, startwork.StepMR, tp.Target.Name) {
+		return // no MR step to carry a body
+	}
+	var child forge.Ref
+	if tp.Found.Child != nil {
+		child = tp.Found.Child.Ref
+	}
+	ed := newEditor(strings.TrimRight(tp.MRBody(child, d.plan.Item), "\n") + "\n")
+	d.body = &ed
+	d.warn = ""
+}
+
+// swBodyKey is a key in the inline MR body editor: enter is a newline here
+// (the body is prose and lists), ctrl+s keeps the text, esc drops it.
+func (m model) swBodyKey(d *startDialog, k tea.KeyPressMsg) (model, tea.Cmd) {
+	switch k.String() {
+	case "esc":
+		d.body = nil
+	case "ctrl+s":
+		d.ch.MRBody = d.body.String()
+		d.body = nil
+		d.warn = d.replan()
+	case "enter":
+		d.body.handle(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModAlt})
+	default:
+		d.body.handle(k)
+	}
+	return m, nil
 }
 
 // swEdit opens the MR body in $EDITOR (the dialog is suspended meanwhile).
@@ -599,13 +648,13 @@ func (m model) startOverlay(w, h int) string {
 	}
 	dw := min(w, 100) // the Agent dialog's measure; blankFieldLayer centres it
 	inner := dw - 4
-	title := "Start work · " + d.ref.String()
+	title := m.g.T("Start work · ") + d.ref.String()
 	if d.mrOnly {
-		title = "Create MR · " + d.ref.String()
+		title = m.g.T("Create MR · ") + d.ref.String()
 	}
 	var l []string
 	if d.res != nil {
-		l = append(l, stFaint.Render(ansi.Truncate(d.res.Item.Issue.Title, inner, "…")), "")
+		l = append(l, stFaint.Render(ansi.Truncate(d.res.Item.Issue.Title, inner, m.g.Ell)), "")
 	}
 	var hint string
 	switch d.stage {
@@ -663,7 +712,7 @@ func dropBlanks(l []string, n int) []string {
 	return out
 }
 
-func (m model) swBusy(what string) string { return stFaint.Render(m.g.Sync + " " + what + "…") }
+func (m model) swBusy(what string) string { return stFaint.Render(m.g.Sync + " " + what + m.g.Ell) }
 
 func (m model) swChooseView(d *startDialog, inner int) []string {
 	g := m.g
@@ -680,7 +729,7 @@ func (m model) swChooseView(d *startDialog, inner int) []string {
 		if d.cur == i {
 			cur = g.Selected
 		}
-		name := ink(r.name).Render(pad(r.name, 9))
+		name := ink(r.name).Render(pad(m.g, r.name, 9))
 		note := ""
 		switch {
 		case r.tracker:
@@ -692,7 +741,7 @@ func (m model) swChooseView(d *startDialog, inner int) []string {
 		if note != "" {
 			line += stFaint.Render("  " + g.Sep + " " + note)
 		}
-		l = append(l, ansi.Truncate(line, inner, "…"))
+		l = append(l, ansi.Truncate(line, inner, m.g.Ell))
 	}
 	l = append(l, "", section("What to create", "", inner, g))
 	nr := len(d.repos)
@@ -706,7 +755,7 @@ func (m model) swChooseView(d *startDialog, inner int) []string {
 		if d.ch.Mode == md.mode {
 			dot, label = g.Done, stBold.Render(md.label)
 		}
-		l = append(l, ansi.Truncate(cur+" "+dot+" "+pad(label, 12)+" "+stFaint.Render(md.what), inner, "…"))
+		l = append(l, ansi.Truncate(cur+" "+dot+" "+pad(m.g, label, 12)+" "+stFaint.Render(md.what), inner, m.g.Ell))
 	}
 	l = append(l, "", section("Child issue", "conventions.child_issue", inner, g))
 	for i, c := range swChildren {
@@ -719,7 +768,7 @@ func (m model) swChooseView(d *startDialog, inner int) []string {
 		if d.ch.Child == c.policy {
 			dot, label = g.Done, stBold.Render(label)
 		}
-		l = append(l, ansi.Truncate(cur+" "+dot+" "+pad(label, 7)+" "+stFaint.Render(c.what), inner, "…"))
+		l = append(l, ansi.Truncate(cur+" "+dot+" "+pad(m.g, label, 7)+" "+stFaint.Render(c.what), inner, m.g.Ell))
 	}
 	// The main pane is one row, toggled with a: its three choices fit the line.
 	main := stFaint.Render("Main pane  ")
@@ -730,7 +779,7 @@ func (m model) swChooseView(d *startDialog, inner int) []string {
 		}
 		main += dot + " " + label + "  "
 	}
-	l = append(l, "", ansi.Truncate(" "+main+stFaint.Render("a toggles · "+swLayoutWhat(d.ch.Layout)), inner, "…"))
+	l = append(l, "", ansi.Truncate(" "+main+stFaint.Render(m.g.T("a toggles · ")+swLayoutWhat(d.ch.Layout)), inner, m.g.Ell))
 	return l
 }
 
@@ -746,10 +795,10 @@ func requiredBy(m *config.Manifest, selected []string, req string) string {
 
 func (m model) swConfirmView(d *startDialog, inner, room int) ([]string, string) {
 	g, p := m.g, d.plan
-	guide := fmt.Sprintf("%s · %s", countWord(p.Writes(), "forge write"), countWord(localSteps(p), "local step"))
+	guide := fmt.Sprintf(m.g.T("%s · %s"), countWord(p.Writes(), "forge write"), countWord(localSteps(p), "local step"))
 	switch {
 	case d.ch.Mode == startwork.ModeBrowse:
-		guide = "no forge writes · " + countWord(localSteps(p), "local step")
+		guide = m.g.T("no forge writes · ") + countWord(localSteps(p), "local step")
 	case p.Pending() == 0:
 		guide = "nothing to create: everything exists"
 	}
@@ -767,10 +816,16 @@ func (m model) swConfirmView(d *startDialog, inner, room int) ([]string, string)
 		st = m.swStations(d, inner, true)
 	}
 	l = append(l, st...)
+	if draft && d.body != nil {
+		tp := p.Targets[min(d.preview, len(p.Targets)-1)]
+		l = append(l, "", section(m.g.T("MR body · ")+tp.Target.Name, "editing", inner, g))
+		l = append(l, d.body.view(inner, max(3, room-len(l)-2), "the merge request body")...)
+		return l, keys("ctrl+s", "keep", "enter", "newline", "esc", "discard")
+	}
 	if draft {
 		l = append(l, m.swMRView(d, inner, room-len(l))...)
 	}
-	hint := keys("enter", "confirm", "x", "keep/strip", "e", "edit body", "esc", "back")
+	hint := keys("enter", "confirm", "x", "keep/strip", "e/E", "edit body", "esc", "back")
 	if d.ch.Mode != startwork.ModeDraft {
 		hint = keys("enter", "confirm", "esc", "back")
 	}
@@ -808,10 +863,10 @@ func (m model) swStations(d *startDialog, inner int, compact bool) []string {
 			}
 			pre, head = trunk, ik.Render(conn+g.Done)+" "
 		}
-		l = append(l, ansi.Truncate(head+stBold.Render(tp.Target.Name)+" "+stFaint.Render(tp.Target.Project), inner, "…"))
+		l = append(l, ansi.Truncate(head+stBold.Render(tp.Target.Name)+" "+stFaint.Render(tp.Target.Project), inner, m.g.Ell))
 		steps := stepsOf(p, tp.Target.Name)
 		if compact {
-			l = append(l, ansi.Truncate(pre+ik.Render(g.BranchEnd)+" "+stepSummary(g, steps), inner, "…"))
+			l = append(l, ansi.Truncate(pre+ik.Render(g.BranchEnd)+" "+stepSummary(g, steps), inner, m.g.Ell))
 			continue
 		}
 		for j, s := range steps {
@@ -819,20 +874,20 @@ func (m model) swStations(d *startDialog, inner int, compact bool) []string {
 			if j == len(steps)-1 {
 				conn = g.BranchEnd
 			}
-			l = append(l, ansi.Truncate(pre+ik.Render(conn)+" "+stepMark(g, s)+" "+stepText(s, inner-lipgloss.Width(pre)), inner, "…"))
+			l = append(l, ansi.Truncate(pre+ik.Render(conn)+" "+stepMark(g, s)+" "+stepText(m.g, s, inner-lipgloss.Width(pre)), inner, m.g.Ell))
 		}
 	}
 	// Steps without a repo (the workflow label move) sit under the stations.
 	for _, s := range p.Steps {
 		if s.Repo == "" {
-			l = append(l, ansi.Truncate(stFaint.Render(g.Vertical)+" "+stepMark(g, s)+" "+s.Text, inner, "…"))
+			l = append(l, ansi.Truncate(stFaint.Render(g.Vertical)+" "+stepMark(g, s)+" "+g.T(s.Text), inner, m.g.Ell))
 		}
 	}
 	if p.Workflow == nil && d.res.Manifest.Labels.Workflow.Sync == "ask" {
 		l = append(l, stFaint.Render(g.Vertical+" labels.workflow.sync = ask: l moves the workflow label ")+checkbox(g, d.ch.MoveLabel, ""))
 	}
 	for _, w := range p.Warnings {
-		l = append(l, stWarn.Render(g.Warn+" "+ansi.Truncate(w, inner-2, "…")))
+		l = append(l, stWarn.Render(g.Warn+" "+ansi.Truncate(w, inner-2, m.g.Ell)))
 	}
 	return l
 }
@@ -901,7 +956,7 @@ func (m model) swMRParts(d *startDialog, inner int) (swMRBlock, bool) {
 	if tp.Found.Child != nil {
 		child = tp.Found.Child.Ref
 	}
-	b := swMRBlock{rule: section("MR · "+tp.Target.Name, guide, inner, m.g), rows: 1, spacers: 1} // the rule; the blank above it
+	b := swMRBlock{rule: section(m.g.T("MR · ")+tp.Target.Name, guide, inner, m.g), rows: 1, spacers: 1} // the rule; the blank above it
 	b.body = strings.Split(strings.TrimRight(tp.MRBody(child, p.Item), "\n"), "\n")
 	for _, ln := range b.body {
 		if strings.TrimSpace(ln) != "" {
@@ -943,10 +998,10 @@ func (m model) swMRView(d *startDialog, inner, room int) []string {
 		}
 	}
 	for _, ln := range body[:shown] {
-		l = append(l, stFaint.Render(g.Vertical)+" "+ansi.Truncate(ln, inner-2, "…"))
+		l = append(l, stFaint.Render(g.Vertical)+" "+ansi.Truncate(ln, inner-2, m.g.Ell))
 	}
 	if shown < len(body) {
-		l = append(l, stFaint.Render(g.Vertical+" … "+countWord(len(body)-shown, "more line")))
+		l = append(l, stFaint.Render(g.Vertical+m.g.T(" … ")+countWord(len(body)-shown, "more line")))
 	}
 	acts := d.actions()
 	if len(acts) == 0 {
@@ -966,7 +1021,7 @@ func (m model) swMRView(d *startDialog, inner, room int) []string {
 		if state == "strip" {
 			mark = stFaint.Render(state)
 		}
-		l = append(l, ansi.Truncate(cur+" "+mark+" "+qa.Summary+" "+stFaint.Render(qa.Line), inner, "…"))
+		l = append(l, ansi.Truncate(cur+" "+mark+" "+qa.Summary+" "+stFaint.Render(qa.Line), inner, m.g.Ell))
 	}
 	return l
 }
@@ -989,11 +1044,11 @@ func (m model) swDoneView(d *startDialog, inner int) []string {
 		default:
 			mark = stFaint.Render(g.Sep + " exists ")
 		}
-		line := mark + " " + doneText(s, inner)
-		l = append(l, ansi.Truncate(line, inner, "…"))
+		line := mark + " " + doneText(m.g, s, inner)
+		l = append(l, ansi.Truncate(line, inner, m.g.Ell))
 		// A skipped step's reason also appears as a note below: say it once.
 		if s.Error != "" && (s.Outcome != startwork.OutcomeSkipped || !noteHas(d.result.Notes, s.Error)) {
-			l = append(l, "          "+stFaint.Render(ansi.Truncate(s.Error, inner-10, "…")))
+			l = append(l, "          "+stFaint.Render(ansi.Truncate(s.Error, inner-10, m.g.Ell)))
 		}
 	}
 	l = append(l, "")
@@ -1006,9 +1061,9 @@ func (m model) swDoneView(d *startDialog, inner int) []string {
 			parts = append(parts, t.MR.String())
 		}
 		if t.Worktree != "" {
-			parts = append(parts, truncLeft(t.Worktree, max(20, inner-40)))
+			parts = append(parts, truncLeft(m.g, t.Worktree, max(20, inner-40)))
 		}
-		l = append(l, ansi.Truncate(stFaint.Render(g.Vertical)+" "+strings.Join(parts, stFaint.Render(" "+g.Sep+" ")), inner, "…"))
+		l = append(l, ansi.Truncate(stFaint.Render(g.Vertical)+" "+strings.Join(parts, stFaint.Render(" "+g.Sep+" ")), inner, m.g.Ell))
 	}
 	for _, n := range d.result.Notes {
 		l = append(l, m.swNote(n, inner)...)
@@ -1021,9 +1076,9 @@ func (m model) swDoneView(d *startDialog, inner int) []string {
 
 // doneText words a finished step with what it produced: the plan's text spoke
 // of a child that did not exist yet.
-func doneText(s startwork.StepResult, inner int) string {
+func doneText(g glyphs, s startwork.StepResult, inner int) string {
 	if s.Ref == "" || s.Outcome == startwork.OutcomeFailed {
-		return s.Text
+		return g.T(s.Text)
 	}
 	switch s.Kind {
 	case startwork.StepChild:
@@ -1033,21 +1088,21 @@ func doneText(s startwork.StepResult, inner int) string {
 	case startwork.StepMR:
 		return "draft MR " + s.Ref
 	case startwork.StepWorktree:
-		return "worktree " + truncLeft(s.Ref, max(20, inner-20))
+		return "worktree " + truncLeft(g, s.Ref, max(20, inner-20))
 	}
-	return s.Text
+	return g.T(s.Text)
 }
 
 // stepText is a step's line; a worktree path is shortened from the left so the
 // repo and branch at its end stay visible.
-func stepText(s startwork.Step, inner int) string {
+func stepText(g glyphs, s startwork.Step, inner int) string {
 	if s.Path == "" || s.Done {
 		if s.Path != "" {
-			return "worktree " + truncLeft(s.Path, max(20, inner-24)) // the mark says exists
+			return "worktree " + truncLeft(g, s.Path, max(20, inner-24)) // the mark says exists
 		}
-		return s.Text
+		return g.T(s.Text)
 	}
-	return "fetch, add worktree " + truncLeft(s.Path, max(20, inner-34))
+	return "fetch, add worktree " + truncLeft(g, s.Path, max(20, inner-34))
 }
 
 func noteHas(notes []string, sub string) bool {
@@ -1116,5 +1171,5 @@ func stepMark(g glyphs, s startwork.Step) string {
 // in a blank field the size of the body, so nothing of the dashboard shows
 // beside or below it and it stays put between states. view.go calls it.
 func (m model) swOverlayLayer(w, h int) *lipgloss.Layer {
-	return blankFieldLayer(m.startOverlay(w, h), w, h)
+	return blankFieldLayer(m.g, m.startOverlay(w, h), w, h)
 }

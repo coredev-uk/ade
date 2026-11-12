@@ -6,7 +6,7 @@
 #   search     / with a query that also finds open MRs on the forge
 #   palette    : narrowed by typing
 #   picker     f, the filter picker with type, app and workflow values
-#   activity   Activity expanded (an event injected with `ade notify send`)
+#   activity   (mid and narrow sets only) Activity expanded (an event injected with `ade notify send`)
 #   load       the project rule: committed, done, left and your average
 # The wide set (Width 2400) shows three regions: list | preview | rail.
 . scripts/verify/lib.sh
@@ -107,10 +107,12 @@ Sleep 500ms
 Screenshot "$OUT/home-$set-picker.png"
 Escape
 Sleep 300ms
-Type "e"
-Sleep 600ms
-Screenshot "$OUT/home-$set-activity.png"
 EOF
+  # Activity is a section of the list below the three-region width only; there
+  # the rail always shows it.
+  case $set in
+    narrow | mid | midnocolor) printf 'Type "e"\nSleep 600ms\nScreenshot "%s/home-%s-activity.png"\n' "$OUT" "$set" >>"$VERIFY_TMP/$set.tape" ;;
+  esac
 }
 
 ALL_SHOTS=()
@@ -132,6 +134,8 @@ capture desktop 14 "" 1600
 capture wide 14 "" 2400
 capture narrow 30 "" 1600
 capture nocolor 14 1 1600
+capture mid 14 "" 1000
+capture midnocolor 14 1 1000
 
 bad=0
 for shot in "${ALL_SHOTS[@]}"; do

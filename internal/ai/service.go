@@ -119,6 +119,9 @@ type Job struct {
 	// pre-flight says so.
 	Notes     bool
 	MaxTokens int
+	// Schema asks for a JSON answer where the gateway can enforce one; the
+	// caller still parses defensively (see Call.Schema).
+	Schema *Schema
 	// Params are extra audit params (no prompt bodies, never secrets).
 	Params map[string]any
 
@@ -218,7 +221,7 @@ func (s *Service) Run(ctx context.Context, j Job) (Result, error) {
 		}
 	}
 
-	call := Call{Model: model, System: j.System, Prompt: j.Prompt, MaxTokens: j.MaxTokens, Thinking: thinkingFor(p.Driver, j.Role)}
+	call := Call{Model: model, System: j.System, Prompt: j.Prompt, MaxTokens: j.MaxTokens, Schema: j.Schema, Thinking: thinkingFor(p.Driver, j.Role)}
 	if s.Cfg.Budget.CallUSD > 0 {
 		call.MaxCostUSD = s.Cfg.Budget.CallUSD
 	}
@@ -254,7 +257,7 @@ func (s *Service) Preview(ctx context.Context, j Job) (pf Preflight, cached bool
 	return pf, cached, err
 }
 
-// thinkingFor chooses omp's reasoning level: none for explain/draft work,
+// thinkingFor chooses omp's reasoning level: none for explain/classify/draft work,
 // light for review.
 func thinkingFor(driver string, role Role) string {
 	if driver != "omp" {
@@ -293,6 +296,9 @@ func (s *Service) finish(j Job, name string, p config.AIProfile, model, item, ha
 	params := maps.Clone(j.Params)
 	if params == nil {
 		params = map[string]any{}
+	}
+	if j.Schema != nil {
+		params["structured"] = resp.Structured
 	}
 	if resp.Gateway != nil {
 		if resp.Gateway.KeySpend != nil {

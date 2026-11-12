@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/coredev-uk/ade/internal/devshell"
 	"github.com/coredev-uk/ade/internal/readiness"
 )
 
@@ -30,10 +31,13 @@ type PlanOptions struct {
 // Instance is one node bound to the tree it runs in, with everything
 // resolved: port, env, command and readiness probe.
 type Instance struct {
-	ID       string // "<node>@<tree>"
-	Node     *Node
-	Tree     Tree   // the tree serving the node; services use the project directory
-	Dir      string // working directory
+	ID   string // "<node>@<tree>"
+	Node *Node
+	Tree Tree   // the tree serving the node; services use the project directory
+	Dir  string // working directory
+	// Devshell is how the command enters the tree's dev shell (direnv, nix
+	// develop), or the zero shell for services outside any repo.
+	Devshell devshell.Shell
 	Port     int    // 0 when the node declares none
 	State    string // directory for the node's data ({state})
 	Log      string
@@ -122,6 +126,9 @@ func (m *Manager) bind(ctx context.Context, loc Location, tr *treeResolver, n *N
 		in.Tree = t
 	}
 	in.Dir = in.Tree.Path
+	if n.Repo != "" {
+		in.Devshell = m.Devshell.Detect(in.Dir, loc.Manifest.Repos[n.Repo].Devshell)
+	}
 	in.ID = n.ID + "@" + in.Tree.Path
 	slug := slugOf(in.ID)
 	in.State = filepath.Join(m.StateDir, slug)

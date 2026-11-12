@@ -492,7 +492,10 @@ func (m *Manager) Push(ctx context.Context, id string, o PushOpts) (Run, error) 
 	if msg == "" {
 		msg = m.commitMessage(r)
 	}
-	msg = commitmsg.Apply(m.commitPrefix(ctx, r), msg)
+	// Only the MR's first commit carries the prefix.
+	if commitprefix.FirstCommit(ctx, r.Worktree) {
+		msg = commitmsg.Apply(m.commitPrefix(ctx, r), msg)
+	}
 	author := AuthorFromGit(ctx, r.Worktree)
 	sha, err := commitAll(ctx, r.Worktree, author, msg)
 	if err != nil {

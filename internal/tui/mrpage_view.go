@@ -18,7 +18,7 @@ import (
 func (m model) mrBody(w, h int) string {
 	head := m.mrHead(w)
 	content := m.mrContent(w, h-len(head))
-	return fit(strings.Join(head, "\n")+"\n"+content, w, h)
+	return fit(m.g, strings.Join(head, "\n")+"\n"+content, w, h)
 }
 
 func (m model) mrNarrow(w int) bool { return w < twoPaneMinW }
@@ -26,7 +26,7 @@ func (m model) mrNarrow(w int) bool { return w < twoPaneMinW }
 func (m model) mrContent(w, h int) string {
 	p := m.mr
 	if p.data == nil && p.tab != tabOverview && p.tab != tabHistory {
-		return fit("   "+stFaint.Render("This item has no merge request yet. Threads, Diff, Review and CI appear once one exists."), w, h)
+		return fit(m.g, "   "+stFaint.Render("This item has no merge request yet. Threads, Diff, Review and CI appear once one exists."), w, h)
 	}
 	switch p.tab {
 	case tabThreads:
@@ -78,17 +78,17 @@ func (m model) mrHead(w int) []string {
 		ref := shortRef(p.data.ref, tracker)
 		crumb := ""
 		if p.item != nil {
-			crumb = stFaint.Render(shortRef(p.item.Ref, tracker) + " › ")
+			crumb = stFaint.Render(shortRef(p.item.Ref, tracker) + m.g.T(" › "))
 		}
 		count := ""
 		if len(p.mrs) > 1 {
-			count = stFaint.Render(fmt.Sprintf("  (%d of %d · [ ] switch)", p.cur+1, len(p.mrs)))
+			count = stFaint.Render(fmt.Sprintf(m.g.T("  (%d of %d · [ ] switch)"), p.cur+1, len(p.mrs)))
 		}
 		title = " " + crumb + stBold.Render(ref+"  "+p.data.mr.Title) + count
 	case p.item != nil:
 		title = " " + stBold.Render(shortRef(p.item.Ref, tracker)+"  "+p.item.Issue.Title)
 	}
-	return []string{ansi.Truncate(title, w-1, "…"), m.mrStrip(w), m.mrTabs(w), m.mrRule(w)}
+	return []string{ansi.Truncate(title, w-1, m.g.Ell), m.mrStrip(w), m.mrTabs(w), m.mrRule(w)}
 }
 
 // mrStrip is the status line: what is in flight, then the MR's state.
@@ -103,9 +103,9 @@ func (m model) mrStrip(w int) string {
 	var seg []string
 	switch {
 	case d.busy != "":
-		seg = append(seg, stBold.Render(spinnerFrame(g, p.spin)+" "+d.busy+"…"))
+		seg = append(seg, stBold.Render(spinnerFrame(g, p.spin)+" "+d.busy+m.g.Ell))
 	case d.ai[aiKey{kind: aiReview}] != nil && d.ai[aiKey{kind: aiReview}].l.busy():
-		seg = append(seg, stBold.Render(spinnerFrame(g, p.spin)+" agent review…"))
+		seg = append(seg, stBold.Render(spinnerFrame(g, p.spin)+m.g.T(" agent review…")))
 	case d.mrL.busy() && d.loadedAt.IsZero(): // nothing read yet: the sync summary stands in
 		seg = append(seg, stFaint.Render(spinnerFrame(g, p.spin)+" reading from the forge"))
 	case d.mrL.busy():
@@ -142,7 +142,7 @@ func (m model) mrStrip(w int) string {
 	for len(seg) > 2 && lipgloss.Width(" "+strings.Join(seg, sep)) > w {
 		seg = seg[:len(seg)-1] // the verdict goes first: it is also in the merge dialog
 	}
-	return " " + ansi.Truncate(strings.Join(seg, sep), w-2, "…")
+	return " " + ansi.Truncate(strings.Join(seg, sep), w-2, m.g.Ell)
 }
 
 func (m model) mrTabs(w int) string {
@@ -179,7 +179,7 @@ func (m model) mrTabs(w int) string {
 			parts = append(parts, " "+stFaint.Render(name)+badge+" ")
 		}
 	}
-	return " " + ansi.Truncate(strings.Join(parts, ""), w-2, "…")
+	return " " + ansi.Truncate(strings.Join(parts, ""), w-2, m.g.Ell)
 }
 
 func (m model) mrRule(w int) string {
@@ -189,7 +189,7 @@ func (m model) mrRule(w int) string {
 	if d != nil {
 		switch p.tab {
 		case tabOverview:
-			guide = d.mr.Author.Username + " " + m.g.Sep + " " + d.mr.SourceBranch + " → " + d.mr.TargetBranch
+			guide = d.mr.Author.Username + " " + m.g.Sep + " " + d.mr.SourceBranch + m.g.T(" → ") + d.mr.TargetBranch
 		case tabThreads:
 			if d.threadsL.st == loadOK || len(d.threads) > 0 { // not "0 unresolved" while loading or failed
 				guide = fmt.Sprintf("%d unresolved %s %d resolved", len(d.byGroup(groupOpen)), m.g.Sep, len(d.byGroup(groupDone)))
@@ -212,7 +212,7 @@ func (m model) mrRule(w int) string {
 	if p.tab == tabHistory && p.histL.st == loadOK {
 		guide = fmt.Sprintf("%d recorded %s", len(p.histEntries), plural(len(p.histEntries), "action"))
 	}
-	return section(p.tab.title(), ansi.Truncate(guide, max(10, w-lipgloss.Width(p.tab.title())-6), "…"), w, m.g)
+	return section(p.tab.title(), ansi.Truncate(guide, max(10, w-lipgloss.Width(p.tab.title())-6), m.g.Ell), w, m.g)
 }
 
 // wait is the placeholder while a tab's data loads or failed to load; ok is
@@ -222,9 +222,9 @@ func (m model) wait(l load, what string, w, h int) (string, bool) {
 	case loadOK:
 		return "", true
 	case loadFailed:
-		return fit("   "+stBad.Render(m.g.Bad+" could not read "+what+": "+shortCause(l.err))+"\n   "+stFaint.Render("U tries again"), w, h), false
+		return fit(m.g, "   "+stBad.Render(m.g.Bad+" could not read "+what+": "+shortCause(l.err))+"\n   "+stFaint.Render("U tries again"), w, h), false
 	}
-	return fit("   "+stFaint.Render(spinnerFrame(m.g, m.mr.spin)+" reading "+what+"…"), w, h), false
+	return fit(m.g, "   "+stFaint.Render(spinnerFrame(m.g, m.mr.spin)+" reading "+what+m.g.Ell), w, h), false
 }
 
 // --- status words --------------------------------------------------------------
@@ -280,12 +280,12 @@ func (m model) mrOverview(w, h int) string {
 	l = append(l, subRule("Merge request", mr.Ref.String(), w, g))
 	kv := func(k, v string) {
 		if v != "" {
-			l = append(l, "   "+stFaint.Render(pad(k, 10))+ansi.Truncate(v, w-15, "…"))
+			l = append(l, "   "+stFaint.Render(pad(m.g, k, 10))+ansi.Truncate(v, w-15, m.g.Ell))
 		}
 	}
 	kv("state", mr.State+map[bool]string{true: " " + g.Sep + " draft", false: ""}[mr.Draft])
 	kv("author", mr.Author.Username)
-	kv("branch", mr.SourceBranch+" → "+mr.TargetBranch)
+	kv("branch", mr.SourceBranch+m.g.T(" → ")+mr.TargetBranch)
 	var rev []string
 	for _, u := range mr.Reviewers {
 		rev = append(rev, u.Username)
@@ -314,18 +314,18 @@ func (m model) mrOverview(w, h int) string {
 	case summarised && !p.rawDesc:
 		l = append(l, "")
 		l = append(l, m.aiBlock("Summary", sum, w)...)
-		l = append(l, "   "+stFaint.Render("d shows the raw description · s asks again (a new call, the cache is skipped)"))
+		l = append(l, "   "+stFaint.Render(m.g.T("d shows the raw description · s asks again (a new call, the cache is skipped)")))
 	case desc != "":
 		guide := ""
 		if summarised {
 			guide = "d shows the AI summary"
 		}
 		l = append(l, "", subRule("Description", guide, w, g))
-		for _, ln := range strings.Split(lipgloss.Wrap(desc, w-6, " "), "\n") {
+		for _, ln := range m.mdLines(desc, w-6) {
 			l = append(l, "   "+ln)
 		}
 	case d.mrL.busy() && d.loadedAt.IsZero():
-		l = append(l, "", subRule("Description", "", w, g), "   "+stFaint.Render(spinnerFrame(g, p.spin)+" reading the description…"))
+		l = append(l, "", subRule("Description", "", w, g), "   "+stFaint.Render(spinnerFrame(g, p.spin)+m.g.T(" reading the description…")))
 	}
 	return m.scrolled(l, w, h)
 }
@@ -334,7 +334,7 @@ func (m model) mrOverview(w, h int) string {
 func (m model) scrolled(l []string, w, h int) string {
 	p := m.mr
 	p.ovTop = clamp(p.ovTop, 0, len(l)-h)
-	return fit(strings.Join(l[p.ovTop:], "\n"), w, h)
+	return fit(m.g, strings.Join(l[p.ovTop:], "\n"), w, h)
 }
 
 // --- threads -------------------------------------------------------------------
@@ -450,17 +450,17 @@ func (m model) mrThreads(w, h int) string {
 	}
 	list := d.threadList()
 	if len(list) == 0 {
-		return fit("   "+stFaint.Render("No threads on this merge request. Line comments from your review appear here once submitted."), w, h)
+		return fit(m.g, "   "+stFaint.Render("No threads on this merge request. Line comments from your review appear here once submitted."), w, h)
 	}
 	sel := clamp(p.thSel, 0, len(list)-1)
 	if m.mrNarrow(w) {
 		if p.thDetail {
-			return fit(indentBlock(m.threadDetail(list[sel], w-2, h)), w, h)
+			return fit(m.g, indentBlock(m.threadDetail(list[sel], w-2, h)), w, h)
 		}
 		return m.threadLines(list, sel, w, h)
 	}
 	listW := w * 5 / 12
-	return columns(stRule.Render(" │ "), h, m.threadLines(list, sel, listW, h), fit(m.threadDetail(list[sel], w-listW-5, h), w-listW-4, h))
+	return columns(stRule.Render(m.g.Pane), h, m.threadLines(list, sel, listW, h), fit(m.g, m.threadDetail(list[sel], w-listW-5, h), w-listW-4, h))
 }
 
 func (m model) threadLines(list []thread, sel, w, h int) string {
@@ -485,7 +485,7 @@ func (m model) threadLines(list []thread, sel, w, h int) string {
 	if selLine >= h-1 {
 		top = selLine - h + 2
 	}
-	return fit(strings.Join(out[min(top, len(out)):], "\n"), w, h)
+	return fit(m.g, strings.Join(out[min(top, len(out)):], "\n"), w, h)
 }
 
 func (m model) threadRow(t thread, selected bool, w int) string {
@@ -497,11 +497,11 @@ func (m model) threadRow(t thread, selected bool, w int) string {
 	var state string
 	switch t.group {
 	case groupOpen:
-		state = stWarn.Render(pad(g.Info+" open", 9))
+		state = stWarn.Render(pad(m.g, g.Info+" open", 9))
 	case groupDone:
-		state = stFaint.Render(pad(g.OK+" done", 9))
+		state = stFaint.Render(pad(m.g, g.OK+" done", 9))
 	default:
-		state = stFaint.Render(pad("note", 9))
+		state = stFaint.Render(pad(m.g, "note", 9))
 	}
 	n := t.first()
 	who := stFaint.Render(n.Author.Username)
@@ -516,11 +516,11 @@ func (m model) threadRow(t thread, selected bool, w int) string {
 	quote := stFaint.Render(`"` + oneLine(n.Body) + `"`)
 	room := w - lipgloss.Width(left) - lipgloss.Width(who) - 4
 	if room >= 12 {
-		left += "  " + ansi.Truncate(quote, room, "…")
+		left += "  " + ansi.Truncate(quote, room, m.g.Ell)
 	}
 	gap := w - lipgloss.Width(left) - lipgloss.Width(who) - 1
 	if gap < 1 {
-		return ansi.Truncate(left, w-lipgloss.Width(who)-2, "…") + " " + who
+		return ansi.Truncate(left, w-lipgloss.Width(who)-2, m.g.Ell) + " " + who
 	}
 	return left + strings.Repeat(" ", gap) + who
 }
@@ -539,7 +539,7 @@ func (m model) threadDetail(t thread, w, h int) string {
 	case groupComment:
 		state = stFaint.Render("comment")
 	}
-	head := []string{stBold.Render(ansi.Truncate(t.where(), w, "…")), state}
+	head := []string{stBold.Render(ansi.Truncate(t.where(), w, m.g.Ell)), state}
 	var body []string
 	if m.aiOn() {
 		body = append(body, m.threadAI(d, t.d.ID, w)...)
@@ -556,9 +556,7 @@ func (m model) threadDetail(t thread, w, h int) string {
 			continue
 		}
 		body = append(body, stBold.Render(n.Author.Username)+stFaint.Render(" "+g.Sep+" "+ago(n.CreatedAt)))
-		for _, ln := range strings.Split(lipgloss.Wrap(n.Body, w-2, " "), "\n") {
-			body = append(body, " "+ln)
-		}
+		body = append(body, strings.Split(lipgloss.Wrap(n.Body, w-1, " "), "\n")...)
 		body = append(body, "")
 	}
 	// A conversation longer than the pane shows its latest notes.
@@ -576,7 +574,7 @@ func (m model) mrCI(w, h int) string {
 	d := p.data
 	g := m.g
 	if d.mr.Pipeline == nil {
-		return fit("   "+stFaint.Render("No pipeline ran for this merge request."), w, h)
+		return fit(m.g, "   "+stFaint.Render("No pipeline ran for this merge request."), w, h)
 	}
 	if ph, ok := m.wait(d.jobsL, "CI jobs", w, h); !ok {
 		return ph
@@ -589,7 +587,7 @@ func (m model) mrCI(w, h int) string {
 	}
 	for i, j := range d.jobs {
 		mark := "   "
-		name := pad(j.Name, nameW)
+		name := pad(m.g, j.Name, nameW)
 		if i == sel {
 			mark, name = " "+stBold.Render(g.Selected)+" ", stBold.Render(name)
 		}
@@ -598,7 +596,7 @@ func (m model) mrCI(w, h int) string {
 		if j.Duration > 0 {
 			dur = fmt.Sprintf("%.0fs", j.Duration)
 		}
-		l = append(l, mark+gl+" "+pad(word, 8)+" "+name+" "+stFaint.Render(pad(j.Stage, 12))+" "+stFaint.Render(dur))
+		l = append(l, mark+gl+" "+pad(m.g, word, 8)+" "+name+" "+stFaint.Render(pad(m.g, j.Stage, 12))+" "+stFaint.Render(dur))
 	}
 	if len(d.jobs) == 0 {
 		l = append(l, "   "+stFaint.Render("The pipeline has no jobs yet."))
@@ -612,11 +610,11 @@ func (m model) mrCI(w, h int) string {
 	l = append(l, "")
 	switch {
 	case failed > 0:
-		l = append(l, "   "+stBad.Render(fmt.Sprintf("%s %d failed %s", g.Bad, failed, plural(failed, "job")))+stFaint.Render(" · l shows the log tail · r retries the failed jobs"))
+		l = append(l, "   "+stBad.Render(fmt.Sprintf("%s %d failed %s", g.Bad, failed, plural(failed, "job")))+stFaint.Render(m.g.T(" · l shows the log tail · r retries the failed jobs")))
 	default:
-		l = append(l, "   "+stFaint.Render("l shows a job's log tail · r retries failed jobs"))
+		l = append(l, "   "+stFaint.Render(m.g.T("l shows a job's log tail · r retries failed jobs")))
 	}
-	return fit(strings.Join(l, "\n"), w, h)
+	return fit(m.g, strings.Join(l, "\n"), w, h)
 }
 
 // stageLine draws the pipeline as a station line in the repo's ink: one

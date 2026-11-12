@@ -29,6 +29,10 @@ func main() {
 	review := flag.String("review", "", "MR refs (group/project!N, comma separated) to list under Reviews requested for the signed-in user")
 	gitRoot := flag.String("git-root", "", "directory for real bare remotes (DIR/<project>.git) of tracker, api and web; branches created through the API are created there too")
 	apps := flag.String("git-apps", "scripts/sandbox/apps", "with -git-root: directory whose api/ and web/ folders are committed to those remotes")
+	useTLS := flag.Bool("tls", false, "serve HTTPS with a self-signed certificate (write it with -ca-out)")
+	prefix := flag.String("path-prefix", "", "serve under a relative URL root, like https://host/gitlab (-path-prefix /gitlab)")
+	caOut := flag.String("ca-out", "", "with -tls: write the server certificate (the CA to trust) to this PEM file")
+	version := flag.String("version", "", "GitLab release /api/v4/version reports (15.4.2, or 17.0.1-ee for Enterprise)")
 	flag.Parse()
 	t := fake.Free
 	switch *tier {
@@ -45,6 +49,15 @@ func main() {
 	}
 	if *gitRoot != "" {
 		opts = append(opts, fake.WithGitRoot(*gitRoot))
+	}
+	if *useTLS {
+		opts = append(opts, fake.WithTLS())
+	}
+	if *prefix != "" {
+		opts = append(opts, fake.WithPathPrefix(*prefix))
+	}
+	if *version != "" {
+		opts = append(opts, fake.WithVersion(strings.TrimSuffix(*version, "-ee"), strings.HasSuffix(*version, "-ee")))
 	}
 	srv := fake.New(t, opts...)
 	defer srv.Close()
@@ -93,7 +106,16 @@ func main() {
 		srv.AddFile(fake.GroupPath+"/api", ".gitlab/merge_request_templates/Default.md",
 			"## Summary\n\nWhat changes, and why.\n\n## Testing\n\n- [ ] Tests added or updated\n\n/label ~\"type::story\"\n/assign_reviewer @reviewer-rae\n")
 	}
-	fmt.Println(srv.URL)
+	if *caOut != "" {
+		if pem := srv.CertPEM(); pem == nil {
+			fmt.Fprintln(os.Stderr, "fakegl: -ca-out needs -tls")
+			os.Exit(2) //nolint:gocritic // the server is closed on exit
+		} else if err := os.WriteFile(*caOut, pem, 0o644); err != nil {
+			fmt.Fprintln(os.Stderr, "fakegl:", err)
+			os.Exit(2)
+		}
+	}
+	fmt.Println(srv.BaseURL())
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig

@@ -62,15 +62,11 @@ func New(a *app.App) *Service {
 func openForge(ctx context.Context, name string, f config.Forge) (forge.Forge, error) {
 	switch f.Kind {
 	case "gitlab":
-		tok, err := f.Token(ctx)
+		c, err := gitlab.Open(ctx, name, f)
 		if err != nil {
-			return nil, fmt.Errorf("forge %s: %w", name, err)
+			return nil, err
 		}
-		base := f.URL
-		if base == "" {
-			base = "https://gitlab.com"
-		}
-		return gitlab.New(base, tok), nil
+		return c, nil
 	case "github":
 		tok, err := f.Token(ctx)
 		if err != nil {
@@ -85,6 +81,9 @@ func openForge(ctx context.Context, name string, f config.Forge) (forge.Forge, e
 // its Result.Err and leaves its cached items untouched; the others carry on.
 // The returned error is reserved for problems that stop the whole run.
 func (s *Service) Sync(ctx context.Context) ([]Result, error) {
+	// A sync is background work: against a forge that reports its rate-limit
+	// budget it stops short of the end, keeping the rest for dialogs.
+	ctx = forge.Background(ctx)
 	st, err := s.App.Cache()
 	if err != nil {
 		return nil, fmt.Errorf("open cache: %w", err)
@@ -152,6 +151,13 @@ func (s *Service) syncProject(ctx context.Context, st *store.Store, ref config.P
 		}
 	}
 	res.Warnings = append(res.Warnings, s.writeRecords(ctx, f, m, res, old, hadPrev)...)
+	// Features the instance lacks (an older self-managed GitLab) are named
+	// once per sync, never per item, and never fail it.
+	if u, ok := f.(interface{ Unavailable() []string }); ok {
+		for _, name := range u.Unavailable() {
+			res.Warnings = append(res.Warnings, "not available on this GitLab: "+name)
+		}
+	}
 	if err := saveResult(st, res); err != nil {
 		return fail(err)
 	}

@@ -34,7 +34,7 @@ func (m model) render() string {
 	}
 	body := m.body(w, h-3)
 	screen := m.header(w) + "\n\n" + body + "\n" + m.footer(w)
-	layers := []*lipgloss.Layer{lipgloss.NewLayer(fit(screen, w, h))}
+	layers := []*lipgloss.Layer{lipgloss.NewLayer(fit(m.g, screen, w, h))}
 	// On narrow terminals overlays take the full width: a partly covered list
 	// would show cut-off fragments of the rows beneath.
 	narrow := w < twoPaneMinW
@@ -44,15 +44,15 @@ func (m model) render() string {
 			dw = w
 		}
 		d := m.nc.drawer(m.g, dw, h-2)
-		layers = append(layers, lipgloss.NewLayer(fit(d, dw, h-2)).X(w-dw).Y(1).Z(1))
+		layers = append(layers, lipgloss.NewLayer(fit(m.g, d, dw, h-2)).X(w-dw).Y(1).Z(1))
 	}
 	mrDialog := m.mr != nil && (m.mr.modal != nil || m.help)
-	if ts := m.nc.toastStack(m.g, toastWidth(w)); ts != "" && !m.nc.open && !m.help && m.agt == nil && m.sw == nil && m.cl == nil && m.nt == nil && m.wt == nil && m.hs.pal == nil && !mrDialog { // a dialog owns the screen: toasts must not cover its keys
+	if ts := m.nc.toastStack(m.g, toastWidth(w)); ts != "" && !m.nc.open && !m.help && m.agt == nil && m.sw == nil && m.cl == nil && m.nt == nil && m.wt == nil && m.sm == nil && m.hs.pal == nil && !mrDialog { // a dialog owns the screen: toasts must not cover its keys
 		layers = append(layers, lipgloss.NewLayer(ts).X(w-lipgloss.Width(ts)-1).Y(max(1, h-1-lipgloss.Height(ts))).Z(3))
 	}
 	switch {
 	case m.help && m.mr != nil:
-		layers = append(layers, blankFieldLayer(mrHelpView(min(w, 100), h, m.g, m.aiOn()), w, h))
+		layers = append(layers, blankFieldLayer(m.g, mrHelpView(min(w, 100), h, m.g, m.aiOn()), w, h))
 	case m.help:
 		hw := min(76, w-4)
 		if narrow {
@@ -60,9 +60,9 @@ func (m model) render() string {
 		}
 		d := helpView(hw, h, m.g)
 		top := max(0, (h-2-lipgloss.Height(d))/2)
-		layers = append(layers, blankFieldLayer(strings.Repeat("\n", top)+d, w, h))
+		layers = append(layers, blankFieldLayer(m.g, strings.Repeat("\n", top)+d, w, h))
 	}
-	if l := blankFieldLayer(m.mrOverlay(w, h), w, h); l != nil {
+	if l := blankFieldLayer(m.g, m.mrOverlay(w, h), w, h); l != nil {
 		layers = append(layers, l)
 	}
 	if l := m.swOverlayLayer(w, h); l != nil {
@@ -75,6 +75,9 @@ func (m model) render() string {
 		layers = append(layers, l)
 	}
 	if l := m.weightOverlayLayer(w, h); l != nil {
+		layers = append(layers, l)
+	}
+	if l := m.sprintOverlayLayer(w, h); l != nil {
 		layers = append(layers, l)
 	}
 	if l := m.paletteOverlayLayer(w, h); l != nil {
@@ -97,12 +100,12 @@ func (m model) header(w int) string {
 	}
 	left := stBold.Render("ADE")
 	if m.page == pageHome {
-		left += "  " + stBold.Render("Home") + stFaint.Render(" · worktrees")
+		left += "  " + stBold.Render("Home") + stFaint.Render(m.g.T(" · worktrees"))
 	} else {
-		left += "  " + stFaint.Render("home · ") + stBold.Render("Worktrees")
+		left += "  " + stFaint.Render(m.g.T("home · ")) + stBold.Render("Worktrees")
 	}
 	if m.mr != nil {
-		left = stBold.Render("ADE") + "  " + stFaint.Render("← Home "+m.g.Sep+" ") + stBold.Render(m.mrCrumb())
+		left = stBold.Render("ADE") + "  " + stFaint.Render(m.g.T("← Home ")+m.g.Sep+" ") + stBold.Render(m.mrCrumb())
 	}
 	switch m.page {
 	case pageBudget:
@@ -162,8 +165,8 @@ func (m model) activity() string {
 func (m model) footer(w int) string {
 	narrow := w < twoPaneMinW
 	switch {
-	case m.hs.pal != nil:
-		return " " + keys("up/down", "choose", "enter", "run", "esc", "close")
+	case m.hs.pal != nil, m.sm != nil, m.nt != nil, m.wt != nil, m.cl != nil:
+		return "" // the dialog carries its own key row
 	case m.agt != nil:
 		return " " + keys("esc", "back/close", "ctrl+c", "quit") + stFaint.Render("   the agent dialog has its own keys")
 	case m.nc.open:
@@ -181,9 +184,9 @@ func (m model) footer(w int) string {
 	case m.page == pageHome && m.hs.search.typing:
 		return " " + keys("enter", "keep filter", "up/down", "move", "esc", "clear search")
 	case m.page == pageHome && narrow:
-		return " " + keys("j/k", "move", "enter", "open", "/", "search", ":", "palette", "f", m.homeFilterName(), "tab", "details", "?", "keys")
+		return fitKeys(w, []string{"?", "keys"}, []string{"j/k", "move", "enter", "open", "/", "search", ":", "palette", "f", m.homeFilterName(), "tab", "details"})
 	case m.page == pageHome:
-		return " " + keys("j/k", "move", "enter", "open", "/", "search", ":", "palette", "f", "filter: "+m.homeFilterName(), "o", "browser", "w", "workspace", "U", "refresh", "?", "keys", "q", "quit")
+		return fitKeys(w, []string{"?", "keys", "q", "quit"}, []string{"j/k", "move", "enter", "open", "/", "search", ":", "palette", "f", "filter: " + m.homeFilterName(), "o", "browser", "w", "workspace", "U", "refresh"})
 	case narrow:
 		return " " + keys("j/k", "move", "tab", "details", "U", "update", "t", "home", "i", "inbox", "?", "keys")
 	}
@@ -238,10 +241,10 @@ func (m model) body(w, h int) string {
 		return m.homeBody(w, h)
 	}
 	if m.loadErr != nil {
-		return fit(" "+stBad.Render(m.g.Bad+" could not read projects: ")+m.loadErr.Error(), w, h)
+		return fit(m.g, " "+stBad.Render(m.g.Bad+" could not read projects: ")+m.loadErr.Error(), w, h)
 	}
 	if !m.loaded {
-		return fit(" "+stFaint.Render("reading projects…"), w, h)
+		return fit(m.g, " "+stFaint.Render(m.g.T("reading projects…")), w, h)
 	}
 	if len(m.projects) == 0 {
 		return m.empty(w, h)
@@ -249,46 +252,55 @@ func (m model) body(w, h int) string {
 	if w < twoPaneMinW {
 		// Single pane: the list, or (tab) the selected tree's details.
 		if m.showDetail {
-			return fit(m.detail(w-2), w, h)
+			return fit(m.g, m.detail(w-2), w, h)
 		}
 		return m.lines(w, h)
 	}
 	listW := w * 64 / 100
-	right := fit(m.detail(w-listW-4), w-listW-3, h) // one cell of right margin
-	return columns(stRule.Render(" │ "), h, m.lines(listW, h), right)
+	right := fit(m.g, m.detail(w-listW-4), w-listW-3, h) // one cell of right margin
+	return columns(stRule.Render(m.g.Pane), h, m.lines(listW, h), right)
 }
 
 func (m model) homeBody(w, h int) string {
 	if !m.homeLoaded {
-		return fit(" "+stFaint.Render("reading work items…"), w, h)
+		return fit(m.g, " "+stFaint.Render(m.g.T("reading work items…")), w, h)
 	}
 	if len(m.results) == 0 {
 		if m.syncing {
-			return fit(" "+stFaint.Render(m.g.Sync+" first sync with your forges…"), w, h)
+			return fit(m.g, " "+stFaint.Render(m.g.Sync+m.g.T(" first sync with your forges…")), w, h)
 		}
 		if len(m.app.Config.Projects) == 0 {
 			return m.empty(w, h)
 		}
-		return fit(" "+stFaint.Render("No work items yet. U syncs now."), w, h)
+		return fit(m.g, " "+stFaint.Render("No work items yet. U syncs now."), w, h)
 	}
 	if w < twoPaneMinW {
 		if m.showDetail {
-			return fit(m.homeDetail(w-2), w, h)
+			return fit(m.g, m.homeDetail(w-2), w, h)
 		}
 		return m.homeLines(w, h)
 	}
-	sep := stRule.Render(" │ ")
+	sep := stRule.Render(m.g.Pane)
 	if m.threeRegion() {
 		// list | preview | activity and services
 		rest := w - railW - 2*3
 		prevW := max(34, rest*30/100)
 		listW := rest - prevW
 		return columns(sep, h, m.homeLines(listW, h),
-			fit(m.homeDetail(prevW-1), prevW, h), m.railView(railW, h))
+			m.belowSearchBar(fit(m.g, m.homeDetail(prevW-1), prevW, h), prevW), m.belowSearchBar(m.railView(railW, h), railW))
 	}
 	listW := w * 66 / 100
-	right := fit(m.homeDetail(w-listW-4), w-listW-3, h)
+	right := m.belowSearchBar(fit(m.g, m.homeDetail(w-listW-4), w-listW-3, h), w-listW-3)
 	return columns(sep, h, m.homeLines(listW, h), right)
+}
+
+// belowSearchBar drops a region one row while the search bar sits above the
+// list, so the regions' first rows stay level with the list's.
+func (m model) belowSearchBar(region string, w int) string {
+	if m.hs.search.typing || m.searching() {
+		return strings.Repeat(" ", w) + "\n" + region
+	}
+	return region
 }
 
 func (m model) empty(w, h int) string {
@@ -345,7 +357,7 @@ func (m model) lines(w, h int) string {
 	if selLine >= h-1 {
 		top = selLine - h + 2
 	}
-	return fit(strings.Join(out[min(top, len(out)):], "\n"), w, h)
+	return fit(m.g, strings.Join(out[min(top, len(out)):], "\n"), w, h)
 }
 
 func section(title, guide string, w int, g glyphs) string {
@@ -371,7 +383,7 @@ func (m model) treeLine(r row, selected, first, last bool, w, unread int) string
 	}
 	name := strings.Repeat(" ", repoCol)
 	if first {
-		name = pad(r.repo.Name, repoCol)
+		name = pad(m.g, r.repo.Name, repoCol)
 		if !r.repo.InManifest {
 			name = stFaint.Render(name)
 		}
@@ -405,7 +417,7 @@ func (m model) treeLine(r row, selected, first, last bool, w, unread int) string
 	}
 	gap := w - lipgloss.Width(left) - lipgloss.Width(status) - 1
 	if gap < 2 {
-		return ansi.Truncate(left, w-lipgloss.Width(status)-3, "…") + "  " + status
+		return ansi.Truncate(left, w-lipgloss.Width(status)-3, m.g.Ell) + "  " + status
 	}
 	return left + strings.Repeat(" ", gap) + status
 }
@@ -442,7 +454,7 @@ func (m model) detail(w int) string {
 		l = append(l, stBold.Render(r.project+" / "+r.repo.Name+" / "+r.tree.Name))
 		kind := "work branch"
 		if r.base {
-			kind = "baseline · kept current by update"
+			kind = m.g.T("baseline · kept current by update")
 		}
 		l = append(l, stFaint.Render(kind), "")
 		kv := [][2]string{
@@ -456,15 +468,15 @@ func (m model) detail(w int) string {
 				continue
 			}
 			if p[0] == "path" {
-				l = append(l, stFaint.Render(pad(p[0], 10))+truncLeft(p[1], w-10))
+				l = append(l, stFaint.Render(pad(m.g, p[0], 10))+truncLeft(m.g, p[1], w-10))
 				continue
 			}
-			l = append(l, stFaint.Render(pad(p[0], 10))+ansi.Truncate(p[1], w-10, "…"))
+			l = append(l, stFaint.Render(pad(m.g, p[0], 10))+ansi.Truncate(p[1], w-10, m.g.Ell))
 		}
 		if f := m.failuresFor(r); len(f) > 0 {
 			l = append(l, "", stBold.Render("Last update"))
 			for _, x := range f {
-				l = append(l, " "+stBad.Render(m.g.Bad)+" "+ansi.Truncate(x, w-3, "…"))
+				l = append(l, " "+stBad.Render(m.g.Bad)+" "+ansi.Truncate(x, w-3, m.g.Ell))
 			}
 		}
 	}
@@ -481,15 +493,15 @@ func (m model) detail(w int) string {
 // truncLeft shortens a path from the left so its tail (repo and tree) stays
 // visible: "…/demo-gl/api/main". The cut snaps to a separator when one is
 // left in the tail.
-func truncLeft(s string, w int) string {
+func truncLeft(g glyphs, s string, w int) string {
 	if lipgloss.Width(s) <= w || w < 2 {
 		return s
 	}
-	tail := ansi.TruncateLeft(s, lipgloss.Width(s)-(w-1), "")
+	tail := ansi.TruncateLeft(s, lipgloss.Width(s)-(w-lipgloss.Width(g.Ell)), "")
 	if i := strings.Index(tail, "/"); i > 0 {
 		tail = tail[i:]
 	}
-	return "…" + tail
+	return g.Ell + tail
 }
 
 func (m model) failuresFor(r row) []string {
@@ -573,6 +585,7 @@ func helpGroups(full bool) []helpGroup {
 			{"o", "open the item in the browser (plain host: shows the URL)"},
 			{"n", "notes (yours; fed to agents and AI)"},
 			{"=", "set weight (shown before it is written; audited)"},
+			{">", "move to the next sprint, child issues following (shown before it is written; audited)"},
 			{"r", "restart blocked services of the item; otherwise refresh"},
 		}},
 		{"Pages", [][2]string{
@@ -604,7 +617,7 @@ func helpView(w, h int, g glyphs) string {
 					if i == 0 {
 						key = r[0]
 					}
-					l = append(l, " "+stBold.Render(pad(key, 8))+ln)
+					l = append(l, " "+stBold.Render(pad(g, key, 8))+ln)
 				}
 			}
 		}
@@ -614,7 +627,7 @@ func helpView(w, h int, g glyphs) string {
 	if len(l)+2 > h-2 { // the frame is two rows, and the footer and header stay visible
 		l = render(false)
 	}
-	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#666666")).
+	return lipgloss.NewStyle().Border(g.Border).BorderForeground(lipgloss.Color("#666666")).
 		Padding(0, 1).Width(w).Render(strings.Join(l, "\n"))
 }
 
@@ -670,23 +683,23 @@ func ago(t time.Time) string {
 }
 
 // pad right-pads or truncates s to exactly n cells.
-func pad(s string, n int) string {
+func pad(g glyphs, s string, n int) string {
 	if n <= 0 {
 		return ""
 	}
 	if lipgloss.Width(s) > n {
-		return ansi.Truncate(s, n, "…")
+		return ansi.Truncate(s, n, g.Ell)
 	}
 	return s + strings.Repeat(" ", n-lipgloss.Width(s))
 }
 
 // fit forces a block to exactly w×h cells.
-func fit(s string, w, h int) string {
+func fit(g glyphs, s string, w, h int) string {
 	lines := strings.Split(s, "\n")
 	out := make([]string, h)
 	for i := range out {
 		if i < len(lines) {
-			out[i] = pad(lines[i], w)
+			out[i] = pad(g, lines[i], w)
 		} else {
 			out[i] = strings.Repeat(" ", w)
 		}

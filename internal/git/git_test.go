@@ -17,6 +17,20 @@ func TestTokenEnvKeepsTokenOutOfArgv(t *testing.T) {
 	}
 }
 
+func TestRemoteEnvAddsScopedSettings(t *testing.T) {
+	ca := [][2]string{{"http.https://h/.sslCAInfo", "/ca.pem"}}
+	env := RemoteEnv("https://h/x.git", "oauth2", "s3cret", ca)
+	if env[0] != "GIT_CONFIG_COUNT=3" || env[5] != "GIT_CONFIG_KEY_2=http.https://h/.sslCAInfo" || env[6] != "GIT_CONFIG_VALUE_2=/ca.pem" {
+		t.Errorf("env = %v", env)
+	}
+	if got := RemoteEnv("https://h/x.git", "oauth2", "", ca); len(got) != 3 || got[0] != "GIT_CONFIG_COUNT=1" {
+		t.Errorf("without a token only the extra setting applies, got %v", got)
+	}
+	if got := RemoteEnv("https://h/x.git", "oauth2", "", nil); got != nil {
+		t.Errorf("nothing to set must leave the environment alone, got %v", got)
+	}
+}
+
 func TestErrorCapturesStderrAndClassifies(t *testing.T) {
 	_, err := Client{}.Run(context.Background(), t.TempDir(), "clone", "--bare", "file:///definitely/not/here.git", "x")
 	var ge *Error

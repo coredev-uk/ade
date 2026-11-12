@@ -87,6 +87,20 @@ func (c *Client) SetLabels(ctx context.Context, ref forge.Ref, add, remove []str
 	return c.send(ctx, http.MethodPut, issuePath(ref), body, nil)
 }
 
+var _ forge.MilestoneWriter = (*Client)(nil)
+
+// SetMilestone implements forge.MilestoneWriter. GitLab's issue update takes
+// milestone_id, and 0 removes the milestone.
+func (c *Client) SetMilestone(ctx context.Context, ref forge.Ref, milestoneID int64) error {
+	if err := wantKind(ref, forge.KindIssue); err != nil {
+		return err
+	}
+	if milestoneID < 0 {
+		return fmt.Errorf("gitlab: milestone id %d on %s: want a milestone id, or 0 to clear", milestoneID, ref)
+	}
+	return c.send(ctx, http.MethodPut, issuePath(ref), map[string]int64{"milestone_id": milestoneID}, nil)
+}
+
 // LinkIssues implements forge.IssueWriter. GitLab answers 409 for a pair that
 // is already linked, which is the state the caller asked for.
 func (c *Client) LinkIssues(ctx context.Context, a, b forge.Ref, kind string) error {

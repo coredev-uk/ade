@@ -43,7 +43,7 @@ func TestWriteWorktreeConfig(t *testing.T) {
 	ctx := context.Background()
 	a, b := bareWithTrees(t)
 	for range 2 { // idempotent
-		if err := WriteWorktreeConfig(ctx, a, 7, "GL-7"); err != nil {
+		if err := WriteWorktreeConfig(ctx, a, 7, "GL-7", "main"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -53,10 +53,13 @@ func TestWriteWorktreeConfig(t *testing.T) {
 	if got := sh(t, a, "config", "--get", KeyParent); got != "7" {
 		t.Errorf("parent = %q", got)
 	}
+	if got := ReadTarget(ctx, a); got != "main" {
+		t.Errorf("target in a = %q", got)
+	}
 	if got := Read(ctx, b); got != "" {
 		t.Errorf("prefix leaked into sibling worktree b: %q", got)
 	}
-	if err := WriteWorktreeConfig(ctx, b, 9, "GL-9"); err != nil {
+	if err := WriteWorktreeConfig(ctx, b, 9, "GL-9", ""); err != nil {
 		t.Fatal(err)
 	}
 	if Read(ctx, a) != "GL-7" || Read(ctx, b) != "GL-9" {
@@ -66,13 +69,13 @@ func TestWriteWorktreeConfig(t *testing.T) {
 	sh(t, filepath.Dir(a), "-C", ".bare", "worktree", "add", "-q", "-b", "c", "../c")
 	sh(t, filepath.Join(filepath.Dir(a), "c"), "status")
 
-	if err := WriteWorktreeConfig(ctx, a, 7, "GL-70"); err != nil {
+	if err := WriteWorktreeConfig(ctx, a, 7, "GL-70", ""); err != nil {
 		t.Fatal(err)
 	}
 	if got := Read(ctx, a); got != "GL-70" {
 		t.Errorf("updated prefix = %q", got)
 	}
-	if err := WriteWorktreeConfig(ctx, a, 7, ""); err != nil {
+	if err := WriteWorktreeConfig(ctx, a, 7, "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if got := Read(ctx, a); got != "" {

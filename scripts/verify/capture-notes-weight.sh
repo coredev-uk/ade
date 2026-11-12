@@ -31,13 +31,17 @@ Support wants the limit per tenant, not per token (50 req/min).
 - the legacy CSV path stays until Friday's release
 NOTES
 EOF
-chmod +x "$VERIFY_TMP/editor.sh" "$VERIFY_TMP/seed-notes.sh"
+cat >"$VERIFY_TMP/seed-long.sh" <<'EOF'
+#!/bin/sh
+for i in $(seq 1 60); do printf 'Line %d of a long working note: the legacy CSV path stays until the release.\n' "$i" >>"$1"; done
+EOF
+chmod +x "$VERIFY_TMP/editor.sh" "$VERIFY_TMP/seed-notes.sh" "$VERIFY_TMP/seed-long.sh"
 
 # use_variant NAME URL MANIFEST: a config for one forge and manifest, with the
 # editor the tape can drive.
 use_variant() {
   local name=$1 url=$2 manifest=$3
-  FORGE_URL=$url use_config "$name" off 2.00 "$OMP_OK"
+  FORGE_URL=$url use_config "$name" "${AI_MODE:-off}" 2.00 "$OMP_OK"
   sed -i "s#$REPO/scripts/sandbox/manifests/gitlab.ade.toml#$manifest#" "$ADE_CONFIG"
   printf '\n[host]\neditor = "$EDITOR"\n' >>"$ADE_CONFIG"
   sed -i "s#^exec #export VISUAL=$VERIFY_TMP/editor.sh\nexec #" "$VERIFY_TMP/run.sh"
@@ -63,7 +67,16 @@ reset_premium() {
   rm -rf "$XDG_DATA_HOME/ade/items" "$XDG_CACHE_HOME"/ade/cache.db*
   ADE_CONFIG=$PREMIUM_CONFIG "$ADE" sync >/dev/null
   ADE_CONFIG=$PREMIUM_CONFIG VISUAL=$VERIFY_TMP/seed-notes.sh "$ADE" item "$G/tracker#1" --edit >/dev/null
+  ADE_CONFIG=$PREMIUM_CONFIG VISUAL=$VERIFY_TMP/seed-long.sh "$ADE" item "$G/tracker#3" --edit >/dev/null
 }
+
+# Two closed bugs on the web app with weights and title words in common with
+# tracker#11, so a suggestion has something to compare with.
+for t in "Exports page totals drift on filter" "Stale totals in the exports table"; do
+  iid=$(curl -fsS -X POST -H "PRIVATE-TOKEN: $FAKE_GITLAB_TOKEN" "$FREE_URL/api/v4/projects/$G%2Ftracker/issues" \
+    --data-urlencode "title=$t" --data-urlencode "labels=type::bug,app::web,weight::3" | jq -r .iid)
+  api "$FREE_URL" PUT "projects/$G%2Ftracker/issues/$iid" -d state_event=close
+done
 
 # reset_free: tracker#1 and api#1 on weight::5 labels, two closed bugs with
 # weights to compare with, tracker#11 labelled so only its weight is open.
@@ -88,6 +101,10 @@ notes_body() {
   shot empty 700ms
   printf 'Escape\nSleep 400ms\nType "k"\nSleep 400ms\nType "n"\nSleep 400ms\nType "e"\n'
   shot after-edit 1200ms
+  printf 'Escape\nSleep 400ms\nType "jj"\nSleep 400ms\nType "n"\n'
+  shot long 900ms
+  printf 'Type "jjjjjj"\n'
+  shot long-scrolled 500ms
   printf 'Escape\n'
 }
 use_variant premium "$FAKE_URL" "$VERIFY_TMP/auto.ade.toml"
@@ -97,14 +114,17 @@ sets notes_body
 
 weight_premium() {
   printf 'Type "="\n'
-  shot reading 150ms
-  shot field 1200ms
+  shot field-premium 1200ms
   printf 'Type "5"\n'
   shot typed 500ms
   printf 'Type "c"\n'
   shot child-left-alone 500ms
   printf 'Type "c"\nEnter\n'
   shot done 1500ms
+  printf 'Escape\nSleep 3000ms\nType "="\nSleep 600ms\nType "5"\n'
+  shot same-value 500ms
+  printf 'Enter\n'
+  shot unchanged 1500ms
   printf 'Escape\n'
 }
 sets weight_premium
@@ -115,17 +135,40 @@ FREE_CONFIG=$ADE_CONFIG
 BEFORE_CAPTURE=reset_free
 weight_free() {
   printf 'Type "="\n'
-  shot field 1200ms
+  shot field-free 1200ms
   printf 'Type "2"\n'
   shot label-swap 500ms
   printf 'Type "n"\n'
   shot none 400ms
+  printf 'Escape\nSleep 400ms\nType "jjjjj"\nSleep 400ms\nType "="\nSleep 2500ms\nEscape\nSleep 1500ms\nType "="\n'
+  shot prefilled 1200ms
   printf 'Escape\n'
 }
 sets weight_free
 
+# Tracker#11 with no type or app label: the weight dialog says why nothing is suggested.
+reset_free_unclassified() {
+  reset_free
+  api "$FREE_URL" PUT "projects/$G%2Ftracker/issues/11" --data-urlencode "remove_labels=type::bug,app::web"
+  rm -rf "$XDG_DATA_HOME/ade/items" "$XDG_CACHE_HOME"/ade/cache.db*
+  ADE_CONFIG=$FREE_CONFIG "$ADE" sync >/dev/null
+}
+BEFORE_CAPTURE=reset_free_unclassified
+weight_none() {
+  printf 'Type "jjjjj"\nSleep 400ms\nType "="\n'
+  shot no-suggestion 1200ms
+  printf 'Escape\n'
+}
+sets weight_none
+
+# The classify suggestion comes with the model's type and app (the omp stub).
+AI_MODE=auto use_variant freeai "$FREE_URL" "$REPO/scripts/sandbox/manifests/gitlab.ade.toml"
+FREE_CONFIG=$ADE_CONFIG
+BEFORE_CAPTURE=reset_free_unclassified
 classify_weight() {
-  printf 'Type "jjjjj"\nSleep 400ms\nType "c"\n'
+  # The first dialog starts the closed-issue history read in the background; the
+  # second one has it (the suggestion never waits for the forge).
+  printf 'Type "jjjjj"\nSleep 400ms\nType "c"\nSleep 2500ms\nEscape\nSleep 1500ms\nType "c"\n'
   shot suggestion 1500ms
   printf 'Type "="\n'
   shot handover 1200ms

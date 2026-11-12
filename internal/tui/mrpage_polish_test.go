@@ -47,7 +47,7 @@ func TestDialogsReplaceTheBody(t *testing.T) {
 				if i > 40 {
 					break
 				}
-				if strings.Contains(ln, "│") && !strings.HasPrefix(strings.TrimLeft(ln, " "), "│") && !strings.HasPrefix(strings.TrimLeft(ln, " "), "╭") {
+				if strings.Contains(ln, e.m.g.Border.Left) && !strings.HasPrefix(strings.TrimLeft(ln, " "), e.m.g.Border.Left) && !strings.HasPrefix(strings.TrimLeft(ln, " "), e.m.g.Border.TopLeft) {
 					t.Errorf("w=%d %s: base-layer text beside the dialog: %q", w, name, ln)
 				}
 			}
@@ -169,20 +169,20 @@ func TestFileLabelKeepsTheNewName(t *testing.T) {
 		20: "→ token_bucket.go",
 		16: "token_bucket.go",
 	} {
-		if got := fileLabel(f, n); got != want {
+		if got := fileLabel(unicodeGlyphs, f, n); got != want {
 			t.Errorf("fileLabel(rename, %d) = %q, want %q", n, got, want)
 		}
 	}
-	if got := fileLabel(f, 10); lipgloss.Width(got) > 10 || !strings.HasSuffix(got, "ket.go") || !strings.HasPrefix(got, "…") {
+	if got := fileLabel(unicodeGlyphs, f, 10); lipgloss.Width(got) > 10 || !strings.HasSuffix(got, "ket.go") || !strings.HasPrefix(got, "…") {
 		t.Errorf("fileLabel(rename, 10) = %q: want the name's tail behind an ellipsis", got)
 	}
 	moved := forge.DiffFile{OldPath: "a/old/name.go", NewPath: "b/new/token_bucket.go", Renamed: true}
-	if got := fileLabel(moved, 24); !strings.HasSuffix(got, "token_bucket.go") {
-		t.Errorf("fileLabel(moved, 24) = %q, want the new basename kept", got)
+	if got := fileLabel(unicodeGlyphs, moved, 24); !strings.HasSuffix(got, "token_bucket.go") {
+		t.Errorf("fileLabel(unicodeGlyphs, moved, 24) = %q, want the new basename kept", got)
 	}
 	plain := forge.DiffFile{OldPath: "internal/very/deep/limit/bucket.go", NewPath: "internal/very/deep/limit/bucket.go"}
-	if got := fileLabel(plain, 16); lipgloss.Width(got) > 16 || !strings.HasSuffix(got, "limit/bucket.go") && !strings.HasSuffix(got, "bucket.go") {
-		t.Errorf("fileLabel(plain, 16) = %q, want the directory cut from the left", got)
+	if got := fileLabel(unicodeGlyphs, plain, 16); lipgloss.Width(got) > 16 || !strings.HasSuffix(got, "limit/bucket.go") && !strings.HasSuffix(got, "bucket.go") {
+		t.Errorf("fileLabel(unicodeGlyphs, plain, 16) = %q, want the directory cut from the left", got)
 	}
 
 	// In the file list, the draft count survives a narrow column.
@@ -332,7 +332,7 @@ func TestDiffViewportOpensOnACodeLine(t *testing.T) {
 		e.m.mr.lineCur = cur
 		for h := 6; h <= 16; h++ {
 			pane := strings.Split(ansi.Strip(e.m.codePane(f, 82, h)), "\n")
-			if first := strings.TrimSpace(pane[1]); strings.HasPrefix(first, "│") {
+			if first := strings.TrimSpace(pane[1]); strings.HasPrefix(first, unicodeGlyphs.Border.Left) {
 				t.Errorf("cursor %d, height %d: the view opens inside a draft block: %q", cur, h, pane[1])
 			}
 		}

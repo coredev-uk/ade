@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/coredev-uk/ade/internal/app"
@@ -35,15 +36,11 @@ type OpenFunc func(ctx context.Context, name string, f config.Forge) (Forge, err
 func OpenForge(ctx context.Context, name string, f config.Forge) (Forge, error) {
 	switch f.Kind {
 	case "gitlab":
-		tok, err := f.Token(ctx)
+		c, err := gitlab.Open(ctx, name, f)
 		if err != nil {
-			return nil, fmt.Errorf("forge %s: %w", name, err)
+			return nil, err
 		}
-		base := f.URL
-		if base == "" {
-			base = "https://gitlab.com"
-		}
-		return gitlab.New(base, tok), nil
+		return c, nil
 	case "github":
 		tok, err := f.Token(ctx)
 		if err != nil {
@@ -69,7 +66,7 @@ func Resolve(ctx context.Context, a *app.App, open OpenFunc, arg string) (*Resol
 	type candidate struct{ m *config.Manifest }
 	var cands []candidate
 	for _, ref := range a.Config.Projects {
-		m, err := project.FetchManifest(ctx, a, ref)
+		m, err := project.CachedManifest(ctx, a, ref)
 		if err != nil {
 			return nil, fmt.Errorf("manifest %s: %w", ref.Source, err)
 		}
@@ -109,25 +106,42 @@ func resolveIn(ctx context.Context, a *app.App, open OpenFunc, m *config.Manifes
 	if err != nil {
 		return nil, err
 	}
-	return ResolveWith(ctx, f, m, ref)
+	return resolveWith(ctx, f, m, ref, func(ctx context.Context) (forge.User, error) {
+		return CachedMe(ctx, a, m.Forge, f)
+	})
 }
 
 // ResolveWith reads the tracker issue through an open forge.
 func ResolveWith(ctx context.Context, f Forge, m *config.Manifest, ref forge.Ref) (*Resolved, error) {
-	me, err := f.Me(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("who am I: %w", err)
+	return resolveWith(ctx, f, m, ref, f.Me)
+}
+
+// resolveWith reads who I am, the issue and its links at once: they do not
+// depend on each other, and a dialog waits for the slowest of the three.
+func resolveWith(ctx context.Context, f Forge, m *config.Manifest, ref forge.Ref, whoAmI func(context.Context) (forge.User, error)) (*Resolved, error) {
+	var (
+		me                  forge.User
+		is                  forge.Issue
+		links               []forge.Link
+		meErr, isErr, lnErr error
+		wg                  sync.WaitGroup
+	)
+	wg.Add(3)
+	go func() { defer wg.Done(); me, meErr = whoAmI(ctx) }()
+	go func() { defer wg.Done(); is, isErr = f.Issue(ctx, ref) }()
+	go func() { defer wg.Done(); links, lnErr = f.Links(ctx, ref) }()
+	wg.Wait()
+	if meErr != nil {
+		return nil, fmt.Errorf("who am I: %w", meErr)
 	}
-	is, err := f.Issue(ctx, ref)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", ref, err)
+	if isErr != nil {
+		return nil, fmt.Errorf("%s: %w", ref, isErr)
 	}
 	if is.State != "opened" {
 		return nil, fmt.Errorf("%s is %s: nothing to start", ref, is.State)
 	}
-	links, err := f.Links(ctx, ref)
-	if err != nil {
-		return nil, fmt.Errorf("links of %s: %w", ref, err)
+	if lnErr != nil {
+		return nil, fmt.Errorf("links of %s: %w", ref, lnErr)
 	}
 	item := domain.Assemble(domain.AssembleInput{
 		Project: m.Name, Manifest: m, Me: me.Username, Tracker: is, Links: links, Now: time.Now(),

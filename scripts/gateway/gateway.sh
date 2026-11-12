@@ -10,12 +10,16 @@
 #
 # `up` starts Postgres (LiteLLM budgets need a DB; without one they fail
 # open) and the proxy with a master key, then creates a virtual key with
-# max_budget MAX_BUDGET_USD (default 0.01) that may use the model `echo`.
+# max_budget MAX_BUDGET_USD (default 0.01) that may use two mock models: `echo`
+# (answers prose; the explain role) and `echo-classifier` (answers a JSON
+# label suggestion; the classify role), so which role hit which model can be
+# read back from the proxy's spend logs.
 # It writes STATE_DIR/env, to be sourced:
 #
 #   ADE_GATEWAY_URL         OpenAI-style base URL (…/v1), the profile's base_url
 #   ADE_GATEWAY_KEY         the budgeted virtual key (the profile's key)
 #   ADE_GATEWAY_MASTER_KEY  the proxy's master key (setup and inspection only)
+#   ADE_GATEWAY_MODEL / ADE_GATEWAY_CLASSIFY_MODEL   the two mock model aliases
 #
 # Prisma (LiteLLM's DB layer) needs engine binaries that nixpkgs does not
 # ship at the version the Python client pins, so they are fetched once from
@@ -27,6 +31,7 @@ set -euo pipefail
 
 CACHE=${ADE_GATEWAY_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/ade-gateway}
 MODEL=echo
+CLASSIFY_MODEL=echo-classifier
 # Per-token prices of the mock model, so each call costs a few thousandths of
 # a dollar and a $0.01 key runs dry after a handful of calls.
 IN_COST=0.000004
@@ -94,7 +99,7 @@ wait_http() { # URL SECONDS
 new_key() { # BASE MASTER MAX_BUDGET ALIAS
   curl -fsS -X POST "$1/key/generate" \
     -H "Authorization: Bearer $2" -H 'Content-Type: application/json' \
-    -d "{\"key_alias\":\"$4\",\"max_budget\":$3,\"models\":[\"$MODEL\"],\"budget_duration\":\"30d\"}" | jq -r .key
+    -d "{\"key_alias\":\"$4\",\"max_budget\":$3,\"models\":[\"$MODEL\",\"$CLASSIFY_MODEL\"],\"budget_duration\":\"30d\"}" | jq -r .key
 }
 
 cmd_up() {
@@ -129,6 +134,13 @@ model_list:
       mock_response: "Mocked gateway reply for ADE tests."
       input_cost_per_token: $IN_COST
       output_cost_per_token: $OUT_COST
+  - model_name: $CLASSIFY_MODEL
+    litellm_params:
+      model: openai/$CLASSIFY_MODEL
+      api_key: not-a-real-key
+      mock_response: '{"type":"bug","apps":[],"reason":"mock classifier"}'
+      input_cost_per_token: $IN_COST
+      output_cost_per_token: $OUT_COST
 general_settings:
   master_key: $master
   proxy_batch_write_at: 1
@@ -151,6 +163,7 @@ YAML
     echo "export ADE_GATEWAY_KEY=$key"
     echo "export ADE_GATEWAY_MASTER_KEY=$master"
     echo "export ADE_GATEWAY_MODEL=$MODEL"
+    echo "export ADE_GATEWAY_CLASSIFY_MODEL=$CLASSIFY_MODEL"
   } >"$state/env"
   chmod 600 "$state/env"
   echo "$state"

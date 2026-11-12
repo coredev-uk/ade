@@ -12,17 +12,12 @@ import (
 	"github.com/coredev-uk/ade/internal/domain"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/itemdoc"
+	"github.com/coredev-uk/ade/internal/mdrender"
 )
 
 const (
 	keyW     = 10 // faint key column of the facts block
 	minWidth = 30
-)
-
-var (
-	taskLine = regexp.MustCompile(`^\s*[-*+]\s+\[([ xX])\]\s+(.*)$`)
-	bullet   = regexp.MustCompile(`^(\s*(?:[-*+]|\d+[.)])\s+)(.*)$`)
-	heading  = regexp.MustCompile(`^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$`)
 )
 
 // Render draws the overview once, in full, for a non-interactive reader:
@@ -64,19 +59,19 @@ func body(s Snapshot, g glyphs, w int, gone bool) []string {
 		if doc.Body == "" {
 			out = append(out, " "+stFaint.Render("no description"))
 		} else {
-			out = append(out, docLines(doc.Body, cw)...)
+			out = append(out, docLines(doc.Body, cw, g)...)
 		}
 	}
 	if doc.Acceptance != "" {
 		done, total := itemdoc.Parse(doc.Acceptance).Progress()
 		out = append(out, "", section("Acceptance", progressGuide(done, total, "done"), w, g, false))
-		out = append(out, docLines(doc.Acceptance, cw)...)
+		out = append(out, docLines(doc.Acceptance, cw, g)...)
 	}
 	out = append(out, "", section("notes", "", w, g, true))
 	if strings.TrimSpace(s.Notes) == "" {
 		out = append(out, " "+stFaint.Render("no notes yet"))
 	} else {
-		out = append(out, docLines(s.Notes, cw)...)
+		out = append(out, docLines(s.Notes, cw, g)...)
 	}
 	return out
 }
@@ -261,7 +256,7 @@ func factLines(s Snapshot, g glyphs, cw int) []string {
 	}
 	switch {
 	case it.Workflow == "":
-		rowStyled("workflow", stFaint.Render("–"))
+		rowStyled("workflow", stFaint.Render(g.T(g.T(g.T("–")))))
 	case it.Drift && it.WantWorkflow != "":
 		row("workflow", it.Workflow+" "+stWarn.Render(g.Warn+" stage says "+it.WantWorkflow))
 	default:
@@ -481,7 +476,7 @@ func mrLines(mr forge.MR, g glyphs, w int) []string {
 		chips = append(chips, "open")
 	}
 	if mr.SourceBranch != "" {
-		chips = append(chips, stFaint.Render(ansi.Truncate(mr.SourceBranch, max(w-12, 8), "…")))
+		chips = append(chips, stFaint.Render(ansi.Truncate(mr.SourceBranch, max(w-12, 8), g.Ell)))
 	}
 	out := packChips(chips, g, w)
 
@@ -560,7 +555,7 @@ func packChips(chips []string, g glyphs, w int) []string {
 	for _, c := range chips {
 		cwid := lipgloss.Width(c)
 		if cwid > w {
-			c, cwid = ansi.Truncate(c, w, "…"), w
+			c, cwid = ansi.Truncate(c, w, g.Ell), w
 		}
 		switch {
 		case cur == "":
@@ -587,70 +582,19 @@ func progressGuide(done, total int, word string) string {
 	return fmt.Sprintf("%d/%d %s", done, total, word)
 }
 
-// docLines renders markdown-ish text as wrapped lines: headings bold,
-// checkboxes as [x]/[ ] (done in green), bullets with a hanging indent, code
-// fences untouched, runs of blank lines collapsed.
-func docLines(text string, cw int) []string {
+// docLines renders markdown (description, acceptance list, notes) through
+// glamour, in the Interchange style: weight for emphasis, faint quotes and
+// addresses, no background; NO_COLOR and the ascii glyph set are honoured.
+// Every line is indented one cell, like the rest of the pane.
+func docLines(text string, cw int, g glyphs) []string {
+	opts := mdrender.FromEnv(max(cw, 8), g == asciiGlyphs)
 	var out []string
-	blank := true // swallow leading blanks
-	inFence := false
-	for raw := range strings.SplitSeq(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
-		raw = strings.TrimRight(strings.ReplaceAll(raw, "\t", "    "), " ")
-		trim := strings.TrimSpace(raw)
-		if strings.HasPrefix(trim, "```") || strings.HasPrefix(trim, "~~~") {
-			inFence = !inFence
-		}
-		if trim == "" {
-			if !blank {
-				out = append(out, "")
-			}
-			blank = true
+	for _, l := range mdrender.Render(text, opts) {
+		if l == "" {
+			out = append(out, "")
 			continue
 		}
-		blank = false
-		indent := min(len(raw)-len(strings.TrimLeft(raw, " ")), 8)
-		pad := strings.Repeat(" ", indent)
-		switch {
-		case inFence || strings.HasPrefix(trim, "```") || strings.HasPrefix(trim, "~~~"):
-			for _, l := range wrap(trim, cw-indent-1) {
-				out = append(out, " "+pad+stFaint.Render(l))
-			}
-		case taskLine.MatchString(raw):
-			m := taskLine.FindStringSubmatch(raw)
-			box, text := "[ ]", m[2]
-			if m[1] != " " {
-				box = stOK.Render("[x]")
-			}
-			for i, l := range wrap(text, cw-indent-4) {
-				if i == 0 {
-					out = append(out, " "+pad+box+" "+l)
-				} else {
-					out = append(out, " "+pad+"    "+l)
-				}
-			}
-		case bullet.MatchString(raw):
-			m := bullet.FindStringSubmatch(raw)
-			lead := strings.TrimLeft(m[1], " ")
-			hang := strings.Repeat(" ", lipgloss.Width(lead))
-			for i, l := range wrap(m[2], cw-indent-len(lead)) {
-				if i == 0 {
-					out = append(out, " "+pad+lead+l)
-				} else {
-					out = append(out, " "+pad+hang+l)
-				}
-			}
-		case heading.MatchString(raw):
-			for _, l := range wrap(heading.FindStringSubmatch(raw)[1], cw) {
-				out = append(out, " "+stBold.Render(l))
-			}
-		default:
-			for _, l := range wrap(trim, cw-indent) {
-				out = append(out, " "+pad+l)
-			}
-		}
-	}
-	for len(out) > 0 && out[len(out)-1] == "" {
-		out = out[:len(out)-1]
+		out = append(out, " "+l)
 	}
 	return out
 }

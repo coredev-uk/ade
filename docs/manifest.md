@@ -121,6 +121,12 @@ come from each person's `user.workdays` and `user.holidays`.
 iterations = { source = "labels", pattern = "Sprint::{n}", start = "2026-01-05", length = "2w", overlap = 1 }
 ```
 
+`ade issue move <ref>` (or `>` in the dashboard) carries an issue into the next sprint, explicitly and audited as
+`forge.issue.sprint`: it sets the iteration for `gitlab-iterations`/`cadence`, the milestone for `milestones`, and for
+`labels` removes the old sprint label and adds the new one. ADE creates no sprint: without a next one the command says
+what to create (the next milestone, the cadence's next iteration, or the next `pattern` label). `github-project`
+iterations cannot be written. The project lead closes issues; ADE never bulk-closes.
+
 ### Weight (story points)
 
 ```toml
@@ -162,7 +168,7 @@ mr          = { create = "ask", template = "Default", draft = true, closes = "ch
   `.gitlab/merge_request_templates/<name>.md`, GitHub `.github/pull_request_template.md`). ADE shows the
   rendered body, and lists any quick actions in it (`/assign`, `/label`, ...) so they can be kept or stripped
   before anything is sent.
-- `commit_prefix`: a prefix for every commit message ADE makes and for the merge commit it sends, e.g.
+- `commit_prefix`: a prefix for the first commit of the MR (and a squash merge message), e.g.
   `"GL-{parent}"`. See [Commit prefix](#commit-prefix).
 
 ### Commit prefix
@@ -177,13 +183,16 @@ parent's when the item has none) and `{project}` the ADE project name. Unknown p
 or leading/trailing whitespace are errors (`conventions.commit_prefix`); ADE adds the separating space itself.
 Without the key nothing changes.
 
-- **Agent commits** (`ade agent push`, the TUI push) get the prefix; a message that already starts with it is
-  never prefixed twice.
-- **Merges** (`ade mr merge`, the MR page `m`) send `merge_commit_message` as GitLab's usual
-  `Merge branch 'x' into 'y'` + the MR title with the prefix + `See merge request <ref>`, and, when squashing,
-  the prefixed title as `squash_commit_message`. `--dry-run` and the merge dialog show it. The owning work item is
-  found in the sync cache, so an MR ADE has not synced gets GitLab's defaults.
-- **GitHub** start work's empty first commit is `GL-412 Start work: <title>`.
+Only the **first commit of the MR** carries the prefix, as the ticket reference needs to appear once per MR.
+
+- **Agent commits** (`ade agent push`, the TUI push) get the prefix only when the branch has no commits ahead of
+  the MR target yet (`ade.target`; with no target on record the prefix is applied). A message that already starts
+  with it is never prefixed twice.
+- **Merges** (`ade mr merge`, the MR page `m`): a merge commit is not prefixed, ADE sends GitLab's/GitHub's own
+  message. A **squash** message keeps the prefix (`squash_commit_message` = the prefixed MR title): the squash
+  commit replaces the MR's commits, so it is the first commit. `--dry-run` and the merge dialog show it. The
+  owning work item is found in the sync cache, so an MR ADE has not synced gets the forge's defaults.
+- **GitHub** start work's empty commit is the branch's first commit: `GL-412 Start work: <title>`.
 
 Your own commits are yours: start work and opening a workspace for an item's worktree record two per-worktree
 git settings (`extensions.worktreeConfig` is switched on for the repository; in a bare clone `core.bare` moves
@@ -192,16 +201,22 @@ into the bare repository's own `config.worktree`, which git requires):
 ```
 ade.parent        = 412          # the tracker issue's iid
 ade.commitPrefix  = GL-412       # absent when commit_prefix is not set (a stale value is removed)
+ade.target        = main         # the MR's target branch; absent when not known yet
 ```
 
-A `commit-msg` hook (a global `core.hooksPath` one works for every worktree) can use them to prefix the commits
-you type:
+A `commit-msg` hook (a global `core.hooksPath` one works for every worktree) can use them to prefix the first
+commit you type; `ade.target` is the MR's target branch (written when ADE knows it), so the hook prefixes only
+while the branch has no commits ahead of it:
 
 ```sh
 #!/bin/sh
-# commit-msg: prepend the ADE commit prefix unless the message has it.
+# commit-msg: prepend the ADE commit prefix to the MR's first commit only.
 prefix=$(git config --get ade.commitPrefix) || exit 0
 [ -n "$prefix" ] || exit 0
+target=$(git config --get ade.target) || exit 0
+# any commit already ahead of the target means this is not the first one
+ahead=$(git rev-list --count "$target..HEAD" 2>/dev/null || git rev-list --count "origin/$target..HEAD" 2>/dev/null) || exit 0
+[ "$ahead" = 0 ] || exit 0
 first=$(head -n1 "$1")
 case "$first" in
   "$prefix"|"$prefix "*|"$prefix:"*) exit 0 ;;                 # already prefixed
@@ -248,6 +263,27 @@ Each person can override the default with `host.layout` in their own config; `ad
 choose per tab. A service runs from the work item's own worktree when it has one in that repo, else from the shared
 baseline `main/`, so `{api.dev.port}` in web's `API_URL` follows the item's api when it has one. See
 [PLAN.md §6.6](PLAN.md#66-agents-and-workspaces-core-function-7).
+
+### Dev shell per repo
+
+```toml
+[repos.api]
+path     = "acme/api"
+devshell = "auto"     # auto | direnv | nix | none
+```
+
+`repos.<r>.devshell` decides how ADE runs the editor, omp and shell panes and the tasks and services of that repo:
+`direnv` (`direnv exec`, needs an allowed `.envrc`), `nix` (`nix develop` of the repo's flake) or `none`. `auto` (the
+default) picks direnv for a repo with an `.envrc`, else `nix develop` for a flake with a `devShell`, else none.
+Services that belong to no repo are never wrapped. Details: [setup.md](setup.md#dev-shells-direnv--nix).
+
+### Self-hosted forge keys (user config, not the manifest)
+
+A manifest names its forge only by local name; where that forge lives is each person's `[forges.<name>]`. For a
+self-hosted GitLab (`ade init --host gitlab.example.com/gitlab --ca-file … --ssh-port 2222`) these keys matter:
+`url` (a path prefix such as `/gitlab` is kept for https clone URLs and API calls), `ca_file` (PEM bundle trusted for
+the API, manifest fetches over https and git over https), `ssh_port` (clone URLs become `ssh://git@host:2222/…`) and
+`max_concurrency` (in-flight API requests per forge, default 4). See [setup.md](setup.md#self-hosted-gitlab).
 
 ## GitHub example
 

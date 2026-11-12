@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/coredev-uk/ade/internal/ai"
@@ -312,11 +311,11 @@ func (m *model) deliverReply(d *mrData, id string, st *aiText) {
 // openReply opens the reply editor, filled with the AI's draft when there is
 // one that has not been shown yet.
 func (m *model) openReply(d *mrData, id string, st *aiText) {
-	md := &mrModal{kind: modalReply, thread: id}
+	md := &mrModal{kind: modalReply, thread: id, ed: newEditor("")}
 	if st != nil && st.l.st == loadOK && st.text != "" && !st.shown {
 		st.shown = true
 		md.ed = newEditor(st.text)
-		md.aiNote = fmt.Sprintf("AI draft · %s · %s · edit it: enter posts, esc throws it away", st.model, costWord(st))
+		md.aiNote = fmt.Sprintf(m.g.T("AI draft · %s · %s · edit it: enter posts, esc throws it away"), st.model, costWord(st))
 	}
 	m.mr.modal = md
 }
@@ -421,14 +420,14 @@ func (m model) aiBlock(title string, st *aiText, w int) []string {
 		why := strings.Join(st.pf.Confirm, "; ")
 		return []string{
 			subRule(title, "AI "+g.Sep+" waiting for a yes", w, g),
-			"   " + stWarn.Render(g.Warn+" "+ansi.Truncate(why, max(10, w-8), "…")),
-			"   " + stFaint.Render(ansi.Truncate(st.pf.Describe(), w-6, "…")),
-			"   " + stFaint.Render("s asks · nothing was sent"),
+			"   " + stWarn.Render(g.Warn+" "+ansi.Truncate(why, max(10, w-8), m.g.Ell)),
+			"   " + stFaint.Render(ansi.Truncate(m.g.T(st.pf.Describe()), w-6, m.g.Ell)),
+			"   " + stFaint.Render(m.g.T("s asks · nothing was sent")),
 		}
 	case st.l.st == loadFailed:
 		return []string{
 			subRule(title, "AI", w, g),
-			"   " + stWarn.Render(ansi.Truncate(g.Warn+" no "+strings.ToLower(title)+": "+aiCause(st.l.err), w-6, "…")),
+			"   " + stWarn.Render(ansi.Truncate(g.Warn+" no "+strings.ToLower(title)+": "+aiCause(st.l.err), w-6, m.g.Ell)),
 		}
 	case st.l.st != loadOK:
 		return nil
@@ -438,7 +437,7 @@ func (m model) aiBlock(title string, st *aiText, w int) []string {
 		guide += " " + g.Sep + " includes your notes"
 	}
 	l := []string{subRule(title, guide, w, g)}
-	for _, ln := range strings.Split(lipgloss.Wrap(st.text, max(10, w-6), " "), "\n") {
+	for _, ln := range m.mdLines(st.text, max(10, w-6)) {
 		l = append(l, "   "+ln)
 	}
 	return l
@@ -460,9 +459,9 @@ func (m model) agentLine(w int) string {
 	case st.l.busy():
 		s = stBold.Render(spinnerFrame(g, m.mr.spin)+" agent review running") + stFaint.Render(" (the review model reads the diff, the threads and the linked issue)")
 	case st.pf != nil:
-		s = stWarn.Render(g.Warn+" agent review waits for a yes") + stFaint.Render(" · A asks again")
+		s = stWarn.Render(g.Warn+" agent review waits for a yes") + stFaint.Render(m.g.T(" · A asks again"))
 	case st.l.st == loadFailed:
-		s = stWarn.Render(g.Warn+" agent review failed: "+aiCause(st.l.err)) + stFaint.Render(" · A retries")
+		s = stWarn.Render(g.Warn+" agent review failed: "+aiCause(st.l.err)) + stFaint.Render(m.g.T(" · A retries"))
 	default:
 		more := ""
 		if st.rejected > 0 {
@@ -470,7 +469,7 @@ func (m model) agentLine(w int) string {
 		}
 		s = stOK.Render(g.OK+" agent review done") + stFaint.Render(fmt.Sprintf(" %s %s pending%s %s %s %s %s", g.Sep, countWord(st.added, "comment"), more, g.Sep, costWord(st), g.Sep, st.model))
 	}
-	return " " + ansi.Truncate(s, w-2, "…")
+	return " " + ansi.Truncate(s, w-2, m.g.Ell)
 }
 
 // aiModal draws the pre-flight dialog for a call waiting on a yes.
@@ -481,12 +480,12 @@ func (m model) aiModal(md *mrModal, inner int) (string, []string) {
 	var l []string
 	if st != nil && st.pf != nil {
 		for _, c := range st.pf.Confirm {
-			l = append(l, v+stWarn.Render(ansi.Truncate(m.g.Warn+" "+c, inner-3, "…")))
+			l = append(l, v+stWarn.Render(ansi.Truncate(m.g.Warn+" "+c, inner-3, m.g.Ell)))
 		}
-		l = append(l, v+stFaint.Render(ansi.Truncate(st.pf.Describe(), inner-3, "…")))
+		l = append(l, v+stFaint.Render(ansi.Truncate(m.g.T(st.pf.Describe()), inner-3, m.g.Ell)))
 	}
 	l = append(l, "", stFaint.Render("Nothing is sent until you say yes."))
-	return "Ask the model · " + md.ai.what() + " · " + d.ref.String(), l
+	return m.g.T("Ask the model · ") + md.ai.what() + m.g.T(" · ") + d.ref.String(), l
 }
 
 // threadAI is the AI part of a thread's conversation: its summary, and the
@@ -508,7 +507,7 @@ func (m model) threadAI(d *mrData, id string, w int) []string {
 	switch {
 	case st == nil:
 	case st.l.st == loadOK && !st.shown && st.text != "":
-		l = append(l, stOK.Render(m.g.OK+" AI draft reply ready")+stFaint.Render(" · r opens it in the editor"), "")
+		l = append(l, stOK.Render(m.g.OK+" AI draft reply ready")+stFaint.Render(m.g.T(" · r opens it in the editor")), "")
 	case st.l.st != loadOK:
 		if blk := m.aiBlock("Draft reply", st, w+3); len(blk) > 0 {
 			flush(blk)

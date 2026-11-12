@@ -43,6 +43,7 @@ type agileUI struct {
 	reviewGen  int
 	reviewProj string // ADE project; "" = the first with data
 	reviewSpr  string // sprint title; "" = the current one
+	selRef     string // carried item `>` moves (J/K); "" = the first
 	mine       bool
 
 	loading   bool
@@ -227,6 +228,19 @@ func (m model) agileKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	case "n":
 		next, cmd := m.narrate()
 		return next, cmd, true
+	case ">", "M", "J", "K":
+		if m.ag.kind != agileReview {
+			return m, nil, false
+		}
+		switch ks {
+		case "J":
+			m.stepCarried(1)
+		case "K":
+			m.stepCarried(-1)
+		default:
+			next, cmd := m.openReviewMove(ks == "M")
+			return next, cmd, true
+		}
 	case "[", "]", "m", "p":
 		if m.ag.kind != agileReview {
 			return m, nil, false
@@ -244,6 +258,7 @@ func (m model) agileKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 // "mine", or cycles the project.
 func (m *model) stepReview(key string) {
 	res := m.reviewResult()
+	m.ag.selRef = ""
 	switch key {
 	case "m":
 		m.ag.mine = !m.ag.mine
@@ -348,16 +363,16 @@ func fmtDay(date string) string {
 	return t.Format("Mon 2 Jan")
 }
 
-func fmtSpan(start, due string) string {
+func fmtSpan(g glyphs, start, due string) string {
 	a, err1 := time.Parse("2006-01-02", start)
 	b, err2 := time.Parse("2006-01-02", due)
 	if err1 != nil || err2 != nil {
-		return start + " – " + due
+		return start + g.T(" – ") + due
 	}
 	if a.Month() == b.Month() {
-		return fmt.Sprintf("%d–%s", a.Day(), b.Format("2 Jan"))
+		return fmt.Sprintf(g.T("%d–%s"), a.Day(), b.Format("2 Jan"))
 	}
-	return a.Format("2 Jan") + " – " + b.Format("2 Jan")
+	return a.Format("2 Jan") + g.T(" – ") + b.Format("2 Jan")
 }
 
 // narrate asks the AI service for the open report's narrative. The call is

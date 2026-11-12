@@ -417,7 +417,7 @@ func (e *Env) recordWorktree(ctx context.Context, p Plan, m *config.Manifest, rt
 		return
 	}
 	prefix := commitprefix.ForIssues(m, p.Item.IID, rt.child.IID)
-	if err := commitprefix.WriteWorktreeConfig(ctx, rt.worktree, p.Item.IID, prefix); err != nil {
+	if err := commitprefix.WriteWorktreeConfig(ctx, rt.worktree, p.Item.IID, prefix, rt.tp.Base); err != nil {
 		e.audit(p, "git.worktree.config", rt.worktree, nil, "", err)
 	}
 }

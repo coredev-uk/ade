@@ -1,0 +1,24 @@
+ ADE  ← Home · api!1                                                  no unread
+
+ #1 › api!1  Rate-limit the export endpoint
+ Ready · ✓ CI passed · 1 of 2 approvals · 2 unresolved · ▲ it needs approval
+  Overview [Threads 2] Diff 1  Review  CI ✓  History
+ Threads ──────────────────────────────────────────── 2 unresolved · 1 resolved
+   Unresolved (2) ────────────────────────────────────────────────────────────
+ ▸ ● open    general  "Is a burst of 50 too high for small ten… reviewer-rae +1
+   ● open    general  "Please add a test for the 429 path, includ… reviewer-rae
+   Resolved (1) ──────────────────────────────────────────────────────────────
+   ✓ done    limit/bucket.go:6  "Nit: rename Bucket.Rate to PerMi… reviewer-rae
+
+
+
+
+
+
+
+
+
+
+
+
+ j/k move   enter open   r reply   x resolve/reopen   esc back   ? keys

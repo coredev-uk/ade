@@ -1,0 +1,45 @@
+ [1mADE[m  [1mHome[22;2m · worktrees[m                                                                                                                                [2mno unread[m
+
+ [1mdemo · Sprint 42[m [2m────────────────────────────────────[m [2mends Fri 13 Nov · 3d left · 2/12w[m [2m │ [22;1mg/tracker#1  Rate-limit the export …[m [2m │ [m [1mActivity[m [2m─────[m [2mnothing yet[m
+[2m                                 a s b d c r m[m                                           [2m │ Sprint 42 · weight 5[m                 [2m │ [m [2mNo events yet.[m
+   My work [2m──────────────────────────────────────────────────[m [2m3 items · 2 waiting on you[m [2m │ [m                                     [2m │ [m
+ [1m▸[m [2m#1 [m  [1mRate-limit the export …[m  [m●━●━●━●━●━[1m◉[22;2m─○[m  5w   [1myou[22;2m · [m2 unresolved threads          [2m │ [m [m●[m  assigned  [2m–[m                      [2m │ [m [1mServices[m [2m───────[m [2m0 running[m
+   [2m#3 [m  Retry failed webhook d…  [1m◉[22;2m─○─○─○─○─○─○[m  5w   [1myou[22;2m · [mstart work                    [2m │ [m [m┃[m                                   [2m │ [m [2mNone running.[m
+   [2m#5 [m  Export timestamps igno…  [m●━[1m◉[22;2m─○─○─○─○─○[m  [2m–[m    [1m▲ blocked[22;2m · label workflow::blocked[m [2m │ [m [m●[m  started                          [2m │ [m
+   Sprint · open [2m─────────────────────────────────────────────────[m [2m1 not assigned to you[m [2m │ [m [m┃[m                                   [2m │ [m
+   [2m#6 [m  Billing export times o…  [1m◉[22;2m─○─○─○─○─○─○[m  [2m–[m    [2mnobody · unassigned[m                 [2m │ [m [m●[m  branch                           [2m │ [m
+                                                                                         [2m │ [m [m┃[m                                   [2m │ [m
+                                                                                         [2m │ [m [m●[m  draft                            [2m │ [m
+                                                                                         [2m │ [m [m┃[m                                   [2m │ [m
+                                                                                         [2m │ [m [m●[m  ci                               [2m │ [m
+                                                                                         [2m │ [m [m┃[m                                   [2m │ [m
+                                                                                         [2m │ [m [1m◉[m  [1mreview   [m                        [2m │ [m
+                                                                                         [2m │ [m [2m│[m                                   [2m │ [m
+                                                                                         [2m │ [m [2m○[m  merged                           [2m │ [m
+                                                                                         [2m │ [m                                     [2m │ [m
+                                                                                         [2m │ [22;1myou[22;2m · [m2 unresolved threads           [2m │ [m
+                                                                                         [2m │ [m                                     [2m │ [m
+                                                                                         [2m │ [mExports hammer the API during the    [2m │ [m
+                                                                                         [2m │ [mnightly batch.                       [2m │ [m
+                                                                                         [2m │ [m                                     [2m │ [m
+                                                                                         [2m │ [22;1mPlan[m                                 [2m │ [m
+                                                                                         [2m │ [m                                     [2m │ [m
+                                                                                         [2m │ [m• [1mmeasure[m the current rate with `ade [2m │ [m
+                                                                                         [2m │ [m  items`                             [2m │ [m
+                                                                                         [2m │ …[m                                    [2m │ [m
+                                                                                         [2m │ [m                                     [2m │ [m
+                                                                                         [2m │ [m                                     [2m │ [m
+                                                                                         [2m │ [m                                     [2m │ [m
+                                                                                         [2m │ [m                                     [2m │ [m
+                                                                                         [2m │ [m                                     [2m │ [m
+                                                                                         [2m │ [m                                     [2m │ [m
+                                                                                         [2m │ [m                                     [2m │ [m
+                                                                                         [2m │ [m                                     [2m │ [m
+                                                                                         [2m │ [m                                     [2m │ [m
+                                                                                         [2m │ [m                                     [2m │ [m
+                                                                                         [2m │ [m                                     [2m │ [m
+                                                                                         [2m │ [m                                     [2m │ [m
+                                                                                         [2m │ [m                                     [2m │ [m
+                                                                                         [2m │ [m                                     [2m │ [m
+                                                                                         [2m │ [m                                     [2m │ [m
+ [1mj/k[m [2mmove[m   [1menter[m [2mopen[m   [1m/[m [2msearch[m   [1m:[m [2mpalette[m   [1mf[m [2mfilter: all[m   [1mo[m [2mbrowser[m   [1mw[m [2mworkspace[m   [1mU[m [2mrefresh[m   [1m?[m [2mkeys[m   [1mq[m [2mquit[m

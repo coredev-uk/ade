@@ -14,6 +14,7 @@ import (
 	"github.com/coredev-uk/ade/internal/app"
 	"github.com/coredev-uk/ade/internal/audit"
 	"github.com/coredev-uk/ade/internal/commitprefix"
+	"github.com/coredev-uk/ade/internal/devshell"
 	"github.com/coredev-uk/ade/internal/editor"
 	"github.com/coredev-uk/ade/internal/host"
 	"github.com/coredev-uk/ade/internal/host/zellij"
@@ -35,6 +36,7 @@ type openConfig struct {
 	trees                                      TreeOptions
 	item                                       *ItemRef
 	items                                      []ItemRef
+	devshell                                   devshell.Finder
 }
 
 // OpenOption tunes Open.
@@ -67,6 +69,10 @@ func WithSession(name string) OpenOption { return func(c *openConfig) { c.sessio
 
 // WithBaseRef sets what the review layout diffs against; default origin/<default branch>.
 func WithBaseRef(ref string) OpenOption { return func(c *openConfig) { c.baseRef = ref } }
+
+// WithDevshellFinder replaces how the worktree's dev shell is detected (PATH
+// and the file system by default); tests use it.
+func WithDevshellFinder(f devshell.Finder) OpenOption { return func(c *openConfig) { c.devshell = f } }
 
 // WithItem names the work item the worktree belongs to: its tab then shows the
 // item's overview, the agent layout briefs omp on it, and the item's worktrees in
@@ -112,7 +118,8 @@ func Open(ctx context.Context, a *app.App, project, repo, worktree string, opts 
 	res.Host = hostKind
 	if p.item != nil {
 		// The worktree tells commit-msg hooks and the user's own git what the ticket is.
-		cfgErr := commitprefix.WriteWorktreeConfig(ctx, loc.Tree, p.item.Item.Ref.IID, commitprefix.ExpandPrefix(loc.Manifest, p.item.Item, loc.Repo))
+		target := commitprefix.TargetBranch(ctx, p.item.Item, loc.Manifest.Repos[loc.Repo].Path, loc.Tree)
+		cfgErr := commitprefix.WriteWorktreeConfig(ctx, loc.Tree, p.item.Item.Ref.IID, commitprefix.ExpandPrefix(loc.Manifest, p.item.Item, loc.Repo), target)
 		if cfgErr != nil {
 			res.Warnings = append(res.Warnings, "worktree git config: "+cfgErr.Error())
 		}
@@ -387,6 +394,7 @@ func openTab(ctx context.Context, run zellijRunner, session, tab, layoutFile str
 // run-graph node.
 func layoutSpec(ctx context.Context, p *prepared) LayoutSpec {
 	spec := LayoutSpec{Layout: p.res.Layout, Tab: p.res.Tab, Dir: p.loc.Tree, Tools: DetectTools(p.ade, p.editor, p.loc.Tree), BaseRef: p.cfg.baseRef}
+	spec.Devshell = p.cfg.devshell.Detect(p.loc.Tree, p.loc.Manifest.Repos[p.loc.Repo].Devshell)
 	if p.item != nil {
 		spec.Overview = []string{"item", p.item.Item.Ref.String(), "--watch"}
 	}
@@ -447,12 +455,15 @@ func openVSCode(ctx context.Context, p *prepared, res *OpenResult) error {
 		}
 		res.TasksFile = path
 	}
-	code, err := exec.LookPath("code")
-	if err != nil {
-		res.Hint = "code is not on PATH: open " + p.loc.Tree + " in VS Code"
+	env := editor.FromOS()
+	ed := editor.Resolve(editor.SettingCode, env)
+	if ed.Kind != editor.Code {
+		res.Hint = env.NoCodeHint(p.loc.Tree)
 		return nil
 	}
-	if err := exec.CommandContext(ctx, code, "--new-window", p.loc.Tree).Run(); err != nil {
+	cmd := exec.CommandContext(ctx, ed.Cmd, "--new-window", p.loc.Tree)
+	cmd.Env = ed.Environ()
+	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("code: %w", err)
 	}
 	res.Created = true

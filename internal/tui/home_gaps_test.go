@@ -549,7 +549,7 @@ func TestRowBadgeAndEpic(t *testing.T) {
 		if !strings.Contains(line, g.Sep+" Exports") {
 			t.Errorf("row lacks its epic:\n%s", line)
 		}
-		if g == asciiGlyphs && !isASCII(strings.SplitN(line, "│", 2)[0]) {
+		if g == asciiGlyphs && !isASCII(strings.SplitN(line, g.Border.Left, 2)[0]) {
 			t.Errorf("ascii row has non-ascii runes: %s", line)
 		}
 	}

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/coredev-uk/ade/internal/billing"
 	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/httpdebug"
 )
@@ -20,7 +21,8 @@ import (
 type Role string
 
 const (
-	RoleExplain   Role = "explain"   // summaries, classify, standup
+	RoleExplain   Role = "explain"   // summaries, thread summaries, standup, sprint text
+	RoleClassify  Role = "classify"  // short structured answers (label suggestions); falls back to explain
 	RoleDraft     Role = "draft"     // replies, MR text
 	RolePlan      Role = "plan"      // agent plans
 	RoleImplement Role = "implement" // agent runs
@@ -46,6 +48,16 @@ type Call struct {
 	MaxTokens int // output cap; 0 = driver default
 	// MaxCostUSD hard-stops the call where the driver can (omp --max-cost).
 	MaxCostUSD float64
+	// Schema asks for a JSON answer of this shape where the driver can
+	// enforce it (OpenAI-style response_format). Drivers or gateways that
+	// cannot simply answer in text, which the caller parses either way.
+	Schema *Schema
+}
+
+// Schema is the JSON Schema of a structured answer.
+type Schema struct {
+	Name string         // identifier sent with the schema, e.g. "classify"
+	JSON map[string]any // the schema document
 }
 
 // Usage is the token accounting of a response.
@@ -64,6 +76,10 @@ type Response struct {
 	CostSource string
 	DestHost   string // where the prompt went, for the audit trail (4.3)
 	Bytes      int    // request body size
+	// Structured is true when the call carried a Schema and the endpoint
+	// accepted it; false when none was asked for or the endpoint refused it
+	// and the answer is free text.
+	Structured bool
 	// Gateway carries LiteLLM's per-request key figures when present.
 	Gateway *GatewayInfo
 }
@@ -119,6 +135,12 @@ func DriverFor(ctx context.Context, p config.AIProfile, hc *http.Client) (Driver
 		if hc == nil {
 			hc = &http.Client{Timeout: 5 * time.Minute, Transport: httpdebug.Transport(nil)}
 		}
+		if p.Timeout.Duration > 0 {
+			c := *hc
+			c.Timeout = p.Timeout.Duration
+			hc = &c
+		}
+		hc = billing.WithHeaders(hc, p.ExtraHeaders)
 		if p.Driver == "anthropic" {
 			return newAnthropic(p, key, hc), nil
 		}

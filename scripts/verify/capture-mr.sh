@@ -22,7 +22,7 @@
 #   confirm    confirm-merge (squash, delete branch)
 #   ai         ai-summary, ai-summary-raw (d), ai-thread-summary (s), ai-draft-reply
 #              (d on a thread: in the reply editor), ai-review-hint, ai-agent-done
-#              (A: drafts pending in Review), ai-agent-diff, ai-help; ai-summary-running,
+#              (A: drafts pending in Review), ai-agent-diff, ai-help, palette (`:` on the page), ai-thread-open; ai-summary-running,
 #              ai-agent-running, ai-summary-late, ai-agent-done-slow (a 5 s stub, the page
 #              stays usable); ai-off-* (ai.mode = off: no A, no d)
 #
@@ -342,6 +342,10 @@ Type "d"
 Sleep 1800ms
 $(shot "$s" ai-draft-reply)
 $(esc)
+Enter
+Sleep 600ms
+$(shot "$s" ai-thread-open)
+$(esc)
 Type "4"
 Sleep 600ms
 $(shot "$s" ai-review-hint)
@@ -356,6 +360,11 @@ $(shot "$s" ai-agent-diff)
 Type "?"
 Sleep 500ms
 $(shot "$s" ai-help)
+$(esc)
+Type ":"
+Type "reply"
+Sleep 500ms
+$(shot "$s" palette)
 EOF
 }
 

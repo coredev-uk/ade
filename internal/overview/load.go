@@ -2,7 +2,7 @@
 // `ade item <ref> --watch`: one work item drawn from the local cache (tracker
 // issue, child issues, merge requests, description, acceptance, your notes)
 // in a narrow pane. It never touches the network: `ade sync` writes the
-// cache and the pane reloads when it changes.
+// cache and the pane reloads when it changes (see internal/watch).
 package overview
 
 import (
@@ -79,7 +79,7 @@ type Loader struct {
 	loaded     bool
 }
 
-// fingerprint is what a poll compares: size and modification time of the
+// fingerprint is what a Poll compares: size and modification time of the
 // cache database, its write-ahead log (sync writes land there first) and the
 // item's record (notes edits).
 type fingerprint [3]stamp

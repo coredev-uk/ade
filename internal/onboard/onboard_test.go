@@ -23,12 +23,24 @@ func TestRenderRoundTripsThroughConfigLoad(t *testing.T) {
 			config.Forge{Kind: "gitlab", URL: "https://gitlab.example.com", TokenEnv: "GITLAB_TOKEN", GitProtocol: "https"},
 		},
 		{
+			"self-hosted gitlab with a CA bundle, a path prefix and an ssh port",
+			Answers{
+				Handle: "jdoe", ForgeName: "work", Kind: "gitlab", URL: "https://git.example.internal/gitlab", TokenEnv: "GITLAB_TOKEN",
+				GitProtocol: "ssh", Root: "~/ade", CAFile: "/etc/ssl/certs/corp-ca.pem", SSHPort: 2222,
+			},
+			config.Forge{
+				Kind: "gitlab", URL: "https://git.example.internal/gitlab", TokenEnv: "GITLAB_TOKEN", GitProtocol: "ssh",
+				CAFile: "/etc/ssl/certs/corp-ca.pem", SSHPort: 2222,
+			},
+		},
+		{
 			"github with command token and the public host implied",
 			Answers{Handle: "jdoe", ForgeName: "personal", Kind: "github", TokenCmd: "gh auth token", GitProtocol: "ssh", Root: "/srv/ade"},
 			config.Forge{Kind: "github", URL: "https://github.com", TokenCmd: "gh auth token", GitProtocol: "ssh"},
 		},
 	}
 	for _, tt := range tests {
+		tt.want.MaxConcurrency = config.DefaultMaxConcurrency // Load fills the default
 		t.Run(tt.name, func(t *testing.T) {
 			data, err := Render(tt.a)
 			if err != nil {

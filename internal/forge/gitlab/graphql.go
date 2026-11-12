@@ -52,13 +52,34 @@ func (c *Client) graphql(ctx context.Context, query string, vars map[string]any,
 	return nil
 }
 
+// graphqlSchemaError is a document the instance's schema rejects: it names a
+// type or field this GitLab release does not have (an old instance). It is
+// not a transient failure; the feature is simply not available there.
+type graphqlSchemaError struct{ msg string }
+
+func (e *graphqlSchemaError) Error() string { return e.msg }
+
+// schemaMessages are GraphQL validation errors that mean "this schema lacks
+// it", as graphql-ruby words them.
+var schemaMessages = []string{"doesn't exist on type", "isn't a defined input type", "Unknown type", "Undefined field"}
+
 func firstError(errs []graphqlError) error {
 	if len(errs) == 0 {
 		return errors.New("empty response")
 	}
 	msgs := make([]string, len(errs))
+	schema := true
 	for i, e := range errs {
 		msgs[i] = e.Message
+		known := false
+		for _, m := range schemaMessages {
+			known = known || strings.Contains(e.Message, m)
+		}
+		schema = schema && known
 	}
-	return errors.New(strings.Join(msgs, "; "))
+	msg := strings.Join(msgs, "; ")
+	if schema {
+		return &graphqlSchemaError{msg: msg}
+	}
+	return errors.New(msg)
 }

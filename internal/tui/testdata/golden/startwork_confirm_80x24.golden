@@ -1,0 +1,24 @@
+ ADE  Home · worktrees                                                no unread
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ Start work · ade-demo-env/tracker#3                                          │
+│                                                                              │
+│  Confirm ─────────────────────────────────── 5 forge writes · 2 local steps  │
+│ ●━ api ade-demo-env/api                                                      │
+│ ┗━ + forge child issue, link, branch, draft MR · + local worktree, workspace │
+│ ┃ + forge set workflow::in progress on ade-demo-env/tracker#3                │
+│                                                                              │
+│  MR · api ──────────────────────────────────────────────── template Default  │
+│ ┃ Closes <child issue, created first>                                        │
+│ ┃ Part of ade-demo-env/tracker#3                                             │
+│ ┃ ## What                                                                    │
+│ ┃ /label ~"type::story"                                                      │
+│ ┃ /assign_reviewer @reviewer-rae                                             │
+│                                                                              │
+│  Quick actions ──────────────── the forge runs these when the MR is created  │
+│ ▸ keep  add labels ~type::story /label ~"type::story"                        │
+│   keep  request review from @reviewer-rae /assign_reviewer @reviewer-rae     │
+│                                                                              │
+│ enter confirm   x keep/strip   e/E edit body   esc back                      │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+ j/k move   enter open   / search   : palette   f all   tab details   ? keys

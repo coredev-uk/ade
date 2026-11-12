@@ -343,7 +343,7 @@ func TestFailurePopupWrapsRecoveryText(t *testing.T) {
 	e.Subject = "project demo-gl is not cloned: open /tmp/ade-demo/projects/demo-gl/.project.toml: no such file or directory"
 	box := ansi.Strip(toastBox(unicodeGlyphs, toast{ev: e}, 44))
 	for _, want := range []string{"project demo-gl is not", "no such file or directory", "esc dismiss"} {
-		if !strings.Contains(strings.Join(strings.Fields(strings.ReplaceAll(box, "│", " ")), " "), want) {
+		if !strings.Contains(strings.Join(strings.Fields(strings.ReplaceAll(box, unicodeGlyphs.Border.Left, " ")), " "), want) {
 			t.Errorf("recovery text lost %q:\n%s", want, box)
 		}
 	}
@@ -356,7 +356,7 @@ func TestFailurePopupWrapsRecoveryText(t *testing.T) {
 	e.Severity = events.Info
 	e.Title = "workspace api/1-rate-limit-the-export-endpoint is not in a tab here"
 	e.Subject = "restart it with ade ws up --no-zellij"
-	got := strings.Join(strings.Fields(strings.ReplaceAll(ansi.Strip(toastBox(unicodeGlyphs, toast{ev: e, expires: toastNow()}, 44)), "│", " ")), " ")
+	got := strings.Join(strings.Fields(strings.ReplaceAll(ansi.Strip(toastBox(unicodeGlyphs, toast{ev: e, expires: toastNow()}, 44)), unicodeGlyphs.Border.Left, " ")), " ")
 	if !strings.Contains(got, "ade ws up --no-zellij") || strings.Contains(got, "esc dismiss") {
 		t.Errorf("an info pop-up keeps its command whole and does not ask to be dismissed: %s", got)
 	}
@@ -367,7 +367,7 @@ func toastNow() time.Time { return time.Now().Add(time.Minute) }
 func TestFailurePopupKeepsALongTaskFailureReadable(t *testing.T) {
 	e := events.New("task.failed", events.Error,
 		"api.dev failed: process exited before ready (http http://127.0.0.1:37007/healthz), last log line: listen tcp 127.0.0.1:37007: bind: address already in use")
-	box := strings.Join(strings.Fields(strings.ReplaceAll(ansi.Strip(toastBox(unicodeGlyphs, toast{ev: e}, 44)), "│", " ")), " ")
+	box := strings.Join(strings.Fields(strings.ReplaceAll(ansi.Strip(toastBox(unicodeGlyphs, toast{ev: e}, 44)), unicodeGlyphs.Border.Left, " ")), " ")
 	if !strings.Contains(box, "address already in use") {
 		t.Fatalf("the recovery hint at the end of the title was cut: %s", box)
 	}
@@ -377,7 +377,7 @@ func TestWarningPopupWrapsItsReason(t *testing.T) {
 	e := events.New("task.blocked", events.Warn,
 		"web.dev not started: blocked: api.dev not ready (timeout 60s, last log line: listen tcp 127.0.0.1:37007: address already in use)")
 	box := toast{ev: e, expires: toastNow()}
-	got := strings.Join(strings.Fields(strings.ReplaceAll(ansi.Strip(toastBox(unicodeGlyphs, box, 44)), "│", " ")), " ")
+	got := strings.Join(strings.Fields(strings.ReplaceAll(ansi.Strip(toastBox(unicodeGlyphs, box, 44)), unicodeGlyphs.Border.Left, " ")), " ")
 	if !strings.Contains(got, "address already in use)") || strings.Contains(got, "esc dismiss") {
 		t.Fatalf("a warning wraps and does not ask to be dismissed: %s", got)
 	}

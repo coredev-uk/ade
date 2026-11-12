@@ -1,5 +1,4 @@
-// Package tui is the ADE dashboard (Interchange direction; see
-// .impeccable/surfaces/internal-tui.md).
+// Package tui is the ADE dashboard (Interchange direction; see DESIGN.md).
 package tui
 
 import (
@@ -14,6 +13,7 @@ import (
 	"github.com/coredev-uk/ade/internal/notify"
 	"github.com/coredev-uk/ade/internal/project"
 	"github.com/coredev-uk/ade/internal/review"
+	"github.com/coredev-uk/ade/internal/watch"
 )
 
 // Run shows the dashboard until the user quits. It owns the update (git) and
@@ -30,6 +30,12 @@ func Run(ctx context.Context, a *app.App) error {
 		nc: newNotifCenter(notify.NewInbox(cache)), g: glyphSet(a.Config.Host.Glyphs),
 		reviews: review.NewStore(cache), be: &mrBackends{},
 	}
+	ctx, cancel := context.WithCancel(ctx) // stops the file watchers
+	defer cancel()
+	if m.fw, err = newFileWatch(ctx, a, cache.Path, watch.Options{}); err != nil {
+		return fmt.Errorf("watch: %w", err)
+	}
+	m.ctx = ctx
 	p := tea.NewProgram(m, tea.WithContext(ctx))
 
 	svc.OnProgress = func(pr project.Progress) { p.Send(progressMsg(pr)) }

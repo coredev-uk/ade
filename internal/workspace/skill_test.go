@@ -64,7 +64,7 @@ func TestRenderSkillCarriesTheTicket(t *testing.T) {
 		"Use the token bucket in pkg/limit",
 		"<repository-rules file=\"AGENTS.md\">",
 		"Run `make check` before committing.",
-		"Every commit message starts with `GL-12` and a space",
+		"Only the first commit of the merge request starts with `GL-12` and a space",
 		"**Stop for review.**",
 		"Do not push",
 	} {

@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coredev-uk/ade/internal/forge"
@@ -44,15 +45,19 @@ type Client struct {
 	token      string
 	hc         *http.Client
 	sem        chan struct{}
+	inFlight   int
+	missing    unavailableSet // features this instance answered 404 for (see Unavailable)
 	maxRetries int
 	now        func() time.Time
 	sleep      func(context.Context, time.Duration) error
 
-	// gateUntil is when the last 429 said requests may resume. New requests
-	// wait for it instead of piling onto a closed rate-limit window, which
-	// only extends the penalty. It uses the wall clock, not c.now.
-	gateMu    sync.Mutex
-	gateUntil time.Time
+	// rate is shared with every client of the same instance and token: the
+	// 429 gate and the RateLimit-* budget (see ratelimit.go). The in-flight
+	// cap above stays per client.
+	rate *rateState
+	// noBatch is set once the instance could not answer the MRDetails query:
+	// merge requests are then read one by one.
+	noBatch atomic.Bool
 }
 
 var _ forge.Forge = (*Client)(nil)
@@ -74,6 +79,18 @@ func WithSleep(sleep func(context.Context, time.Duration) error) Option {
 // WithMaxRetries sets how many times a 429 is retried per request.
 func WithMaxRetries(n int) Option { return func(c *Client) { c.maxRetries = n } }
 
+// WithMaxConcurrency caps concurrent requests of this client (default 4, the
+// per-host cap of the plan). Self-managed instances set their own limits, so
+// `[forges.x] max_concurrency` lets a user lower or raise it. n < 1 keeps the
+// default.
+func WithMaxConcurrency(n int) Option {
+	return func(c *Client) {
+		if n > 0 {
+			c.inFlight = n
+		}
+	}
+}
+
 // New returns a client for the GitLab instance at baseURL (for example
 // https://gitlab.com), authenticating with a personal, group or project
 // access token.
@@ -82,7 +99,7 @@ func New(baseURL, token string, opts ...Option) *Client {
 		base:       strings.TrimRight(baseURL, "/"),
 		token:      token,
 		hc:         &http.Client{Timeout: 30 * time.Second, Transport: httpdebug.Transport(nil)},
-		sem:        make(chan struct{}, maxInFlight),
+		inFlight:   maxInFlight,
 		maxRetries: defaultMaxRetries,
 		now:        time.Now,
 		sleep:      sleepCtx,
@@ -90,6 +107,8 @@ func New(baseURL, token string, opts ...Option) *Client {
 	for _, o := range opts {
 		o(c)
 	}
+	c.sem = make(chan struct{}, c.inFlight)
+	c.rate = sharedRate(c.base, c.token)
 	return c
 }
 
@@ -173,34 +192,11 @@ func (c *Client) do(ctx context.Context, r request) (*http.Response, error) {
 			// with a fresh, longer wait.
 			wait += retryPad
 		}
-		c.closeGate(wait)
+		c.rate.closeGate(wait)
 		if err := c.sleep(ctx, wait); err != nil {
 			return nil, err
 		}
 	}
-}
-
-// closeGate holds back requests that have not started yet for d: while a
-// window is closed every further request is refused and still counts.
-func (c *Client) closeGate(d time.Duration) {
-	until := time.Now().Add(d)
-	c.gateMu.Lock()
-	if until.After(c.gateUntil) {
-		c.gateUntil = until
-	}
-	c.gateMu.Unlock()
-}
-
-// waitGate blocks a request that is about to start until the gate opens. A
-// retry has already slept for its own Retry-After and skips the gate.
-func (c *Client) waitGate(ctx context.Context) error {
-	c.gateMu.Lock()
-	d := time.Until(c.gateUntil)
-	c.gateMu.Unlock()
-	if d <= 0 {
-		return nil
-	}
-	return c.sleep(ctx, d)
 }
 
 // once performs a single attempt. The in-flight slot is held until the
@@ -251,6 +247,7 @@ func (c *Client) once(ctx context.Context, r request, retry bool) (*http.Respons
 		release()
 		return nil, fmt.Errorf("gitlab %s %s: %w", r.method, r.path, err)
 	}
+	c.rate.observe(resp.Header, time.Now())
 	resp.Body = &slotBody{ReadCloser: resp.Body, release: release}
 	return resp, nil
 }

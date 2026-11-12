@@ -34,10 +34,10 @@ func (m model) agileFooter(w int) string {
 		return " " + keys("j/k", "scroll", "r", "reload", "n", "narrative", "y", "copy", "esc", "back", "?", "keys")
 	case m.ag.kind == agileStandup:
 		return " " + keys("j/k", "scroll", "r", "reload", "n", "AI narrative", "y", "copy as Markdown", "esc", "back", "t", "home", "i", "notifications", "?", "keys", "q", "quit")
-	case narrow:
-		return " " + keys("j/k", "scroll", "[ ]", "sprint", "m", "mine", "n", "narrative", "y", "copy", "esc", "back", "?", "keys")
+	case w < 150: // the review's keys no longer fit whole below this
+		return " " + keys("j/k", "scroll", "[ ]", "sprint", "m", "mine", "J/K", "item", ">", "move", "M", "move mine", "esc", "back", "?", "keys")
 	}
-	return " " + keys("j/k", "scroll", "[ ]", "sprint", "m", "mine: "+onOff(m.ag.mine), "p", "project", "r", "reload", "n", "AI narrative", "y", "copy as Markdown", "esc", "back", "?", "keys", "q", "quit")
+	return " " + keys("j/k", "scroll", "[ ]", "sprint", "m", "mine: "+onOff(m.ag.mine), "J/K", "carried item", ">", "move to next sprint", "M", "move mine", "p", "project", "r", "reload", "n", "AI narrative", "y", "copy", "esc", "back", "?", "keys", "q", "quit")
 }
 
 func onOff(b bool) string {
@@ -59,17 +59,17 @@ func (m model) agileBody(w, h int) string {
 	if top > 0 {
 		lines = lines[top:]
 	}
-	return fit(strings.Join(lines, "\n"), w, h)
+	return fit(m.g, strings.Join(lines, "\n"), w, h)
 }
 
 // rightAligned puts right at the right edge of a w-cell line; left is cut with
 // an ellipsis when the two do not fit.
-func rightAligned(left, right string, w int) string {
+func rightAligned(g glyphs, left, right string, w int) string {
 	if right == "" {
 		return left
 	}
 	room := w - lipgloss.Width(right) - 2
-	return pad(left, room) + " " + right
+	return pad(g, left, room) + " " + right
 }
 
 func refShort(ref string) string {
@@ -114,7 +114,7 @@ func (m model) standupLines(w int) []string {
 		if m.ag.standupErr != nil {
 			return loadError(g, m.ag.standupErr, w)
 		}
-		return []string{notice(g, "reading standup…")}
+		return []string{notice(g, m.g.T("reading standup…"))}
 	}
 	guide := fmt.Sprintf("%s %s since %s", fmtDay(s.Date), g.Sep, fmtDay(s.Yesterday))
 	if m.ag.loading {
@@ -139,7 +139,7 @@ func (m model) standupLines(w int) []string {
 			mark = g.OK
 		}
 		when := stFaint.Render(e.At.Local().Format("15:04") + " " + sourceWord(e.Source))
-		out = append(out, rightAligned(labelPad+mark+" "+e.Text, when, w))
+		out = append(out, rightAligned(m.g, labelPad+mark+" "+e.Text, when, w))
 	}
 
 	out = append(out, "", section("Today", countWord(len(s.Today), "item")+" in your court", w, g))
@@ -162,10 +162,10 @@ func (m model) standupLines(w int) []string {
 		lead := labelPad + stWarn.Bold(true).Render(g.Warn) + " "
 		head := lead + stBold.Render(refShort(b.Ref)) + " " + b.Title
 		if tail := " " + g.Sep + " " + b.Reason; lipgloss.Width(head)+lipgloss.Width(tail) <= w-2 {
-			out = append(out, pad(head+stFaint.Render(tail), w))
+			out = append(out, pad(m.g, head+stFaint.Render(tail), w))
 			continue
 		}
-		out = append(out, pad(head, w))
+		out = append(out, pad(m.g, head, w))
 		for _, l := range wrap(b.Reason, w-lipgloss.Width(lead)-2) {
 			out = append(out, strings.Repeat(" ", lipgloss.Width(lead))+stFaint.Render(l))
 		}
@@ -237,9 +237,9 @@ func (m model) focusLines(f agile.Focus, w int) []string {
 	reason := courtTextPlain(g, f)
 	tail := " " + g.Sep + " " + reason
 	if lipgloss.Width(head)+lipgloss.Width(tail) <= w-2-lipgloss.Width(right) {
-		return []string{rightAligned(head+stFaint.Render(tail), right, w)}
+		return []string{rightAligned(m.g, head+stFaint.Render(tail), right, w)}
 	}
-	out := []string{rightAligned(head, right, w)}
+	out := []string{rightAligned(m.g, head, right, w)}
 	indent := strings.Repeat(" ", lipgloss.Width(lead))
 	for _, l := range wrap(reason, w-lipgloss.Width(lead)-2) {
 		out = append(out, indent+stFaint.Render(l))
@@ -298,10 +298,10 @@ func (m model) reviewLines(w int) []string {
 		if m.ag.reviewErr != nil {
 			return loadError(g, m.ag.reviewErr, w)
 		}
-		return []string{notice(g, "reading the sprint from the forge…")}
+		return []string{notice(g, m.g.T("reading the sprint from the forge…"))}
 	}
 	line := ink(r.Project)
-	guide := fmtSpan(r.Sprint.Start.String(), r.Sprint.Due.String()) + " " + g.Sep + " by " + r.Basis
+	guide := fmtSpan(m.g, r.Sprint.Start.String(), r.Sprint.Due.String()) + " " + g.Sep + " by " + r.Basis
 	if r.Mine {
 		guide += " " + g.Sep + " mine"
 	}
@@ -317,15 +317,15 @@ func (m model) reviewLines(w int) []string {
 		out = append(out, narrativeLines(g, r.Narrative, w)...)
 	}
 	out = append(out, "")
-	kv := func(k, v string) string { return labelPad + stFaint.Render(pad(k, keyColW)) + v }
+	kv := func(k, v string) string { return labelPad + stFaint.Render(pad(m.g, k, keyColW)) + v }
 	out = append(out,
-		kv("Committed", agile.FormatTotals(r.Committed, r.Basis)),
-		kv("Added", agile.FormatTotals(r.Added, r.Basis)+stFaint.Render(" after the first day")),
-		kv("Done", stBold.Render(agile.FormatTotals(r.Done, r.Basis))),
-		kv("Carried", agile.FormatTotals(r.Carried, r.Basis)),
+		kv("Committed", g.T(agile.FormatTotals(r.Committed, r.Basis))),
+		kv("Added", g.T(agile.FormatTotals(r.Added, r.Basis))+stFaint.Render(" after the first day")),
+		kv("Done", stBold.Render(g.T(agile.FormatTotals(r.Done, r.Basis)))),
+		kv("Carried", g.T(agile.FormatTotals(r.Carried, r.Basis))),
 	)
 	total := metric(r.Committed, r.Basis) + metric(r.Added, r.Basis)
-	out = append(out, labelPad+stFaint.Render(pad("", keyColW))+bar(g, line, metric(r.Done, r.Basis), total)+"  "+scopeWords(r, total))
+	out = append(out, labelPad+stFaint.Render(pad(m.g, "", keyColW))+bar(g, line, metric(r.Done, r.Basis), total)+"  "+scopeWords(r, total))
 
 	out = append(out, "", section("Velocity", velocityGuide(g, r.Velocity), w, g))
 	out = append(out, m.velocityLines(r.Velocity, line)...)
@@ -337,7 +337,7 @@ func (m model) reviewLines(w int) []string {
 			peak = max(peak, p.Remaining, int(p.Ideal+0.5))
 		}
 		for _, p := range r.Burndown {
-			out = append(out, pad(labelPad+stFaint.Render(pad(fmtDay(p.Date), keyColW))+bar(g, line, p.Remaining, peak)+
+			out = append(out, pad(m.g, labelPad+stFaint.Render(pad(m.g, fmtDay(p.Date), keyColW))+bar(g, line, p.Remaining, peak)+
 				fmt.Sprintf(" %3d", p.Remaining)+stFaint.Render(fmt.Sprintf("  ideal %.1f", p.Ideal)), w))
 		}
 	}
@@ -349,7 +349,7 @@ func (m model) reviewLines(w int) []string {
 			if name == "" {
 				name = "no epic"
 			}
-			out = append(out, pad(labelPad+stBold.Render(name)+stFaint.Render(" "+g.Sep+" ")+agile.EpicSummary(e, r.Basis), w))
+			out = append(out, pad(m.g, labelPad+stBold.Render(name)+stFaint.Render(" "+g.Sep+" ")+agile.EpicSummary(e, r.Basis), w))
 		}
 	}
 
@@ -414,7 +414,7 @@ func (m model) velocityLines(v agile.Velocity, line lipgloss.Style) []string {
 	}
 	var out []string
 	for _, s := range v.Sprints {
-		head := labelPad + stFaint.Render(pad(s.Title, keyColW))
+		head := labelPad + stFaint.Render(pad(m.g, s.Title, keyColW))
 		switch {
 		case v.Basis == agile.BasisWeight && s.Velocity == nil:
 			out = append(out, head+stFaint.Render(g.Ahead+" no weighted work "+g.Sep+" not in the average"))
@@ -449,12 +449,14 @@ func (m model) reviewItemLines(it agile.ReviewItem, line lipgloss.Style, statusW
 	mark, word := stFaint.Render(g.Ahead), stFaint.Render(itemStatus(it))
 	if it.Done {
 		mark, word = line.Render(g.Done), itemStatus(it)
+	} else if sel, ok := m.selectedCarried(); ok && sel.Ref == it.Ref {
+		mark = stBold.Render(g.Selected) // the carried item `>` moves
 	}
-	weight := stFaint.Render("–")
+	weight := stFaint.Render(m.g.T("–"))
 	if it.Weight != nil {
 		weight = fmt.Sprintf("%dw", *it.Weight)
 	}
-	lead := labelPad + mark + " " + pad(word, statusW) + " "
+	lead := labelPad + mark + " " + pad(m.g, word, statusW) + " "
 	left := lead + stBold.Render(refShort(it.Ref.String())) + " " + it.Title
 	var meta []string
 	if it.Added {
@@ -464,14 +466,14 @@ func (m model) reviewItemLines(it agile.ReviewItem, line lipgloss.Style, statusW
 		meta = append(meta, "merged "+strings.Join(it.MRs, ", "))
 	}
 	if len(meta) == 0 {
-		return []string{rightAligned(left, weight, w)}
+		return []string{rightAligned(m.g, left, weight, w)}
 	}
 	tail := " " + g.Sep + " " + strings.Join(meta, " "+g.Sep+" ")
 	if lipgloss.Width(left)+lipgloss.Width(tail) <= w-2-lipgloss.Width(weight) {
-		return []string{rightAligned(left+stFaint.Render(tail), weight, w)}
+		return []string{rightAligned(m.g, left+stFaint.Render(tail), weight, w)}
 	}
 	indent := strings.Repeat(" ", lipgloss.Width(lead))
-	out := []string{rightAligned(left, weight, w)}
+	out := []string{rightAligned(m.g, left, weight, w)}
 	for _, l := range wrap(strings.Join(meta, " "+g.Sep+" "), w-lipgloss.Width(lead)-2) {
 		out = append(out, indent+stFaint.Render(l))
 	}

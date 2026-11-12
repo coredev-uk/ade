@@ -208,7 +208,7 @@ func (c *notifCenter) drawer(g glyphs, w, h int) string {
 	room := h - 6
 	for i, it := range vis {
 		if len(l) >= room {
-			l = append(l, stFaint.Render(fmt.Sprintf("  … %d more", len(vis)-i)))
+			l = append(l, stFaint.Render(fmt.Sprintf(g.T("  … %d more"), len(vis)-i)))
 			break
 		}
 		l = append(l, inboxLine(g, it, w-4, i == c.sel))
@@ -216,15 +216,15 @@ func (c *notifCenter) drawer(g glyphs, w, h int) string {
 		if it.Subject != "" {
 			meta += " " + g.Sep + " " + it.Subject
 		}
-		l = append(l, "    "+stFaint.Render(ansi.Truncate(meta, w-8, "…")))
+		l = append(l, "    "+stFaint.Render(ansi.Truncate(meta, w-8, g.Ell)))
 		if i == c.sel && it.Detail != "" {
 			lines := strings.Split(strings.TrimSpace(it.Detail), "\n")
 			for _, d := range lines[:min(4, len(lines))] {
-				l = append(l, "    "+stRule.Render(g.Vertical)+" "+ansi.Truncate(d, w-10, "…"))
+				l = append(l, "    "+stRule.Render(g.Vertical)+" "+ansi.Truncate(d, w-10, g.Ell))
 			}
 		}
 	}
-	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#666666")).
+	return lipgloss.NewStyle().Border(g.Border).BorderForeground(lipgloss.Color("#666666")).
 		Padding(0, 1).Width(w).Height(h).Render(strings.Join(l, "\n"))
 }
 
@@ -253,26 +253,26 @@ func toastBox(g glyphs, t toast, w int) string {
 	persistent := t.expires.IsZero()
 	// Text wraps (five lines at most) rather than being cut at the box edge: the
 	// end of a title or subject is often the instruction.
-	body := wrapHanging(sevGlyph(g, t.ev.Severity)+" ", t.ev.Title, inner, false, 5)
+	body := wrapHanging(g, sevGlyph(g, t.ev.Severity)+" ", t.ev.Title, inner, false, 5)
 	if len(meta) > 0 {
-		body += "\n" + wrapHanging("  ", strings.Join(meta, " "+g.Sep+" "), inner, true, 5)
+		body += "\n" + wrapHanging(g, "  ", strings.Join(meta, " "+g.Sep+" "), inner, true, 5)
 	}
 	if persistent {
 		body += "\n" + stFaint.Render("  esc dismiss")
 	}
-	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(sevBorder(t.ev.Severity)).
+	return lipgloss.NewStyle().Border(g.Border).BorderForeground(sevBorder(t.ev.Severity)).
 		Padding(0, 1).Width(w).Render(body)
 }
 
 // wrapHanging wraps text to w cells under a lead (a glyph or indent) that only
 // the first line carries; later lines are indented to match. At most maxLines
 // lines are kept, the last one cut with an ellipsis. faint dims the text.
-func wrapHanging(lead, text string, w int, faint bool, maxLines int) string {
+func wrapHanging(g glyphs, lead, text string, w int, faint bool, maxLines int) string {
 	room := max(w-lipgloss.Width(lead), 8)
 	lines := strings.Split(lipgloss.Wrap(text, room, " "), "\n")
 	if len(lines) > maxLines {
 		lines = lines[:maxLines]
-		lines[maxLines-1] = ansi.Truncate(lines[maxLines-1]+" …", room, "…")
+		lines[maxLines-1] = ansi.Truncate(lines[maxLines-1]+g.T(" …"), room, g.Ell)
 	}
 	indent := strings.Repeat(" ", lipgloss.Width(lead))
 	for i, l := range lines {
@@ -313,5 +313,5 @@ func inboxLine(g glyphs, it notify.Item, w int, selected bool) string {
 	}
 	left := mark + sevGlyph(g, it.Severity) + " "
 	room := max(4, w-lipgloss.Width(left)-lipgloss.Width(when)-2)
-	return left + pad(ansi.Truncate(title, room, "…"), room) + "  " + when
+	return left + pad(g, ansi.Truncate(title, room, g.Ell), room) + "  " + when
 }

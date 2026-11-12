@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -78,12 +77,13 @@ func (m model) openWeight() (model, tea.Cmd) {
 	if m.page != pageHome || m.mr != nil || m.isAgilePage() || m.homeSel >= len(m.homeRows) || m.homeRows[m.homeSel].item == nil {
 		return m, nil
 	}
-	return m.openWeightFor(m.homeRows[m.homeSel].item.Ref, m.homeRows[m.homeSel].item.Issue.Title)
+	return m.openWeightFor(m.homeRows[m.homeSel].item.Ref, m.homeRows[m.homeSel].item.Issue.Title, nil, "")
 }
 
 // openWeightFor opens the dialog for one tracker issue (also from classify's
-// `=`, which has just shown the suggestion).
-func (m model) openWeightFor(ref forge.Ref, title string) (model, tea.Cmd) {
+// `=`, which has just shown the suggestion: shown and why carry it over, for
+// the issue is not labelled yet and the dialog could not derive it alone).
+func (m model) openWeightFor(ref forge.Ref, title string, shown *int, shownWhy string) (model, tea.Cmd) {
 	if m.sw != nil || m.cl != nil || m.agt != nil || m.nt != nil || m.wt != nil {
 		return m, nil
 	}
@@ -114,11 +114,13 @@ func (m model) openWeightFor(ref forge.Ref, title string) (model, tea.Cmd) {
 		if err != nil {
 			return wtResolvedMsg{d: d, err: err}
 		}
-		// The synced items cover the sprint window; the forge has the history.
-		if hist, err := ai.ClosedSamples(ctx, tg.Forge, tg.Manifest.Tracker.Project, tg.Manifest.Labels, tg.Manifest.Tracker.Weight, time.Now()); err == nil {
-			samples = ai.MergeSamples(samples, hist)
-		}
+		// The synced items cover the sprint window; the history beyond it
+		// comes from the cache, never from a wait on the forge.
+		samples = ai.MergeSamples(samples, weight.HistorySamples(ctx, a, tg.Forge, tg.Manifest.Forge, tg.Manifest))
 		w, why := ai.SuggestWeight(tg.Issue, tg.Manifest.Labels, tg.Manifest.Tracker.Weight, ai.Suggestion{}, samples)
+		if w == nil && shown != nil {
+			w, why = shown, shownWhy
+		}
 		return wtResolvedMsg{d: d, tg: tg, suggest: w, why: why}
 	}
 }
@@ -153,14 +155,9 @@ func (m model) weightUpdate(msg tea.Msg) (model, tea.Cmd, bool) {
 			return m, nil, true
 		}
 		d.stage = wtDone
-		// Home's row shows the new weight after a forge read; the git update
-		// has nothing to do with it.
-		var cmd tea.Cmd
-		if m.sync != nil && !m.syncing {
-			m.syncing = true
-			cmd = m.runSync()
-		}
-		return m, cmd, true
+		// Home's row shows the new weight after reading this one item again
+		// (and its children, whose weights changed with it).
+		return m, m.refreshItem(d.tg.Manifest, d.tg.Forge, d.ref), true
 	case tea.KeyPressMsg:
 		if d == nil || msg.String() == "ctrl+c" {
 			return m, nil, false
@@ -303,11 +300,11 @@ func (m model) weightOverlay(w, h int) string {
 	dw := min(w, 100) // the shared dialog measure; blankFieldLayer centres it
 	inner := dw - 4
 	g := m.g
-	l := []string{stFaint.Render(ansi.Truncate(d.title, inner, "…")), ""}
+	l := []string{stFaint.Render(ansi.Truncate(d.title, inner, m.g.Ell)), ""}
 	var hint string
 	switch d.stage {
 	case wtResolving:
-		l = append(l, stFaint.Render(g.Sync+" reading "+d.ref.String()+"…"))
+		l = append(l, stFaint.Render(g.Sync+" reading "+d.ref.String()+m.g.Ell))
 		hint = keys("esc", "cancel")
 	case wtInput:
 		l = append(l, m.weightInputView(d, inner)...)
@@ -316,7 +313,7 @@ func (m model) weightOverlay(w, h int) string {
 			hint = keys("0-9", "type", "s", "suggested", "n", "none", "enter", "set", "esc", "close")
 		}
 	case wtApplying:
-		l = append(l, stFaint.Render(g.Sync+" writing the weight…"))
+		l = append(l, stFaint.Render(g.Sync+m.g.T(" writing the weight…")))
 		hint = keys("esc", "hide")
 	case wtDone:
 		for _, r := range d.results {
@@ -324,7 +321,8 @@ func (m model) weightOverlay(w, h int) string {
 		}
 		hint = keys("enter", "close")
 	case wtFailed:
-		cause, fix, _ := strings.Cut(weightFailure(d), " · ")
+		cause, fix, _ := strings.Cut(weightFailure(d), m.g.T(" · "))
+		cause, fix = m.g.T(cause), m.g.T(fix)
 		l = append(l, stBad.Render(ansi.Wrap(g.Bad+" "+cause, inner, "")))
 		if fix != "" {
 			l = append(l, stFaint.Render(ansi.Wrap("  "+fix, inner, "")))
@@ -338,7 +336,7 @@ func (m model) weightOverlay(w, h int) string {
 		l = append(l, "", stWarn.Render(ansi.Wrap(g.Warn+" "+d.warn, inner, "")))
 	}
 	l = append(l, "", hint)
-	return m.dialog("Weight · "+d.ref.String(), l, dw)
+	return m.dialog(m.g.T("Weight · ")+d.ref.String(), l, dw)
 }
 
 func (m model) weightResultLine(r weight.Result, inner int) []string {
@@ -351,7 +349,7 @@ func (m model) weightResultLine(r weight.Result, inner int) []string {
 		mark, st = g.Bad+" failed", stBad
 	}
 	out := []string{}
-	for i, ln := range wrap(r.Plan.Describe(), inner-2-lipgloss.Width(mark)) {
+	for i, ln := range wrap(m.g.T(r.Plan.Describe()), inner-2-lipgloss.Width(mark)) {
 		if i == 0 {
 			out = append(out, st.Render(mark)+" "+ln)
 		} else {
@@ -376,7 +374,7 @@ func (m model) weightInputView(d *weightDialog, inner int) []string {
 	l = append(l, "  new weight  "+stBold.Render("[ "+field+" ]"))
 	switch {
 	case d.suggest != nil:
-		l = append(l, "", stFaint.Render(ansi.Wrap(fmt.Sprintf("%s suggested %d · %s", g.Info, *d.suggest, d.why), inner, "")))
+		l = append(l, "", stFaint.Render(ansi.Wrap(fmt.Sprintf(m.g.T("%s suggested %d · %s"), g.Info, *d.suggest, d.why), inner, "")))
 	case d.why != "":
 		l = append(l, "", stFaint.Render(ansi.Wrap(g.Info+" "+d.why, inner, "")))
 	}
@@ -397,7 +395,7 @@ func (m model) weightInputView(d *weightDialog, inner int) []string {
 		return l
 	}
 	for _, p := range plans {
-		for _, ln := range wrap(p.Describe(), inner-2) {
+		for _, ln := range wrap(m.g.T(p.Describe()), inner-2) {
 			l = append(l, "  "+ln)
 		}
 		for _, n := range p.Notes {
@@ -409,11 +407,11 @@ func (m model) weightInputView(d *weightDialog, inner int) []string {
 		for i, c := range d.tg.Children {
 			names[i] = c.Issue.Ref.String()
 		}
-		line := fmt.Sprintf("child %s follows the weight · c leaves it alone", strings.Join(names, ", "))
+		line := fmt.Sprintf(m.g.T("child %s follows the weight · c leaves it alone"), strings.Join(names, ", "))
 		if !d.children {
-			line = fmt.Sprintf("child %s is left alone · c lets it follow", strings.Join(names, ", "))
+			line = fmt.Sprintf(m.g.T("child %s is left alone · c lets it follow"), strings.Join(names, ", "))
 		}
-		l = append(l, stFaint.Render(ansi.Truncate("  "+line, inner, "…")))
+		l = append(l, stFaint.Render(ansi.Truncate("  "+line, inner, m.g.Ell)))
 	}
 	return l
 }
@@ -428,5 +426,5 @@ func weightFailure(d *weightDialog) string {
 }
 
 func (m model) weightOverlayLayer(w, h int) *lipgloss.Layer {
-	return blankFieldLayer(m.weightOverlay(w, h), w, h)
+	return blankFieldLayer(m.g, m.weightOverlay(w, h), w, h)
 }

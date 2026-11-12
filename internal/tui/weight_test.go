@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/coredev-uk/ade/internal/audit"
 	"github.com/coredev-uk/ade/internal/domain"
@@ -205,14 +206,47 @@ func TestWeightAndNotesOpenOnlyOneDialogAtATime(t *testing.T) {
 	}
 }
 
-// The synced items cover only the sprint window; the suggestion also reads the
-// forge's closed issues (tracker#10 is closed in the seed).
-func TestWeightSuggestionReadsClosedIssuesFromTheForge(t *testing.T) {
+// The synced items cover only the sprint window; the suggestion also uses the
+// forge's closed issues (tracker#10 is closed in the seed). The dialog never
+// waits for them: the first open starts the read in the background and the
+// next one has them from the cache.
+func TestWeightSuggestionUsesClosedIssuesFromTheCache(t *testing.T) {
 	e := newWeightEnv(t, "type::story", "app::api")
 	if err := gitlab.New(e.srv.URL, fake.Token).SetLabels(context.Background(), trk(10), []string{"weight::2"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	// Nothing closed on Home: only the forge knows #10 ("Upgrade export worker dependencies").
 	e.open(model.openWeight)
+	e.want("no weight suggested")
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		e.press("esc")
+		e.open(model.openWeight)
+		if strings.Contains(e.screen(), "suggested 2") {
+			break
+		}
+		if time.Now().After(deadline) {
+			e.want("suggested 2 · median of 1 similar closed issues (" + trk(10).String() + ")")
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	e.want("[ 2_ ]", "suggested 2 · median of 1 similar closed issues ("+trk(10).String()+")")
+}
+
+// `=` in the Classify dialog hands the value it just showed to the Weight
+// dialog, though the issue has no type label yet to derive it from.
+func TestClassifyHandsItsSuggestedWeightToTheWeightDialog(t *testing.T) {
+	e := newClassifyEnv(t)
+	e.m.results[0].Forge = "sandbox-gitlab"
+	e.closedSample(20, 3, "Exports totals drift", "bug")
+	e.m.rebuildHome("")
+	e.selectRow(trk(11).String())
+	e.press("c")
+	e.want("Suggested weight", "3w")
+	e.press("=")
+	if e.m.wt == nil {
+		t.Fatal("= did not open the Weight dialog")
+	}
+	e.want("Weight · "+trk(11).String(), "[ 3_ ]", "suggested 3")
 }

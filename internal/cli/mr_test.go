@@ -496,7 +496,7 @@ func TestMRMergeCommitPrefix(t *testing.T) {
 	title := "GL-7 Rate-limit the export endpoint"
 
 	out := e.mustMR("merge", rateMR, "--dry-run", "--squash")
-	for _, want := range []string{"commit message:", "See merge request " + rateMR, title, "squash message:"} {
+	for _, want := range []string{title, "squash message:"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("dry-run output lacks %q:\n%s", want, out)
 		}
@@ -505,11 +505,12 @@ func TestMRMergeCommitPrefix(t *testing.T) {
 		t.Fatal("dry run merged")
 	}
 
+	// A squash replaces the MR's commits, so it keeps the prefix; a plain
+	// merge commit does not carry it.
 	e.mustMR("merge", rateMR, "--yes", "--squash")
 	_, _, params, _ := e.srv.MergeState(ref(rateMR))
-	msg, _ := params["merge_commit_message"].(string)
-	if !strings.HasPrefix(msg, "Merge branch '") || !strings.Contains(msg, "\n\n"+title+"\n") || !strings.HasSuffix(msg, "See merge request "+rateMR) {
-		t.Errorf("merge_commit_message = %q", msg)
+	if _, ok := params["merge_commit_message"]; ok {
+		t.Errorf("merge_commit_message sent: %v", params)
 	}
 	if params["squash_commit_message"] != title {
 		t.Errorf("squash_commit_message = %v, want %q", params["squash_commit_message"], title)

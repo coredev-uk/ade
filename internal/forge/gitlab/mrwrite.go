@@ -425,5 +425,12 @@ func (c *Client) PublishDraftNotes(ctx context.Context, mr forge.Ref) error {
 	if err := wantKind(mr, forge.KindMR); err != nil {
 		return err
 	}
-	return c.send(ctx, http.MethodPost, draftNotesPath(mr)+"/bulk_publish", nil, nil)
+	err := c.send(ctx, http.MethodPost, draftNotesPath(mr)+"/bulk_publish", nil, nil)
+	if errors.Is(err, forge.ErrNotFound) {
+		// The MR was readable a moment ago, so a 404 on the route means an
+		// instance older than the draft notes API.
+		c.markUnavailable(FeatureBulkPublish)
+		return fmt.Errorf("gitlab: publishing %s: %w (draft notes bulk_publish needs a newer GitLab): %w", mr, forge.ErrUnavailable, err)
+	}
+	return err
 }

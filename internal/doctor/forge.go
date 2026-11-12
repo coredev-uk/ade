@@ -2,7 +2,9 @@ package doctor
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -12,6 +14,9 @@ import (
 	"time"
 
 	"github.com/coredev-uk/ade/internal/config"
+	"github.com/coredev-uk/ade/internal/forge/gitlab"
+	"github.com/coredev-uk/ade/internal/httpdebug"
+	"github.com/coredev-uk/ade/internal/tlsca"
 )
 
 const expiryWarning = 14 * 24 * time.Hour
@@ -39,19 +44,85 @@ func checkForge(ctx context.Context, o Options, name string, f config.Forge) []C
 		return []Check{tokenCheck}
 	}
 	tokenCheck.Status, tokenCheck.Detail = OK, "resolved via "+tokenSource(f)
+	checks := []Check{tokenCheck}
+
+	hc := o.HTTP
+	if f.CAFile != "" {
+		ca := Check{Group: "forge", Name: name + " ca_file"}
+		tr, err := tlsca.Transport(f.CAFile)
+		if err != nil {
+			ca.Status, ca.Detail = Error, err.Error()
+			ca.Fix = "point ca_file under [forges." + name + "] at a readable PEM bundle with the CA certificate(s)"
+			return append(checks, ca)
+		}
+		ca.Status, ca.Detail = OK, f.CAFile+" is trusted on top of the system certificates (API and git over https)"
+		checks = append(checks, ca)
+		hc = &http.Client{Timeout: o.Timeout, Transport: httpdebug.Transport(tr)}
+	}
 
 	auth := Check{Group: "forge", Name: name + " auth"}
 	actx, acancel := context.WithTimeout(ctx, o.Timeout)
 	defer acancel()
 	switch f.Kind {
 	case "gitlab":
-		auth = gitlabAuth(actx, o.HTTP, auth, f, tok)
+		auth = gitlabAuth(actx, hc, auth, f, tok)
 	case "github":
-		auth = githubAuth(actx, o.HTTP, auth, f, tok)
+		auth = githubAuth(actx, hc, auth, f, tok)
 	default:
 		auth.Status, auth.Detail, auth.Fix = Error, fmt.Sprintf("unknown forge kind %q", f.Kind), "set kind to gitlab or github"
 	}
-	return []Check{tokenCheck, auth}
+	checks = append(checks, auth)
+	if f.Kind == "gitlab" && auth.Status != Error {
+		vctx, vcancel := context.WithTimeout(ctx, o.Timeout)
+		defer vcancel()
+		checks = append(checks, gitlabVersion(vctx, hc, name, f, tok))
+	}
+	return checks
+}
+
+// gitlabVersion reports the instance's release and edition (GET
+// /api/v4/version) and warns, per feature, where it is older than the code
+// paths ADE has for it. The older instance still works: those features report
+// "not available on this GitLab" and sync carries on.
+func gitlabVersion(ctx context.Context, hc *http.Client, name string, f config.Forge, tok string) Check {
+	c := Check{Group: "forge", Name: name + " version"}
+	base := strings.TrimRight(f.URL, "/")
+	if base == "" {
+		base = gitlab.DefaultURL
+	}
+	r, err := get(ctx, hc, base+"/api/v4/version", map[string]string{"PRIVATE-TOKEN": tok})
+	switch {
+	case err != nil:
+		return failed(c, base, err)
+	case r.status != http.StatusOK:
+		c.Status = Warn
+		c.Detail = fmt.Sprintf("%s/api/v4/version answered HTTP %d: the release is unknown, so feature gating is off", base, r.status)
+		return c
+	}
+	var w struct {
+		Version    string `json:"version"`
+		Enterprise bool   `json:"enterprise"`
+	}
+	if err := json.Unmarshal(r.body, &w); err != nil {
+		c.Status, c.Detail = Warn, "version answer is not JSON: "+err.Error()
+		return c
+	}
+	v, err := gitlab.ParseVersion(w.Version, w.Enterprise)
+	if err != nil {
+		c.Status, c.Detail = Warn, err.Error()
+		return c
+	}
+	c.Status, c.Detail = OK, v.String()
+	if missing := v.Unsupported(); len(missing) > 0 {
+		parts := make([]string, len(missing))
+		for i, m := range missing {
+			parts[i] = fmt.Sprintf("%s needs %d.%d+", m.Name, m.Major, m.Minor)
+		}
+		c.Status = Warn
+		c.Detail += ": older than ADE expects; " + strings.Join(parts, "; ")
+		c.Fix = "upgrade GitLab for those features; ADE reports each as not available on this GitLab and carries on"
+	}
+	return c
 }
 
 func tokenSource(f config.Forge) string {
@@ -241,6 +312,12 @@ func joinOrNone(s []string) string {
 func failed(c Check, target string, err error) Check {
 	c.Status, c.Detail = Error, fmt.Sprintf("cannot reach %s: %v", target, err)
 	c.Fix = "check network access and the forge url"
+	var unknown x509.UnknownAuthorityError
+	var invalid x509.CertificateInvalidError
+	var host x509.HostnameError
+	if errors.As(err, &unknown) || errors.As(err, &invalid) || errors.As(err, &host) {
+		c.Fix = "the forge's certificate is not trusted: set ca_file under its [forges.<name>] to your CA's PEM bundle, or export SSL_CERT_FILE"
+	}
 	return c
 }
 

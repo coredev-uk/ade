@@ -11,6 +11,7 @@ import (
 
 	"github.com/coredev-uk/ade/internal/billing"
 	"github.com/coredev-uk/ade/internal/budget"
+	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/ledger"
 )
 
@@ -88,7 +89,7 @@ func printBudget(w io.Writer, r budget.Report) {
 		}
 		fmt.Fprintf(w, " %s %s · %s · week %s\n", mark, p.Name, p.Driver, usd(p.WeekUSD))
 		var roles []string
-		for _, role := range []string{"explain", "draft", "plan", "implement", "review"} {
+		for _, role := range config.AIRoles {
 			if m, ok := p.Models[role]; ok {
 				roles = append(roles, role+"="+m)
 			}

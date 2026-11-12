@@ -55,7 +55,7 @@ func New(ctx context.Context, p config.AIProfile, l Local) (Source, error) {
 		if err != nil {
 			return nil, fmt.Errorf("billing source litellm: %w", err)
 		}
-		return NewLiteLLM(base, key, l.HTTP), nil
+		return NewLiteLLM(base, key, WithHeaders(l.HTTP, p.ExtraHeaders)), nil
 	case SourceMoonshot, SourceOpenRouter:
 		key, err := p.Key(ctx)
 		if err != nil {

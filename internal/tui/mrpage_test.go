@@ -837,8 +837,8 @@ func TestHistoryOfItemWithoutMR(t *testing.T) {
 	e.want("[History]", "No recorded actions")
 }
 
-// With a commit prefix the merge dialog shows the commit line and the merge
-// carries the prefixed merge and squash messages.
+// With a commit prefix the squash option shows the squash commit line and the
+// squash carries the prefixed message; a merge commit is never prefixed.
 func TestMergeCommitPrefix(t *testing.T) {
 	e := newMREnv(t, fake.Free)
 	ref := mrRef("api", 1)
@@ -868,16 +868,15 @@ func TestMergeCommitPrefix(t *testing.T) {
 
 	e.open(ref.String())
 	e.press("m")
-	e.want("commit: " + title)
 	e.press("s")
+	e.want("squash commit: " + title)
 	e.press("enter")
 	_, _, params, err := e.srv.MergeState(ref)
 	if err != nil {
 		t.Fatal(err)
 	}
-	msg, _ := params["merge_commit_message"].(string)
-	if !strings.Contains(msg, "\n\n"+title+"\n") || !strings.HasSuffix(msg, "See merge request "+ref.String()) {
-		t.Errorf("merge_commit_message = %q", msg)
+	if _, ok := params["merge_commit_message"]; ok {
+		t.Errorf("merge_commit_message sent: %v", params)
 	}
 	if params["squash_commit_message"] != title {
 		t.Errorf("squash_commit_message = %v", params["squash_commit_message"])

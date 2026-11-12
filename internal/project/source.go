@@ -17,6 +17,7 @@ import (
 	"github.com/coredev-uk/ade/internal/app"
 	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/httpdebug"
+	"github.com/coredev-uk/ade/internal/tlsca"
 )
 
 const maxManifestBytes = 1 << 20
@@ -140,6 +141,9 @@ func (s *Service) fetchGit(ctx context.Context, spec string) ([]byte, error) {
 	sum := sha256.Sum256([]byte(repoURL))
 	dir := filepath.Join(s.App.Paths.CacheDir, "manifests", hex.EncodeToString(sum[:6]))
 	if exists(filepath.Join(dir, ".git")) {
+		if s.cached {
+			return os.ReadFile(filepath.Join(dir, filepath.FromSlash(file)))
+		}
 		if _, err := c.Run(ctx, dir, "fetch", "--quiet", "--depth", "1", "origin", "HEAD"); err != nil {
 			return nil, err
 		}
@@ -158,12 +162,25 @@ func (s *Service) fetchGit(ctx context.Context, spec string) ([]byte, error) {
 	return os.ReadFile(filepath.Join(dir, filepath.FromSlash(file)))
 }
 
+// httpCopy is where the last manifest fetched from an https source is kept,
+// so that readers that must not wait on the network (dialogs) have one.
+func (s *Service) httpCopy(rawURL string) string {
+	sum := sha256.Sum256([]byte(rawURL))
+	return filepath.Join(s.App.Paths.CacheDir, "manifests", hex.EncodeToString(sum[:6])+".toml")
+}
+
 func (s *Service) fetchHTTP(ctx context.Context, rawURL string) ([]byte, error) {
+	if s.cached {
+		if b, err := os.ReadFile(s.httpCopy(rawURL)); err == nil {
+			return b, nil
+		}
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	// Credentials only travel over TLS, and only to the forge's own host.
+	var transport http.RoundTripper
 	if strings.HasPrefix(rawURL, "https://") {
 		if name, f, ok := matchForge(s.App.Config, "", rawURL); ok {
 			tok, err := s.tokens.get(ctx, name, f)
@@ -175,9 +192,12 @@ func (s *Service) fetchHTTP(ctx context.Context, rawURL string) ([]byte, error) 
 			} else {
 				req.Header.Set("Authorization", "Bearer "+tok)
 			}
+			if transport, err = tlsca.Transport(f.CAFile); err != nil {
+				return nil, fmt.Errorf("forge %s: %w", name, err)
+			}
 		}
 	}
-	resp, err := (&http.Client{Timeout: 30 * time.Second, Transport: httpdebug.Transport(nil)}).Do(req)
+	resp, err := (&http.Client{Timeout: 30 * time.Second, Transport: httpdebug.Transport(transport)}).Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -192,6 +212,10 @@ func (s *Service) fetchHTTP(ctx context.Context, rawURL string) ([]byte, error) 
 	if len(body) > maxManifestBytes {
 		return nil, fmt.Errorf("manifest larger than %d bytes", maxManifestBytes)
 	}
+	// Best effort: without the copy a dialog just fetches.
+	if dst := s.httpCopy(rawURL); os.MkdirAll(filepath.Dir(dst), 0o700) == nil {
+		_ = os.WriteFile(dst, body, 0o600)
+	}
 	return body, nil
 }
 
@@ -200,6 +224,21 @@ func (s *Service) fetchHTTP(ctx context.Context, rawURL string) ([]byte, error) 
 // the manifest cache). Callers validate with Manifest.Validate / ValidateAll.
 func FetchManifest(ctx context.Context, a *app.App, ref config.ProjectRef) (*config.Manifest, error) {
 	s := New(a, "")
+	canon, err := s.canonical(ref.Source)
+	if err != nil {
+		return nil, err
+	}
+	m, _, err := s.fetchParsed(ctx, canon)
+	return m, err
+}
+
+// CachedManifest is FetchManifest for readers that must not wait on the
+// network: a git or https source already fetched once is read from its local
+// copy as of the last sync or update, and fetched only when there is none.
+// Local files are read as ever.
+func CachedManifest(ctx context.Context, a *app.App, ref config.ProjectRef) (*config.Manifest, error) {
+	s := New(a, "")
+	s.cached = true
 	canon, err := s.canonical(ref.Source)
 	if err != nil {
 		return nil, err

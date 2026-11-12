@@ -72,7 +72,7 @@
           pname = "ade";
           version = self.shortRev or "dev";
           src = src pkgs;
-          vendorHash = "sha256-7okVyePN9UDZhe3652hgwILSCpjbs05s7F/nYoP8xsE=";
+          vendorHash = "sha256-rQYX7BwEpzJb154+eu8CvCOISQt++QqrEvV+EP88CxQ=";
           proxyVendor = true; # hash tracks go.mod/go.sum only, not which packages are imported
           subPackages = [ "cmd/ade" ];
           env = goEnv;

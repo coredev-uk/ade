@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/overview"
 	"github.com/coredev-uk/ade/internal/records"
+	"github.com/coredev-uk/ade/internal/watch"
 	"github.com/spf13/cobra"
 )
 
@@ -63,9 +66,22 @@ func watchItem(cmd *cobra.Command, a *app.App, ref forge.Ref) error {
 		_, err = lipgloss.Fprint(out, overview.Render(snap, a.Config.Host.Glyphs, width, time.Now()))
 		return err
 	}
-	return overview.Run(cmd.Context(), overview.Options{
-		Loader: l,
-		Glyphs: a.Config.Host.Glyphs,
+	// The cache directory holds cache.db and its write-ahead log, where a
+	// sync or start work writes; the records directory holds item.md notes.
+	// Where fsnotify cannot work the watcher polls them instead.
+	ctx, cancel := context.WithCancel(cmd.Context())
+	defer cancel()
+	w, err := watch.Watch(ctx, []watch.Target{
+		{Path: filepath.Dir(cache.Path)},
+		{Path: a.RecordsDir, Recursive: true},
+	}, watch.Options{})
+	if err != nil {
+		return err
+	}
+	return overview.Run(ctx, overview.Options{
+		Loader:  l,
+		Glyphs:  a.Config.Host.Glyphs,
+		Changes: w.C(),
 		Edit: func(s overview.Snapshot) (*exec.Cmd, error) {
 			rec, err := st.Read(s.Forge, s.Item.Ref)
 			if err != nil {

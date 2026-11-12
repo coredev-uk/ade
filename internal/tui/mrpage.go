@@ -563,7 +563,7 @@ func (m *model) loadFailed(d *mrData, what string, err error) tea.Cmd {
 		return nil
 	}
 	d.outage = true
-	m.emit(d, "mr.load.failed", events.Error, fmt.Sprintf("Could not load %s · U retries", shortRef(d.ref, m.trackerOf(d.project))), shortCause(err)+"\n"+err.Error())
+	m.emit(d, "mr.load.failed", events.Error, fmt.Sprintf(m.g.T("Could not load %s · U retries"), shortRef(d.ref, m.trackerOf(d.project))), shortCause(err)+"\n"+err.Error())
 	return nil
 }
 

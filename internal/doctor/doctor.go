@@ -8,6 +8,7 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"os/exec"
 	"sync"
 	"time"
 
@@ -45,6 +46,8 @@ type Options struct {
 	HTTP    *http.Client  // nil: a client with Timeout
 	Timeout time.Duration // per network or subprocess check; default 10s
 	Getenv  func(string) string
+	// LookPath finds a program on PATH (exec.LookPath when nil); tests replace it.
+	LookPath func(string) (string, error)
 }
 
 // HasErrors reports whether any check failed.
@@ -67,6 +70,9 @@ func (o *Options) defaults() {
 	if o.Getenv == nil {
 		o.Getenv = os.Getenv
 	}
+	if o.LookPath == nil {
+		o.LookPath = exec.LookPath
+	}
 }
 
 // Run executes all checks concurrently and returns them in a stable order:
@@ -81,6 +87,7 @@ func Run(ctx context.Context, o Options) []Check {
 	)
 	groups = append(groups, forgeChecks(o)...)
 	groups = append(groups, func(context.Context) []Check { return hostChecks(o) })
+	groups = append(groups, func(context.Context) []Check { return cdeChecks(o) })
 
 	results := make([][]Check, len(groups))
 	var wg sync.WaitGroup

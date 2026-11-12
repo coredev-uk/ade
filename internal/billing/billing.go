@@ -165,3 +165,33 @@ func httpClient(hc *http.Client) *http.Client {
 	}
 	return &http.Client{Timeout: 20 * time.Second, Transport: httpdebug.Transport(nil)}
 }
+
+// WithHeaders returns hc (the default billing client when nil) with headers
+// added to every request it makes, a profile's extra_headers. The original
+// client is not modified; an empty set returns it as is.
+func WithHeaders(hc *http.Client, headers map[string]string) *http.Client {
+	hc = httpClient(hc)
+	if len(headers) == 0 {
+		return hc
+	}
+	c := *hc
+	c.Transport = headerTransport{base: hc.Transport, headers: headers}
+	return &c
+}
+
+type headerTransport struct {
+	base    http.RoundTripper
+	headers map[string]string
+}
+
+func (t headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context())
+	for k, v := range t.headers {
+		req.Header.Set(k, v)
+	}
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	return base.RoundTrip(req)
+}

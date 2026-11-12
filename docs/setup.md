@@ -160,7 +160,7 @@ Already inside zellij, `ade` runs the dashboard in your current pane. `ade dash`
 
 ### AI and budgets (optional)
 
-AI goes through a profile in the user config; `omp` uses your existing subscription:
+AI goes through a profile in the user config. Two common shapes: `omp` (uses your existing subscription) and an OpenAI-compatible **gateway** such as LiteLLM (a team key with a budget, models chosen by alias).
 
 ```toml
 [ai]
@@ -179,6 +179,65 @@ agent_run_usd = 1.50            # cap for one agent run
 
 Every AI call is shown with its cost before it runs when it exceeds `confirm_over_usd`, and is audited (`ade audit --action 'ai.*'`). Details: PLAN.md §4.3 and [billing/README.md](billing/README.md).
 
+#### Through a LiteLLM gateway
+
+A complete profile for a team gateway (synthetic hostnames; the key is read from the environment or a command, never stored):
+
+```toml
+[ai]
+mode    = "ask"
+profile = "gateway"
+
+[ai.profiles.gateway]
+driver      = "openai-compat"
+base_url    = "https://litellm.example.internal/v1"
+key_env     = "LITELLM_KEY"               # or: key_cmd = "pass show litellm/ade"
+timeout     = "90s"                       # per request; default 5m
+extra_headers = { "x-litellm-tags" = "ade", "x-team" = "platform" }
+billing     = { source = "litellm" }      # spend and budget come from the gateway's key
+models      = { explain = "team-large", classify = "small-classifier", draft = "team-large", review = "team-large" }
+
+[budget]
+call_usd         = 0.10
+confirm_over_usd = 0.05
+```
+
+`ade init` writes this for you:
+
+```
+export LITELLM_KEY=...                    # the virtual key your gateway admin issued
+ade init --ai-gateway https://litellm.example.internal/v1 --ai-key-env LITELLM_KEY \
+         --ai-model-explain team-large --ai-model-classify small-classifier \
+         --forge gitlab --host gitlab.example.com --token-env GITLAB_TOKEN --yes
+```
+
+In a terminal, leave the `--ai-model-*` flags out: init lists the gateway's `/v1/models` and asks which model each role uses (`classify` and `draft` default to the explain model). The gateway and key are checked before anything is written; an unreachable gateway only warns when every model was given on the command line. `--ai-profile` renames the profile (default `gateway`); `--ai-key-cmd` takes a command instead of a variable.
+
+`ade ai models` lists what the gateway offers and which role uses each model, and warns about a configured model the gateway does not list:
+
+```
+small-classifier  classify
+team-large        explain, draft, review
+```
+
+Profile checks (`ade config check`): `driver = "openai-compat"` with `billing.source = "litellm"` needs a key and a `base_url` (ending in `/v1`); `extra_headers` may not carry `Authorization` (the key does); roles must be one of the names below.
+
+#### Roles
+
+Each AI feature asks for a *role*; the profile maps the role to a model. A role without a model falls back as shown, so one `explain` model is a complete setup.
+
+| Role | Used for | Falls back to |
+| --- | --- | --- |
+| `explain` | summaries (`ade ai summarize`), thread summaries, standup, sprint review and parent-issue text | (required) |
+| `classify` | `ade ai classify` and the classify dialog: short structured answers (a type and app label as JSON) | `explain` |
+| `draft` | reply drafts, MR text | `explain` |
+| `review` | AI review passes over an MR diff | `draft`, then `explain` |
+| `plan`, `implement` | agent plans and runs (through the profile's agent CLI) | `explain` |
+
+Weight suggestions and the keyword classifier used when AI is off never call a model. Pre-flight estimates, the per-call, daily and sprint caps and the audit trail are identical for every role; a classify call is just a cheaper entry in the ledger (`ade audit --action ai.classify`).
+
+**Picking a classify model.** Classification is a few hundred input tokens in and a one-line JSON object out, so the smallest, cheapest instruction-following model your gateway offers is the right choice (for example a "mini", "flash" or "haiku"-class alias or a small self-hosted model). Look for: reliable JSON output, a low price per million tokens, and low latency (the dialog waits for it). A larger model rarely classifies better here, it only costs more. ADE asks for a `json_schema` response format; if the gateway or model refuses it, ADE retries once as plain text, parses the JSON out of the answer, and remembers not to ask again in that session, so a model without structured-output support still works. Judge a candidate with `ade ai classify <issue> --refresh` against issues you labelled by hand, and compare cost per call in `ade budget`.
+
 ### Notifications
 
 Events (CI failures, review requests, agent runs finishing) appear as pop-ups and in the notification centre inside the dashboard, never as desktop or terminal notifications. Everything is also in `ade inbox`. Choose which kinds pop up:
@@ -190,7 +249,115 @@ toast = ["ci.failed", "mr.*", "agent.*"]
 
 ### Commit prefix
 
-If your team prefixes commits with the ticket (e.g. `GL-412 Fix export`), set `conventions.commit_prefix = "GL-{parent}"` in the manifest. ADE applies it to its own commits and merges and records `ade.commitPrefix` per worktree. A sample `commit-msg` hook for your own commits is in [manifest.md](manifest.md#commit-prefix).
+If your team prefixes the first commit of an MR with the ticket (e.g. `GL-412 Fix export`), set `conventions.commit_prefix = "GL-{parent}"` in the manifest. ADE applies it to its own first commit and to squash messages and records `ade.commitPrefix` and `ade.target` per worktree. A sample `commit-msg` hook for your own commits is in [manifest.md](manifest.md#commit-prefix).
+
+## Coder / CDE
+
+`ade setup` is the unattended first start: no prompts, safe to run on every
+workspace boot, fast when nothing changed. It is built for a Coder
+`startup_script`, and equally fine on a laptop.
+
+```sh
+ade setup --warm --session
+```
+
+What one run does, in order (each step prints one line; `--json` prints the summary on stdout):
+
+1. **Config.** With no user config it creates one like `ade init --yes` from flags or `ADE_SETUP_*` variables (below), or copies a team template with `--config-from <path|https-url>` (validated first). An existing config is validated and never overwritten.
+2. **Token.** Every configured forge's token is resolved and checked. An empty or rejected token skips the forge steps, says so, and the run exits 3. Setup never waits for input.
+3. **Projects.** `project add` for each configured project (clone, baseline worktrees, `post_worktree` hooks; a repeat only fills gaps), then `update` (fetch and fast-forward), then the first `sync`.
+4. **Machine.** Writes the zellij unlock-first preset next to the config, checks git, zellij, lazygit, direnv, nix, omp and the VS Code remote `code` CLI, and prints what is missing with one `nix profile install nixpkgs#...` line. `--warm` pre-builds each repo's baseline dev shell (`nix develop <repo>/main -c true`, or `direnv allow` then `direnv exec` for a `.envrc`: asking for `--warm` is asking to trust those repos' `.envrc` files) so the first work tab opens fast.
+5. **Session.** `--session` starts the detached zellij session with the dashboard layout when it is not running (a resurrectable one is resurrected), so the VS Code remote terminal or web tty only attaches. `--session-name` picks another name (default `ade`).
+6. **Doctor.** A final `ade doctor` summary, informational: it never changes the exit code.
+
+A lock in the cache directory (`setup.lock`) serialises concurrent runs; the second waits and then finds nothing left to do.
+
+Exit codes: `0` complete, `3` partial (token missing or rejected, or a repo or project failed; the rest still ran), `1` failure (invalid config, nothing could be created).
+
+### Variables
+
+Every flag has an `ADE_SETUP_<FLAG>` variable (`--token-env` is `ADE_SETUP_TOKEN_ENV`); flags win. `ADE_SETUP_PROJECT` takes several manifests separated by whitespace or commas.
+
+| Variable | Meaning |
+|---|---|
+| `ADE_SETUP_FORGE`, `ADE_SETUP_HOST` | forge kind and host (`gitlab`, `gitlab.example.com`) |
+| `ADE_SETUP_TOKEN_ENV` / `ADE_SETUP_TOKEN_CMD` | where the token comes from; the value itself is never written |
+| `ADE_SETUP_CA_FILE` | PEM bundle of the forge's internal CA (self-hosted GitLab) |
+| `ADE_SETUP_GIT_PROTOCOL`, `ADE_SETUP_ROOT`, `ADE_SETUP_HANDLE` | clone protocol, projects root, forge username (default: asked from the forge) |
+| `ADE_SETUP_PROJECT` | project manifests (path, https URL or `git+<url>#<path>`) |
+| `ADE_SETUP_AI_GATEWAY`, `ADE_SETUP_AI_KEY_ENV`, `ADE_SETUP_AI_MODEL_EXPLAIN`, `..._CLASSIFY`, ... | the LiteLLM gateway profile (see [Through a LiteLLM gateway](#through-a-litellm-gateway)) |
+| `ADE_SETUP_CONFIG_FROM`, `ADE_SETUP_WARM`, `ADE_SETUP_SESSION`, `ADE_SETUP_SESSION_NAME` | the other flags |
+
+### Coder template
+
+Synthetic names throughout. The token comes from a Coder secret that reaches the workspace as an environment variable (`GITLAB_TOKEN` below), so it is never in the template text:
+
+```hcl
+resource "coder_script" "ade_setup" {
+  agent_id     = coder_agent.main.id
+  display_name = "ADE setup"
+  run_on_start = true
+  script       = <<-EOT
+    #!/usr/bin/env bash
+    # Exit 3 (partial: token missing) must not fail the workspace start.
+    ade setup --warm --session || [ $? -eq 3 ]
+  EOT
+}
+
+resource "coder_agent" "main" {
+  # ...
+  env = {
+    ADE_SETUP_FORGE       = "gitlab"
+    ADE_SETUP_HOST        = "gitlab.example.internal"
+    ADE_SETUP_CA_FILE     = "/etc/ssl/certs/example-internal-ca.pem"
+    ADE_SETUP_TOKEN_ENV   = "GITLAB_TOKEN"
+    ADE_SETUP_GIT_PROTOCOL = "https"
+    ADE_SETUP_PROJECT     = "git+https://gitlab.example.internal/acme/tracker.git#.ade.toml"
+    ADE_SETUP_AI_GATEWAY  = "https://litellm.example.internal"
+    ADE_SETUP_AI_KEY_ENV  = "LITELLM_KEY"
+    ADE_SETUP_AI_MODEL_EXPLAIN  = "team-large"
+    ADE_SETUP_AI_MODEL_CLASSIFY = "team-small"
+    # GITLAB_TOKEN and LITELLM_KEY are not set here: they arrive in the
+    # workspace environment from Coder secrets configured outside the template.
+  }
+}
+```
+
+A plain `startup_script` works the same way (`startup_script = "ade setup --warm --session || [ $? -eq 3 ]"`). Put `ade` itself on the image or in a Nix profile; a rejected token is fixed by updating the secret and rerunning `ade setup`.
+
+If your team keeps a config template in a repo, replace the variables with `ADE_SETUP_CONFIG_FROM = "https://gitlab.example.internal/acme/ade-config/-/raw/main/config.toml"` (the template must not contain tokens; it names the variables).
+
+### What belongs in a dotfiles repo instead
+
+`ade setup` creates only ADE's own state. Keep personal choices in your dotfiles repo, which Coder applies before the startup script: shell and git config (`user.name`, `user.email`), your `~/.config/zellij/config.kdl` and neovim config (ADE's unlock-first preset applies only to the VS Code terminal), `direnv` and Nix settings, and `~/.config/ade/config.toml` itself when you prefer to manage it by hand (setup then validates and leaves it alone).
+
+### Attaching
+
+In the VS Code remote terminal or the web tty, run `ade`. When the session from `--session` exists, it attaches to it; otherwise it creates it.
+
+### Self-hosted GitLab
+
+```toml
+[forges.work]
+kind            = "gitlab"
+url             = "https://git.example.internal/gitlab"   # a path prefix is fine
+ca_file         = "~/.config/ade/corp-ca.pem"            # PEM bundle of your CA, added to the system pool
+ssh_port        = 2222                                    # clone URLs become ssh://git@host:2222/group/project.git
+max_concurrency = 4                                       # in-flight API requests (default 4)
+```
+
+`ca_file` is trusted for ADE's API calls and handed to git for https clones (`http.<scheme://host>.sslCAInfo`, scoped to the forge's host). Exporting `SSL_CERT_FILE` works too. `ade init --host git.example.internal/gitlab --ca-file … --ssh-port 2222` writes these keys. `ade doctor` prints the GitLab version and edition and warns, per feature, when the release is older than ADE's floors (draft-notes bulk publish 15.9, reviewer verdicts 14.0, work items 16.0, iteration cadences 15.0: ADE's tested floors, not a statement of when GitLab shipped them). Features whose endpoint answers 404 are reported once per sync as "not available on this GitLab" and never fail it. Rate limiting needs no `RateLimit-*` headers: `Retry-After` alone paces requests.
+
+### Headless CDE: VS Code remote terminal and web tty
+
+- **VS Code remote terminal.** `host.editor = "auto"` uses the VS Code remote CLI (found on PATH, else under `~/.vscode-server`); a stale `VSCODE_IPC_HOOK_CLI` after a reconnect is replaced by the newest live socket. `v` and `ade vscode workspace --open` open in the connected window.
+- **Web tty** (no VS Code client): `v` prints the workspace path and how to open it from your VS Code window; `o` copies the URL through OSC 52 and says so; the editor falls back to nvim.
+- **Keys.** A browser takes Ctrl-w, Ctrl-t, Ctrl-n and similar. Coder's web terminal is detected (`CODER=true`, no ssh, not VS Code) and gets zellij's unlock-first preset; otherwise set `ADE_ZELLIJ_PRESET=unlock-first` (`default` opts out; `ADE_WEB_TTY=1` forces the detection).
+- `ade doctor` has a `cde` group: display, VS Code remote CLI, OSC 52 note, nix, direnv.
+
+### Dev shells (direnv / nix)
+
+A worktree with an `.envrc` (and direnv on PATH) runs its editor, omp and shell panes and its `ade task run` tasks through `direnv exec <dir>`; else a `flake.nix` with a devShell through `nix develop <dir> -c`. Per repo in the manifest: `repos.<r>.devshell = "auto" | "direnv" | "nix" | "none"` (default auto). Allow the `.envrc` once with `direnv allow`.
 
 ## 6. Try it offline
 
@@ -207,10 +374,11 @@ It never touches your real config. `--record` additionally writes `demo.gif`.
 ## 7. Troubleshooting
 
 - **First step for anything:** `ade doctor`. Each line says what is wrong and the fix; `--vscode` and `--probe` add the VS Code and API-shape checks.
-- **Rate limits.** GitLab.com allows 100 requests per minute per user, shared by everything using your token (the web UI, `glab`, CI). ADE honours `RateLimit-*` and `Retry-After`, uses at most 4 concurrent requests per host and syncs incrementally, so it waits rather than failing. If the dashboard seems slow after heavy use elsewhere, wait a minute.
+- **Rate limits.** GitLab.com allows 100 requests per minute per user, shared by everything using your token (the web UI, `glab`, CI). ADE honours `RateLimit-*` and `Retry-After`, uses at most 4 concurrent requests per host and syncs incrementally, so it waits rather than failing. A sync also leaves 30% of the window to dialogs when the server reports it (GitLab.com does), and reads each project's open merge requests in one GraphQL request instead of four REST calls per MR. If the dashboard seems slow after heavy use elsewhere, wait a minute.
 - **See the traffic:** `ade --debug-http <command>` logs one line per request and response to stderr (method, URL, status, timing, which credential header; never the secret or bodies).
 - **Token problems:** `ade doctor` shows the user the token authenticates as and its scopes; a `token_env is empty` error means the variable is not set in the shell that started ADE; a `token_cmd` error prints the command's stderr.
 - **Stale or odd data:** `ade cache reset` deletes the cache and rebuilds the AI cache and spend ledger from your records. It tells you what is lost (unsubmitted review drafts, unread notifications) and asks first. It is safe: the forge remains the source of truth.
+- **Updates arrive a couple of seconds late:** the dashboard and `ade item --watch` follow `cache.db`, the item records and the audit log with fsnotify and re-read the moment one changes. Where fsnotify is unavailable (inotify limit reached, some network filesystems) they poll the files every 2 s instead, which works the same but later; `ade doctor` reports `file watching: polling` then. On Linux, raising `fs.inotify.max_user_watches` and `fs.inotify.max_user_instances` restores instant updates.
 - **No tabs appear:** zellij is missing or `host.mode` is `plain`/`vscode`; check `ade doctor`.
 - **Where files live** (XDG):
 

@@ -141,7 +141,7 @@ func TestClassifyAsksBeforeASpendingCall(t *testing.T) {
 	e.want("this asks the model first", "you set to be asked first")
 	e.wantNot("confirm_over_usd")
 	for _, ln := range strings.Split(ansi.Strip(e.m.classifyOverlay(100, 30)), "\n") {
-		if s := strings.TrimSpace(strings.Trim(ln, "│")); strings.HasPrefix(s, "·") {
+		if s := strings.TrimSpace(strings.Trim(ln, e.m.g.Border.Left)); strings.HasPrefix(s, "·") {
 			t.Fatalf("a pre-flight line starts with a bare separator: %q", ln)
 		}
 	}
@@ -255,7 +255,7 @@ func TestClassifyFailureWordsThePageThatFailed(t *testing.T) {
 }
 
 func TestPackFieldsHangsContinuationLinesWithoutALeadingSeparator(t *testing.T) {
-	got := packFields([]string{"claude-sub", "claude-haiku-4-5", "explain", "~620 in / ≤900 out tokens", "est $0.0010", "to omp:anthropic"}, " · ", "  ", 40)
+	got := packFields(unicodeGlyphs, []string{"claude-sub", "claude-haiku-4-5", "explain", "~620 in / ≤900 out tokens", "est $0.0010", "to omp:anthropic"}, " · ", "  ", 40)
 	if len(got) < 3 {
 		t.Fatalf("expected a wrap, got %q", got)
 	}

@@ -16,11 +16,8 @@ result-*
 .ade/
 /.sandbox/
 
-# impeccable runtime dirs; keep config.local.json private
-.impeccable/config.local.json
-.impeccable/mocks/
-.impeccable/review/
-.impeccable/questions/
+# impeccable design tool state (the design lives in DESIGN.md); also holds verify-script screens
+.impeccable/
 demo.gif
 # bun runtime cache that appears when the cli tests run
 **/bun/@t@/

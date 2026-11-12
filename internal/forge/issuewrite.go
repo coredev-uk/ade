@@ -83,3 +83,11 @@ type IssueWriter interface {
 type WeightWriter interface {
 	SetWeight(ctx context.Context, ref Ref, weight *int) error
 }
+
+// MilestoneWriter sets an issue's milestone, the sprint on forges whose
+// sprints are milestones (GitLab Free, GitHub). milestoneID 0 clears it.
+// The id is the one Milestone.ID reports; a forge whose ids are per
+// repository resolves it by title for the issue's project.
+type MilestoneWriter interface {
+	SetMilestone(ctx context.Context, ref Ref, milestoneID int64) error
+}

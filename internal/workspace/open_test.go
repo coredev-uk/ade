@@ -63,6 +63,10 @@ func TestOpenRejectsWrongRepoOrLayout(t *testing.T) {
 }
 
 func TestOpenVSCodeWritesTasksAndHintsWhenCodeIsMissing(t *testing.T) {
+	// A desktop session (no web tty): the hint is about the missing launcher.
+	t.Setenv("DISPLAY", ":0")
+	t.Setenv("TERM_PROGRAM", "")
+	t.Setenv("VSCODE_IPC_HOOK_CLI", "")
 	f := newFixture(t, appManifest, "api/main", "web/main")
 	a := newApp(t, f, "vscode")
 	tree := filepath.Join(f.root, "demo", "web", "main")

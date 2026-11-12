@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +23,7 @@ import (
 	"github.com/coredev-uk/ade/internal/onboard"
 	"github.com/coredev-uk/ade/internal/paths"
 	"github.com/coredev-uk/ade/internal/project"
+	"github.com/coredev-uk/ade/internal/tlsca"
 )
 
 func init() { register(newInitCmd) }
@@ -37,6 +40,9 @@ type initFlags struct {
 	root        string
 	handle      string
 	projects    []string
+	caFile      string
+	sshPort     int
+	ai          aiFlags
 }
 
 func newInitCmd() *cobra.Command {
@@ -51,6 +57,11 @@ func newInitCmd() *cobra.Command {
   3. registers the project manifest(s): clones every repo with its worktrees
   4. runs the first sync and ` + "`ade doctor`" + `
   5. prints what to do next
+
+AI through a LiteLLM gateway is optional: --ai-gateway <url> with --ai-key-env
+and --ai-model-explain/-classify/-draft/-review writes a gateway profile (in a
+terminal the models are chosen from the gateway's /v1/models list). Classify
+is the small, cheap model for label suggestions; it falls back to explain.
 
 Run it in a terminal to be asked for each answer, or script it with --yes:
 
@@ -73,11 +84,14 @@ Exits 2 when a project failed to clone or sync, 1 when ` + "`ade doctor`" + ` re
 	fl.BoolVar(&f.force, "force", false, "replace an existing config (a backup is kept beside it)")
 	fl.StringVar(&f.kind, "forge", "", "forge kind: gitlab or github")
 	fl.StringVar(&f.host, "host", "", "forge host or URL (default: gitlab.com / github.com)")
+	fl.StringVar(&f.caFile, "ca-file", "", "PEM bundle of the certificate authority of a self-hosted forge (also: export SSL_CERT_FILE)")
+	fl.IntVar(&f.sshPort, "ssh-port", 0, "ssh port of a self-hosted forge when not 22 (clone URLs become ssh://git@host:port/...)")
 	fl.StringVar(&f.tokenEnv, "token-env", "", "environment variable holding the token")
 	fl.StringVar(&f.tokenCmd, "token-cmd", "", "command that prints the token (e.g. \"gh auth token\")")
 	fl.StringVar(&f.gitProtocol, "git-protocol", "", "clone protocol: ssh (default) or https")
 	fl.StringVar(&f.root, "root", "", "projects root (default ~/ade)")
 	fl.StringVar(&f.handle, "handle", "", "your forge username (default: asked from the forge)")
+	bindAIFlags(cmd, &f.ai)
 	fl.StringArrayVar(&f.projects, "project", nil, "project manifest: path, https URL or git+<url>#<path> (repeatable)")
 	return cmd
 }
@@ -92,6 +106,7 @@ type initResult struct {
 	Clone    []project.Report   `json:"clone"`
 	Sync     []forgesync.Result `json:"sync"`
 	Doctor   []doctor.Check     `json:"doctor"`
+	AI       *initAIResult      `json:"ai,omitempty"`
 	Problems []string           `json:"problems,omitempty"`
 }
 
@@ -183,6 +198,9 @@ func runInit(cmd *cobra.Command, f initFlags) error {
 			}
 		}
 	}
+	if ans.AI, err = gatherAI(ctx, pr, f.ai, say); err != nil {
+		return err
+	}
 	if pr != nil {
 		ok, err := pr.confirm(fmt.Sprintf("Write %s and add %s?", p.ConfigFile, plural(len(sources), "project")))
 		if err != nil {
@@ -214,6 +232,11 @@ func runInit(cmd *cobra.Command, f initFlags) error {
 	cmd.SetContext(context.WithValue(ctx, ctxKey{}, a))
 
 	res := initResult{Config: p.ConfigFile, Backup: backup, Forge: ans.ForgeName, Handle: ans.Handle, Projects: sources}
+	if g := ans.AI; g != nil {
+		res.AI = &initAIResult{Profile: g.ProfileName(), BaseURL: g.BaseURL, Models: g.Models}
+		fmt.Fprintf(say, "AI profile %s: %s\n", g.ProfileName(), g.BaseURL)
+		initAIEnvHint(say, g)
+	}
 	stop, err := notify.Attach(ctx, a, notify.Channels{})
 	if err != nil {
 		return err
@@ -353,6 +376,42 @@ func gather(pr *prompter, f initFlags) (onboard.Answers, []string, error) {
 				return a, nil, err
 			}
 		}
+	}
+
+	// A self-hosted forge may sit behind an internal CA and listen for ssh on
+	// another port; neither is asked for gitlab.com or github.com.
+	a.SSHPort = f.sshPort
+	if a.CAFile = f.caFile; a.URL != "" {
+		if a.CAFile == "" && pr != nil && f.host == "" {
+			if a.CAFile, err = pr.ask("CA bundle (PEM) of the forge, blank to use the system certificates", ""); err != nil {
+				return a, nil, err
+			}
+		}
+		if a.SSHPort == 0 && pr != nil && f.host == "" && a.GitProtocol == "ssh" {
+			p, err := pr.ask("SSH port of the forge", "22")
+			if err != nil {
+				return a, nil, err
+			}
+			if a.SSHPort, err = strconv.Atoi(strings.TrimSpace(p)); err != nil {
+				return a, nil, fmt.Errorf("ssh port %q is not a number", p)
+			}
+			if a.SSHPort == 22 {
+				a.SSHPort = 0
+			}
+		}
+	}
+	if a.CAFile != "" {
+		p, err := paths.Expand(a.CAFile)
+		if err == nil {
+			p, err = filepath.Abs(p)
+		}
+		if err != nil {
+			return a, nil, fmt.Errorf("--ca-file %q: %w", a.CAFile, err)
+		}
+		if _, err := tlsca.Pool(p); err != nil {
+			return a, nil, err
+		}
+		a.CAFile = p
 	}
 
 	sources := append([]string(nil), f.projects...)

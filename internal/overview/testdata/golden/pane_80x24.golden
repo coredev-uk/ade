@@ -1,0 +1,24 @@
+ acme/tracker#15  Rate-limit the export endpoint
+
+ ●━━●━━●━━●━━●━━◉──○  review
+ as st br dr ci rv mg
+ reviewers · 2 unresolved threads
+
+ weight    5w
+ sprint    Sprint 42 · ends Fri 13 Nov · 3d left
+ type      feature · api
+ workflow  in review
+ state     opened
+ assignees paul
+
+ Code ───────────────────────────────────────────────────────────────── 1 issue
+ ┃ api#3  Limiter middleware
+ ┃ no MR yet
+
+ Description ──────────────────────────────────────────────────────── 1/2 tasks
+ Exports hammer the API during the nightly batch.
+
+ Plan
+
+ … 17 more
+ synced 4m ago   j/k scroll   r reload   q quit

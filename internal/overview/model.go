@@ -11,16 +11,15 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// DefaultPoll is how often the pane looks at the cache for changes.
-const DefaultPoll = 2 * time.Second
-
 // Options configure the live pane.
 type Options struct {
 	Loader *Loader
 	// Glyphs is host.glyphs ("ascii", else unicode).
 	Glyphs string
-	// Poll is the interval between cache checks; DefaultPoll when zero.
-	Poll time.Duration
+	// Changes signals that the cache or the records may have changed (see
+	// internal/watch); the pane re-reads on each signal, and only when the
+	// cache or the record really changed. Nil never refreshes by itself.
+	Changes <-chan struct{}
 	// Now is the clock; time.Now when nil.
 	Now func() time.Time
 	// Edit builds the command that opens the item's record at its notes; nil
@@ -29,12 +28,11 @@ type Options struct {
 }
 
 type (
-	tickMsg   struct{}
-	loadedMsg struct {
-		snap       Snapshot
-		reloaded   bool
-		err        error
-		reschedule bool // from the poll chain (a forced reload must not start a second one)
+	changedMsg struct{ open bool } // the watcher signalled (open false: it is gone)
+	loadedMsg  struct {
+		snap     Snapshot
+		reloaded bool
+		err      error
 	}
 	editedMsg struct{}
 )
@@ -50,9 +48,6 @@ type model struct {
 }
 
 func newModel(o Options) model {
-	if o.Poll <= 0 {
-		o.Poll = DefaultPoll
-	}
 	if o.Now == nil {
 		o.Now = time.Now
 	}
@@ -60,19 +55,27 @@ func newModel(o Options) model {
 }
 
 func (m model) Init() tea.Cmd {
-	return m.pollCmd(true)
+	return tea.Batch(m.pollCmd(), m.waitCmd())
 }
 
-func (m model) tickCmd() tea.Cmd {
-	return tea.Tick(m.opts.Poll, func(time.Time) tea.Msg { return tickMsg{} })
+// waitCmd waits for the next change signal.
+func (m model) waitCmd() tea.Cmd {
+	ch := m.opts.Changes
+	if ch == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		_, ok := <-ch
+		return changedMsg{open: ok}
+	}
 }
 
 // pollCmd reads off the UI loop, only when the cache or the record changed.
-func (m model) pollCmd(reschedule bool) tea.Cmd {
+func (m model) pollCmd() tea.Cmd {
 	l := m.opts.Loader
 	return func() tea.Msg {
 		snap, reloaded, err := l.Poll()
-		return loadedMsg{snap: snap, reloaded: reloaded, err: err, reschedule: reschedule}
+		return loadedMsg{snap: snap, reloaded: reloaded, err: err}
 	}
 }
 
@@ -89,13 +92,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
 		m.off = m.clamp(m.off)
-	case tickMsg:
-		return m, m.pollCmd(true)
+	case changedMsg:
+		if !msg.open {
+			return m, nil
+		}
+		return m, tea.Batch(m.pollCmd(), m.waitCmd())
 	case loadedMsg:
 		m = m.loaded(msg)
-		if msg.reschedule {
-			return m, m.tickCmd()
-		}
 	case editedMsg:
 		return m, m.reloadCmd()
 	case tea.KeyPressMsg:
@@ -191,15 +194,18 @@ func (m model) render() string {
 		off := max(0, min(m.off, len(all)-vp))
 		shown = append([]string(nil), all[off:off+vp]...)
 		if off > 0 {
-			shown[0] = " " + stFaint.Render(fmt.Sprintf("… %d above", off))
+			shown[0] = " " + stFaint.Render(fmt.Sprintf(m.g.T(m.g.T(m.g.T("… %d above"))), off))
 		}
 		if more = len(all) - off - vp; more > 0 {
-			shown[len(shown)-1] = " " + stFaint.Render(fmt.Sprintf("… %d more", more))
+			shown[len(shown)-1] = " " + stFaint.Render(fmt.Sprintf(m.g.T(m.g.T(m.g.T("… %d more"))), more))
 		}
 	}
 	out := strings.Join(shown, "\n")
+	if pad := vp - len(shown); pad > 0 {
+		out += strings.Repeat("\n", pad) // the footer sits on the last row
+	}
 	if m.err != nil {
-		out += "\n " + stBad.Render(ansi.Truncate(m.g.Bad+" "+m.err.Error(), w-2, "…"))
+		out += "\n " + stBad.Render(ansi.Truncate(m.g.Bad+" "+m.err.Error(), w-2, m.g.Ell))
 	}
 	keys := []string{"j/k scroll", "r reload"}
 	if m.opts.Edit != nil && m.snap.NotesPath != "" {

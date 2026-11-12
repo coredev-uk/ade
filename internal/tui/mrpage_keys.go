@@ -31,7 +31,7 @@ func (m *model) mrKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 		return nil, true
 	}
 	switch ks {
-	case "q", "?", "i":
+	case "q", "?", "i", ":":
 		return nil, false
 	case "esc":
 		if m.nc.dismissToasts() {
@@ -265,7 +265,7 @@ func (m *model) inlineTriage(ks string) tea.Cmd {
 		}
 	case "n":
 		if dr, ok := pick(true); ok {
-			m.mr.modal = &mrModal{kind: modalDeny, draftID: dr.ID}
+			m.mr.modal = &mrModal{kind: modalDeny, draftID: dr.ID, ed: newEditor("")}
 		}
 	case "e":
 		if dr, ok := pick(false); ok {
@@ -293,7 +293,7 @@ func (m *model) reviewKey(ks string) tea.Cmd {
 	case "Y":
 		m.acceptAll()
 	case "n":
-		p.modal = &mrModal{kind: modalDeny, draftID: sel.ID}
+		p.modal = &mrModal{kind: modalDeny, draftID: sel.ID, ed: newEditor("")}
 	case "e":
 		m.beginEdit(sel)
 	case "s":
@@ -361,13 +361,15 @@ func (m model) mrFooter(w int) string {
 	case p.data == nil:
 		tabKeys = []string{"j/k", "scroll"}
 	case p.tab == tabThreads:
-		tabKeys = []string{"j/k", "move", "r", "reply", "x", "resolve/reopen"}
-		if m.aiOn() {
-			tabKeys = append(tabKeys, "d", "AI reply", "s", "AI summary")
-		}
+		tabKeys = []string{"j/k", "move"}
 		if narrow {
 			tabKeys = append(tabKeys, "enter", "open")
 		}
+		tabKeys = append(tabKeys, "r", "reply")
+		if m.aiOn() {
+			tabKeys = append(tabKeys, "s", "AI summary", "d", "AI reply")
+		}
+		tabKeys = append(tabKeys, "x", "resolve/reopen")
 	case p.tab == tabDiff && p.focusDiff:
 		tabKeys = []string{"j/k", "line", "c", "comment", "J/K", "file", "D", "delta", "h", "files"}
 	case p.tab == tabDiff:
@@ -431,10 +433,8 @@ func fitKeys(w int, keep []string, groups ...[]string) string {
 	}
 }
 
-// mrHelpView is terse on purpose: each row fits one line even at 60 columns,
-// and rows that do not fit the height are left out. The AI rows exist only
-// while AI is on.
-func mrHelpView(w, h int, g glyphs, ai bool) string {
+// mrHelpRows lists the MR page's keys. The AI rows exist only while AI is on.
+func mrHelpRows(ai bool) [][2]string {
 	rows := [][2]string{
 		{"tab", "next tab; 1-6 jump to one"},
 		{"[ ]", "another MR of the item"},
@@ -459,10 +459,17 @@ func mrHelpView(w, h int, g glyphs, ai bool) string {
 			[2]string{"d s", "Overview: raw/summary, new summary"},
 			[2]string{"d s", "Threads: AI draft reply, summary"})
 	}
+	return rows
+}
+
+// mrHelpView is terse on purpose: each row fits one line even at 60 columns,
+// and rows that do not fit the height are left out.
+func mrHelpView(w, h int, g glyphs, ai bool) string {
+	rows := mrHelpRows(ai)
 	l := []string{stBold.Render("Merge request page"), ""}
 	for _, r := range rows[:min(len(rows), max(1, h-6))] {
-		l = append(l, stRule.Render(g.Vertical)+" "+stBold.Render(pad(r[0], 8))+r[1])
+		l = append(l, stRule.Render(g.Vertical)+" "+stBold.Render(pad(g, r[0], 8))+r[1])
 	}
-	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(colRule)).
+	return lipgloss.NewStyle().Border(g.Border).BorderForeground(lipgloss.Color(colRule)).
 		Padding(0, 1).Width(w).Render(strings.Join(l, "\n"))
 }

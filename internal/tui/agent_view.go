@@ -43,13 +43,13 @@ func (m model) agentOverlay(w, h int) string {
 	inner := dw - 4
 	title := "Agent"
 	if d.item != nil {
-		title += " · " + d.item.Ref.String()
+		title += m.g.T(" · ") + d.item.Ref.String()
 	} else {
-		title += " · all runs"
+		title += m.g.T(" · all runs")
 	}
 	var l []string
 	if d.item != nil && d.stage == agList {
-		l = append(l, stFaint.Render(ansi.Truncate(d.item.Issue.Title, inner, "…")), "")
+		l = append(l, stFaint.Render(ansi.Truncate(d.item.Issue.Title, inner, m.g.Ell)), "")
 	}
 	if d.err != nil {
 		l = append(l, stBad.Render(ansi.Wrap(m.g.Bad+" "+d.err.Error(), inner, "")), "", keys("esc", "close"))
@@ -61,7 +61,7 @@ func (m model) agentOverlay(w, h int) string {
 		var hh string
 		l, hh = m.agListView(d, inner, h)
 		if d.item != nil {
-			l = append([]string{stFaint.Render(ansi.Truncate(d.item.Issue.Title, inner, "…")), ""}, l...)
+			l = append([]string{stFaint.Render(ansi.Truncate(d.item.Issue.Title, inner, m.g.Ell)), ""}, l...)
 		}
 		hint = hh
 	case agPlan:
@@ -72,7 +72,7 @@ func (m model) agentOverlay(w, h int) string {
 		l, hint = m.agConfirmView(d, inner)
 	}
 	if d.busy != "" {
-		l = append(l, "", stFaint.Render(m.g.Sync+" "+d.busy+"…"))
+		l = append(l, "", stFaint.Render(m.g.Sync+" "+d.busy+m.g.Ell))
 	}
 	if d.warn != "" {
 		l = append(l, "", stWarn.Render(ansi.Wrap(m.g.Warn+" "+d.warn, inner, "")))
@@ -87,10 +87,10 @@ func (m model) agListView(d *agentDialog, inner, h int) ([]string, string) {
 	hint := keys("enter", "open", "x", "cancel run", "esc", "close")
 	if d.item != nil {
 		l = append(l, section("Start", "work in the item's worktree", inner, g))
-		l = append(l, ansi.Truncate(stBold.Render("p")+" plan                "+stFaint.Render("read-only: issue, comments, AGENTS.md"), inner, "…"))
+		l = append(l, ansi.Truncate(stBold.Render("p")+" plan                "+stFaint.Render("read-only: issue, comments, AGENTS.md"), inner, m.g.Ell))
 		switch {
 		case d.mr != nil:
-			l = append(l, ansi.Truncate(stBold.Render("c")+" address comments    "+stFaint.Render(fmt.Sprintf("%s · %d unresolved, replies drafted", d.mr.Ref, d.mr.Unresolved)), inner, "…"))
+			l = append(l, ansi.Truncate(stBold.Render("c")+" address comments    "+stFaint.Render(fmt.Sprintf(m.g.T("%s · %d unresolved, replies drafted"), d.mr.Ref, d.mr.Unresolved)), inner, m.g.Ell))
 		default:
 			l = append(l, stFaint.Render("c address comments    no open MR with unresolved threads"))
 		}
@@ -99,14 +99,14 @@ func (m model) agListView(d *agentDialog, inner, h int) ([]string, string) {
 			if d.noNotes {
 				state, tog = stFaint.Render(g.Info+" left out"), "include"
 			}
-			l = append(l, ansi.Truncate(stBold.Render("n")+" your notes           "+state+stFaint.Render(" · press n to "+tog), inner, "…"))
+			l = append(l, ansi.Truncate(stBold.Render("n")+" your notes           "+state+stFaint.Render(m.g.T(" · press n to ")+tog), inner, m.g.Ell))
 		}
 		l = append(l, "")
 		hint = keys("p", "plan", "c", "address", "enter", "open", "x", "cancel", "esc", "close")
 	}
 	guide := countWord(len(d.runs), "run")
 	if d.item == nil {
-		guide += " · every item"
+		guide += m.g.T(" · every item")
 	}
 	l = append(l, section("Runs", guide, inner, g))
 	if len(d.runs) == 0 {
@@ -120,7 +120,7 @@ func (m model) agListView(d *agentDialog, inner, h int) ([]string, string) {
 		l = append(l, m.agRunLine(d.runs[i], i == d.sel, d.item == nil, inner, now))
 	}
 	if len(d.runs) > top+room {
-		l = append(l, stFaint.Render(fmt.Sprintf("… %d more", len(d.runs)-top-room)))
+		l = append(l, stFaint.Render(fmt.Sprintf(m.g.T("… %d more"), len(d.runs)-top-room)))
 	}
 	return l, hint
 }
@@ -139,7 +139,7 @@ func (m model) agRunLine(r agent.Run, sel, withItem bool, inner int, now time.Ti
 	}
 	cost := fmt.Sprintf("$%.4f/$%.2f", r.CostUSD, r.CapUSD)
 	el := fmt.Sprintf("%-6s", r.Elapsed(now).Round(time.Second).String())
-	head := cur + " " + pad(m.agStateMark(r.State), 17) + " " + pad(id, idW) + " " + pad(string(r.Kind), 7)
+	head := cur + " " + pad(m.g, m.agStateMark(r.State), 17) + " " + pad(m.g, id, idW) + " " + pad(m.g, string(r.Kind), 7)
 	tail := stFaint.Render(cost + " " + m.g.Sep + " " + el)
 	mid := ""
 	if withItem {
@@ -148,7 +148,7 @@ func (m model) agRunLine(r agent.Run, sel, withItem bool, inner int, now time.Ti
 	line := head + mid
 	gap := inner - lipgloss.Width(line) - lipgloss.Width(tail)
 	if gap < 1 {
-		return ansi.Truncate(line+" "+tail, inner, "…")
+		return ansi.Truncate(line+" "+tail, inner, m.g.Ell)
 	}
 	return line + strings.Repeat(" ", gap) + tail
 }
@@ -172,9 +172,9 @@ func (m model) agPlanView(d *agentDialog, inner, h int) ([]string, string) {
 		l = append(l, stFaint.Render(g.Vertical)+" "+ln)
 	}
 	if more := len(lines) - d.scroll - room; more > 0 {
-		l = append(l, stFaint.Render(g.Vertical+fmt.Sprintf(" … %d more lines (j scrolls)", more)))
+		l = append(l, stFaint.Render(g.Vertical+fmt.Sprintf(m.g.T(" … %d more lines (j scrolls)"), more)))
 	}
-	l = append(l, "", stFaint.Render(fmt.Sprintf("worktree %s · %s · cap $%.2f", "…/"+filepath.Base(r.Worktree), r.Driver, r.CapUSD)))
+	l = append(l, "", stFaint.Render(fmt.Sprintf(m.g.T("worktree %s · %s · cap $%.2f"), m.g.T("…/")+filepath.Base(r.Worktree), r.Driver, r.CapUSD)))
 	enter := "approve"
 	if r.Approved {
 		enter = "run it in the worktree"
@@ -185,7 +185,7 @@ func (m model) agPlanView(d *agentDialog, inner, h int) ([]string, string) {
 func (m model) agDetailView(d *agentDialog, inner, h int) ([]string, string) {
 	g, r := m.g, d.cur
 	l := []string{section("Run "+r.ID, string(r.Kind)+" "+g.Sep+" "+string(r.State), inner, g)}
-	row := func(k, v string) { l = append(l, ansi.Truncate(stFaint.Render(pad(k, 10))+v, inner, "…")) }
+	row := func(k, v string) { l = append(l, ansi.Truncate(stFaint.Render(pad(m.g, k, 10))+v, inner, m.g.Ell)) }
 	row("state", m.agStateMark(r.State))
 	row("item", r.Item()+" "+stFaint.Render("in "+r.Repo+" on "+r.Branch))
 	row("driver", r.Driver+" "+stFaint.Render(r.Model))
@@ -211,14 +211,14 @@ func (m model) agDetailView(d *agentDialog, inner, h int) ([]string, string) {
 		l = append(l, stBad.Render(ansi.Wrap(g.Bad+" "+r.Error, inner, "")))
 	}
 	if ds := d.diff; ds != nil {
-		l = append(l, "", section("Diff", fmt.Sprintf("%s · +%d -%d", countWord(len(ds.Files), "file"), ds.Added(), ds.Removed()), inner, g))
+		l = append(l, "", section("Diff", fmt.Sprintf(m.g.T("%s · +%d -%d"), countWord(len(ds.Files), "file"), ds.Added(), ds.Removed()), inner, g))
 		room := max(3, h-24)
 		for i, f := range ds.Files {
 			if i == room {
-				l = append(l, stFaint.Render(fmt.Sprintf("… %d more files (ade agent diff %s)", len(ds.Files)-room, r.ID)))
+				l = append(l, stFaint.Render(fmt.Sprintf(m.g.T("… %d more files (ade agent diff %s)"), len(ds.Files)-room, r.ID)))
 				break
 			}
-			l = append(l, ansi.Truncate(stBold.Render(f.Status)+" "+pad(f.Path, max(10, inner-20))+" "+agCount("+", f.Added, stOK)+" "+agCount("-", f.Removed, stBad), inner, "…"))
+			l = append(l, ansi.Truncate(stBold.Render(f.Status)+" "+pad(m.g, f.Path, max(10, inner-20))+" "+agCount("+", f.Added, stOK)+" "+agCount("-", f.Removed, stBad), inner, m.g.Ell))
 		}
 		if len(ds.Files) == 0 {
 			l = append(l, stFaint.Render("no changes"))
@@ -238,7 +238,7 @@ func (m model) agConfirmView(d *agentDialog, inner int) ([]string, string) {
 	g, r := m.g, d.cur
 	l := []string{section("Push", "your approval of the diff", inner, g), ""}
 	if ds := d.diff; ds != nil {
-		l = append(l, fmt.Sprintf("%s · +%d -%d", countWord(len(ds.Files), "file"), ds.Added(), ds.Removed()))
+		l = append(l, fmt.Sprintf(m.g.T("%s · +%d -%d"), countWord(len(ds.Files), "file"), ds.Added(), ds.Removed()))
 	}
 	l = append(l, "")
 	for _, ln := range wrap("Commits everything in the worktree as the configured git user, marked (ade\x00agent), then pushes "+stBold.Render(r.Branch)+". The merge request updates by itself.", inner) {
@@ -251,12 +251,12 @@ func (m model) agConfirmView(d *agentDialog, inner int) ([]string, string) {
 // the size of the body, so no fragment of the list or preview beneath shows
 // beside or below it.
 func (m model) agentOverlayLayer(w, h int) *lipgloss.Layer {
-	return blankFieldLayer(m.agentOverlay(w, h), w, h)
+	return blankFieldLayer(m.g, m.agentOverlay(w, h), w, h)
 }
 
 // blankFieldLayer is the one placement every dialog shares: the block sits at
 // the top, centred, in a blank field the size of the body. "" yields nil.
-func blankFieldLayer(d string, w, h int) *lipgloss.Layer {
+func blankFieldLayer(g glyphs, d string, w, h int) *lipgloss.Layer {
 	if d == "" {
 		return nil
 	}
@@ -270,7 +270,7 @@ func blankFieldLayer(d string, w, h int) *lipgloss.Layer {
 		if i < len(lines) {
 			ln = lines[i]
 		}
-		out[i] = strings.Repeat(" ", left) + pad(ln, dw) + strings.Repeat(" ", w-left-dw)
+		out[i] = strings.Repeat(" ", left) + pad(g, ln, dw) + strings.Repeat(" ", w-left-dw)
 	}
 	return lipgloss.NewLayer(strings.Join(out, "\n")).X(0).Y(1).Z(2)
 }

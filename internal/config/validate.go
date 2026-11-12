@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"net/url"
+	"os"
 	"regexp"
 	"slices"
 	"strconv"
@@ -218,6 +219,9 @@ func (v *manifestValidator) checkRepos() {
 		}
 		if r.Path == "" && r.URL == "" {
 			v.errorf(p, "needs path or url")
+		}
+		if !oneOf(r.Devshell, "", "auto", "direnv", "nix", "none") {
+			v.errorf(p+".devshell", "unknown value %q: want auto, direnv, nix or none", r.Devshell)
 		}
 		for i, req := range r.Requires {
 			rp := fmt.Sprintf("%s.requires[%d]", p, i)
@@ -657,5 +661,16 @@ func validateForge(s *issues, path string, f Forge) {
 	}
 	if f.TokenCmd == "" && f.TokenEnv == "" {
 		s.warnf(path, "no token_cmd or token_env: API calls will be unauthenticated and fail")
+	}
+	if f.CAFile != "" {
+		if _, err := os.Stat(f.CAFile); err != nil {
+			s.warnf(path+".ca_file", "%s is not readable: %v", f.CAFile, err)
+		}
+	}
+	if f.SSHPort < 0 || f.SSHPort > 65535 {
+		s.errorf(path+".ssh_port", "%d is not a port", f.SSHPort)
+	}
+	if f.MaxConcurrency < 0 {
+		s.errorf(path+".max_concurrency", "%d: want a positive number", f.MaxConcurrency)
 	}
 }

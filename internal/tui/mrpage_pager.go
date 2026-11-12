@@ -10,6 +10,7 @@ import (
 
 	"github.com/coredev-uk/ade/internal/events"
 	"github.com/coredev-uk/ade/internal/forge"
+	"github.com/coredev-uk/ade/internal/syntax"
 )
 
 // D in the Diff tab hands the MR's whole diff to delta (PLAN 6.2). Inside a
@@ -65,6 +66,10 @@ func pagerLine(file string, hasDelta bool, gitPager string, getenv func(string) 
 	return "less -R" + in
 }
 
+// defaultPagerLine is the pager line pagerLine ends on when nothing else is
+// configured.
+func defaultPagerLine(file string) string { return "less -R < " + shQuote(file) }
+
 // openPager shows the MR's diff in delta or the git pager. The patch is
 // written here (it is already in memory); the pager itself runs off the UI
 // loop in a zellij pane, or takes the terminal for as long as it is open.
@@ -79,12 +84,6 @@ func (m *model) openPager() tea.Cmd {
 		m.notice(events.Error, "Could not open the diff: "+oneLine(err.Error()))
 		return nil
 	}
-	_, werr := f.WriteString(patchOf(d.diff))
-	if err := firstErr(werr, f.Close()); err != nil {
-		_ = os.Remove(f.Name())
-		m.notice(events.Error, "Could not open the diff: "+oneLine(err.Error()))
-		return nil
-	}
 	_, derr := exec.LookPath("delta")
 	var gitPager string
 	if derr != nil {
@@ -92,7 +91,20 @@ func (m *model) openPager() tea.Cmd {
 			gitPager = string(out)
 		}
 	}
-	script := pagerLine(f.Name(), derr == nil, gitPager, os.Getenv) + "; rm -f " + shQuote(f.Name())
+	line := pagerLine(f.Name(), derr == nil, gitPager, os.Getenv)
+	patch := patchOf(d.diff)
+	if line == defaultPagerLine(f.Name()) {
+		// No delta and no pager of the user's own: less -R shows escape
+		// sequences, so the patch is coloured here (none under NO_COLOR).
+		patch = syntax.Patch(patch, syntax.NoColor())
+	}
+	_, werr := f.WriteString(patch)
+	if err := firstErr(werr, f.Close()); err != nil {
+		_ = os.Remove(f.Name())
+		m.notice(events.Error, "Could not open the diff: "+oneLine(err.Error()))
+		return nil
+	}
+	script := line + "; rm -f " + shQuote(f.Name())
 	if os.Getenv("ZELLIJ") == "" {
 		return tea.ExecProcess(exec.Command("sh", "-c", script), func(err error) tea.Msg {
 			return mrResultMsg{ref: ref, what: "pager", err: err}

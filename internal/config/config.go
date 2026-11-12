@@ -59,6 +59,15 @@ type Forge struct {
 	TokenCmd    string `toml:"token_cmd"`
 	TokenEnv    string `toml:"token_env"`
 	GitProtocol string `toml:"git_protocol"` // ssh | https (default ssh)
+	// CAFile is a PEM bundle of the certificate authority a self-hosted
+	// forge's certificate chains to. It is added to the system pool for API
+	// calls and handed to git (http.<host>.sslCAInfo) for https clones.
+	CAFile string `toml:"ca_file"`
+	// SSHPort is the forge's SSH port when it is not 22; clone URLs then use
+	// the ssh://git@host:port/path form.
+	SSHPort int `toml:"ssh_port"`
+	// MaxConcurrency caps in-flight API requests to this forge (default 4).
+	MaxConcurrency int `toml:"max_concurrency"`
 }
 
 type PathsCfg struct {
@@ -110,9 +119,15 @@ type AIProfile struct {
 	// binary when not on PATH under that name.
 	Agent        string `toml:"agent"`
 	AgentCommand string `toml:"agent_command"`
-	// Models maps a role (explain, draft, plan, implement, review) to a model
-	// id. A missing review model falls back to draft.
+	// Models maps a role (explain, classify, draft, plan, implement, review)
+	// to a model id. A missing classify model falls back to explain; a missing
+	// review model to draft, then explain.
 	Models map[string]string `toml:"models"`
+	// ExtraHeaders are sent on every request of an HTTP driver, e.g. a
+	// gateway's team or tag headers. Authorization is the key's job.
+	ExtraHeaders map[string]string `toml:"extra_headers"`
+	// Timeout caps one request of an HTTP driver (default 5m).
+	Timeout Duration `toml:"timeout"`
 	// Prices maps a model id to its list prices, for pre-flight estimates and
 	// for drivers whose responses carry no cost.
 	Prices  map[string]Price `toml:"prices"`
@@ -234,6 +249,14 @@ func Load(path string) (*Config, error) {
 		}
 		if f.GitProtocol == "" {
 			f.GitProtocol = "ssh"
+		}
+		if f.MaxConcurrency == 0 {
+			f.MaxConcurrency = DefaultMaxConcurrency
+		}
+		if f.CAFile != "" {
+			if p, err := cfg.ResolvePath(f.CAFile); err == nil {
+				f.CAFile = p
+			}
 		}
 		f.URL = strings.TrimRight(f.URL, "/")
 		cfg.Forges[name] = f

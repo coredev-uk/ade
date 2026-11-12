@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/coredev-uk/ade/internal/devshell"
 	"github.com/coredev-uk/ade/internal/host/zellij"
 )
 
@@ -52,6 +53,9 @@ type LayoutSpec struct {
 	// BaseRef is what the review layout diffs against (e.g. origin/main).
 	BaseRef string
 	Tools   Tools
+	// Devshell is the worktree's dev shell; the editor, omp and shell panes
+	// run inside it when it is active.
+	Devshell devshell.Shell
 	// Overview holds the arguments of `ade` that show the work item live
 	// (`item <ref> --watch`); empty when the worktree belongs to no item, which
 	// leaves the pane out.
@@ -102,7 +106,7 @@ func BuildLayout(s LayoutSpec) (string, error) {
 		topAttr = fmt.Sprintf(` size="%d%%"`, 100-stripPct)
 	}
 	b.line(2, `pane%s split_direction="vertical" {`, topAttr)
-	b.pane(3, fmt.Sprintf(`size="%d%%" focus=true`, mainPct), s.primary())
+	b.pane(3, fmt.Sprintf(`size="%d%%" focus=true`, mainPct), s.wrap(s.primary()))
 	right := 100 - mainPct
 	if len(s.Overview) > 0 {
 		b.line(3, `pane size="%d%%" split_direction="horizontal" {`, right)
@@ -142,10 +146,26 @@ func BuildLayout(s LayoutSpec) (string, error) {
 func (s LayoutSpec) stackPanes(b *kdl, depth int) {
 	if cmd, ok := s.lazygit(); ok {
 		b.pane(depth, `name="lazygit" expanded=true`, cmd)
-		b.pane(depth, `name="shell"`, command{})
+		b.pane(depth, `name="shell"`, s.wrap(command{}))
 		return
 	}
-	b.pane(depth, `name="shell" expanded=true`, command{})
+	b.pane(depth, `name="shell" expanded=true`, s.wrap(command{}))
+}
+
+// wrap runs a pane's program inside the worktree's dev shell (direnv exec,
+// nix develop) so the editor, omp and the shell see the repo's tools. A plain
+// shell pane becomes an explicit `$SHELL`, because zellij needs a program to
+// wrap. Panes of a tree without a dev shell are untouched.
+func (s LayoutSpec) wrap(c command) command {
+	if !s.Devshell.Active() {
+		return c
+	}
+	if c.prog == "" {
+		c.prog, c.args = "sh", []string{"-c", `exec "${SHELL:-sh}"`}
+	}
+	argv := s.Devshell.Wrap(append([]string{c.prog}, c.args...))
+	c.prog, c.args = argv[0], argv[1:]
+	return c
 }
 
 func (s LayoutSpec) adeCmd(p Pane) command {

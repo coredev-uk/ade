@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -22,9 +21,9 @@ import (
 // elapsed time; a plan awaiting approval opens the plan review dialog, a run
 // in review shows its diff summary with lazygit and push.
 //
-// All agent, forge and git work runs in commands; the dialog polls the run
-// store once a second while open, so a run started here or by `ade agent` in
-// another pane shows up and moves on its own.
+// All agent, forge and git work runs in commands; the dialog re-reads the run
+// store whenever the cache changes (watch.go), so a run started here or by
+// `ade agent` in another pane shows up and moves on its own.
 
 type agStage int
 
@@ -90,7 +89,6 @@ type (
 		diff *agent.DiffSummary
 		err  error
 	}
-	agTickMsg  struct{ d *agentDialog }
 	agEditMsg  struct{ d *agentDialog }
 	agLazyDone struct{ err error }
 )
@@ -136,11 +134,7 @@ func (m model) openAgent(item *domain.WorkItem, all bool) (model, tea.Cmd) {
 			}
 		}
 	}
-	return m, tea.Batch(m.agLoad(d), agTick(d))
-}
-
-func agTick(d *agentDialog) tea.Cmd {
-	return tea.Tick(time.Second, func(time.Time) tea.Msg { return agTickMsg{d} })
+	return m, m.agLoad(d)
 }
 
 func (m model) agLoad(d *agentDialog) tea.Cmd {
@@ -181,12 +175,6 @@ func (m model) agentUpdate(msg tea.Msg) (model, tea.Cmd, bool) {
 			}
 		}
 		return m, nil, true
-	case agTickMsg:
-		d := m.agt
-		if d == nil || msg.d != d {
-			return m, nil, true
-		}
-		return m, tea.Batch(m.agLoad(d), agTick(d)), true
 	case agStartedMsg:
 		return m.agStarted(msg)
 	case agStepMsg:

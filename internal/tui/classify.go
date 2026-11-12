@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -17,6 +16,7 @@ import (
 	"github.com/coredev-uk/ade/internal/domain"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/startwork"
+	"github.com/coredev-uk/ade/internal/weight"
 )
 
 // The classify dialog (PLAN 6.1/§3). `c` on a Home item suggests the type and
@@ -122,10 +122,9 @@ func (m model) openClassify() (model, tea.Cmd) {
 				}
 			}
 		}
-		in.Samples = ai.WeightSamples(items)
-		if hist, err := ai.ClosedSamples(ctx, res.Forge, res.Manifest.Tracker.Project, res.Manifest.Labels, res.Manifest.Tracker.Weight, time.Now()); err == nil {
-			in.Samples = ai.MergeSamples(in.Samples, hist)
-		}
+		// The closed-issue history comes from the cache: reading a year of
+		// it from the forge is not worth a wait here.
+		in.Samples = ai.MergeSamples(ai.WeightSamples(items), weight.HistorySamples(ctx, a, res.Forge, res.Manifest.Forge, res.Manifest))
 		return clResolvedMsg{d: d, res: res, in: in}
 	}
 }
@@ -191,14 +190,9 @@ func (m model) classifyUpdate(msg tea.Msg) (model, tea.Cmd, bool) {
 			return m, nil, true
 		}
 		d.stage = clDone
-		// Home's row: the issue left "needs triage". Only the forge is read
-		// again; the git update (clones, pulls) has nothing to do with labels.
-		var cmd tea.Cmd
-		if m.sync != nil && !m.syncing {
-			m.syncing = true
-			cmd = m.runSync()
-		}
-		return m, cmd, true
+		// Home's row: the issue left "needs triage". Only this issue is read
+		// again, not every project.
+		return m, m.refreshItem(d.res.Manifest, d.res.Forge, d.ref), true
 	case tea.KeyPressMsg:
 		if d == nil || msg.String() == "ctrl+c" {
 			return m, nil, false
@@ -231,7 +225,7 @@ func (m model) classifyKey(ks string) (model, tea.Cmd) {
 			}
 			ref, title := d.ref, d.res.Item.Issue.Title
 			m.cl = nil
-			return m.openWeightFor(ref, title)
+			return m.openWeightFor(ref, title, d.cr.Suggestion.Weight, d.cr.Suggestion.WeightReason)
 		case "enter", "y":
 			var add []string
 			for _, l := range d.labels {
@@ -242,7 +236,7 @@ func (m model) classifyKey(ks string) (model, tea.Cmd) {
 			if len(add) == 0 {
 				d.warn = "nothing ticked: space ticks a label, esc closes"
 				if len(d.labels) == 0 {
-					d.warn = "no label to add · esc closes"
+					d.warn = m.g.T("no label to add · esc closes")
 				}
 				return m, nil
 			}
@@ -289,19 +283,19 @@ func (m model) classifyOverlay(w, h int) string {
 	g := m.g
 	l := []string{}
 	if d.res != nil {
-		l = append(l, stFaint.Render(ansi.Truncate(d.res.Item.Issue.Title, inner, "…")), "")
+		l = append(l, stFaint.Render(ansi.Truncate(d.res.Item.Issue.Title, inner, m.g.Ell)), "")
 	}
 	var hint string
 	switch d.stage {
 	case clResolving:
-		l = append(l, stFaint.Render(g.Sync+" reading "+d.ref.String()+"…"))
+		l = append(l, stFaint.Render(g.Sync+" reading "+d.ref.String()+m.g.Ell))
 		hint = keys("esc", "cancel")
 	case clThinking:
-		l = append(l, stFaint.Render(g.Sync+" "+m.classifyWhat()+"…"))
+		l = append(l, stFaint.Render(g.Sync+" "+m.classifyWhat()+m.g.Ell))
 		hint = keys("esc", "cancel")
 	case clAsk:
 		l = append(l, stWarn.Render(g.Warn+" this asks the model first"))
-		for _, ln := range packFields(strings.Split(d.pf.Describe(), " · "), g.sep(), "  ", inner) {
+		for _, ln := range packFields(m.g, strings.Split(m.g.T(d.pf.Describe()), m.g.T(" · ")), g.sep(), "  ", inner) {
 			l = append(l, stFaint.Render(ln))
 		}
 		for _, c := range d.pf.Confirm {
@@ -325,7 +319,7 @@ func (m model) classifyOverlay(w, h int) string {
 			hint += "   " + keys("=", "set weight")
 		}
 	case clApplying:
-		l = append(l, stFaint.Render(g.Sync+" adding "+strings.Join(d.added, ", ")+"…"))
+		l = append(l, stFaint.Render(g.Sync+" adding "+strings.Join(d.added, ", ")+m.g.Ell))
 		hint = keys("esc", "hide")
 	case clDone:
 		l = append(l, stOK.Render(g.OK+" added ")+strings.Join(d.added, ", "))
@@ -334,7 +328,8 @@ func (m model) classifyOverlay(w, h int) string {
 		if errors.Is(d.err, ai.ErrNothingToClassify) {
 			l = append(l, stOK.Render(g.OK+" "+d.err.Error()), stFaint.Render("nothing to suggest, and no model call was made"))
 		} else {
-			cause, fix, _ := strings.Cut(classifyFailure(d), " · ")
+			cause, fix, _ := strings.Cut(classifyFailure(d), m.g.T(" · "))
+			cause, fix = m.g.T(cause), m.g.T(fix)
 			l = append(l, stBad.Render(ansi.Wrap(g.Bad+" "+cause, inner, "")))
 			if fix != "" {
 				l = append(l, stFaint.Render(ansi.Wrap("  "+fix, inner, "")))
@@ -346,7 +341,7 @@ func (m model) classifyOverlay(w, h int) string {
 		l = append(l, "", stWarn.Render(ansi.Wrap(g.Warn+" "+d.warn, inner, "")))
 	}
 	l = append(l, "", hint)
-	return m.dialog("Classify · "+d.ref.String(), l, dw)
+	return m.dialog(m.g.T("Classify · ")+d.ref.String(), l, dw)
 }
 
 // classifyFailure words a failed dialog as "cause · what to do". The raw
@@ -375,7 +370,7 @@ func (m model) auditClassifyFailure(ref forge.Ref, err error) {
 
 // packFields lays fields out joined by sep, filling each line to w cells;
 // every line starts with indent and none starts with a bare separator.
-func packFields(fields []string, sep, indent string, w int) []string {
+func packFields(g glyphs, fields []string, sep, indent string, w int) []string {
 	var out []string
 	line := ""
 	for _, f := range fields {
@@ -393,7 +388,7 @@ func packFields(fields []string, sep, indent string, w int) []string {
 		out = append(out, line)
 	}
 	for i, ln := range out {
-		out[i] = ansi.Truncate(ln, w, "…")
+		out[i] = ansi.Truncate(ln, w, g.Ell)
 	}
 	return out
 }
@@ -409,7 +404,7 @@ func (m model) classifyWhat() string {
 func (m model) classifySuggestView(d *classifyDialog, inner int) []string {
 	g := m.g
 	s := d.cr.Suggestion
-	how := "keywords · AI is off or not configured · no cost"
+	how := m.g.T("keywords · AI is off or not configured · no cost")
 	if s.Source == ai.SourceAI {
 		how = "AI"
 		if r := d.cr.Run; r != nil {
@@ -438,13 +433,13 @@ func (m model) classifySuggestView(d *classifyDialog, inner int) []string {
 		if lb.on {
 			box, name = g.Done, stBold.Render(lb.name)
 		}
-		l = append(l, ansi.Truncate(cur+" "+box+" "+name, inner, "…"))
+		l = append(l, ansi.Truncate(cur+" "+box+" "+name, inner, m.g.Ell))
 	}
 	if s.Reason != "" {
 		l = append(l, "", stFaint.Render(ansi.Wrap("why: "+s.Reason, inner, "")))
 	}
 	for _, dr := range s.Dropped {
-		l = append(l, stFaint.Render(ansi.Truncate("ignored "+dr, inner, "…")))
+		l = append(l, stFaint.Render(ansi.Truncate("ignored "+dr, inner, m.g.Ell)))
 	}
 	var open []string // facets the issue lacks and no suggestion covers
 	for _, f := range miss {
@@ -455,7 +450,7 @@ func (m model) classifySuggestView(d *classifyDialog, inner int) []string {
 	if len(miss) > 0 {
 		note := "labels are only added, never removed"
 		if len(open) > 0 {
-			note = "no " + strings.Join(open, " or ") + " label suggested · " + note
+			note = "no " + strings.Join(open, " or ") + m.g.T(" label suggested · ") + note
 		}
 		l = append(l, stFaint.Render(ansi.Wrap(note, inner, "")))
 	}
@@ -464,7 +459,7 @@ func (m model) classifySuggestView(d *classifyDialog, inner int) []string {
 	}
 	switch {
 	case s.Weight != nil:
-		l = append(l, section("Suggested weight", "from similar closed issues · no model", inner, g),
+		l = append(l, section("Suggested weight", m.g.T("from similar closed issues · no model"), inner, g),
 			"  "+stBold.Render(fmt.Sprintf("%dw", *s.Weight)),
 			stFaint.Render(ansi.Wrap(s.WeightReason, inner, "")),
 			stFaint.Render("= sets it (shown first, then confirmed)"))
@@ -476,5 +471,5 @@ func (m model) classifySuggestView(d *classifyDialog, inner int) []string {
 
 // classifyOverlayLayer places the dialog in the shared blank-field layer.
 func (m model) classifyOverlayLayer(w, h int) *lipgloss.Layer {
-	return blankFieldLayer(m.classifyOverlay(w, h), w, h)
+	return blankFieldLayer(m.g, m.classifyOverlay(w, h), w, h)
 }

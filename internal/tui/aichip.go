@@ -10,12 +10,10 @@ import (
 	"github.com/coredev-uk/ade/internal/budget"
 )
 
-// aiChipEvery is how often the header's AI figure is re-read from the ledger.
-const aiChipEvery = 30
-
 // aiChip is the header's `AI $0.38 / $2.00 day`: the budget period closest to
 // its cap, spend against cap. It is read off the UI loop (the ledger is a
-// query over the audit log) and shown once loaded.
+// query over the audit log) and shown once loaded; it is re-read when the
+// audit log changes, i.e. right after an AI call (watch.go).
 type aiChip struct {
 	ok     bool    // loaded; false hides the chip
 	off    bool    // ai.mode = off

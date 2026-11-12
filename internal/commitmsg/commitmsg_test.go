@@ -58,16 +58,11 @@ func TestApplyNeverDoublePrefixes(t *testing.T) {
 	}
 }
 
-func TestMergeMessages(t *testing.T) {
-	got := MergeMessage("GL-7", "12-limit", "main", "Rate limit exports", "acme/api!3")
-	want := "Merge branch '12-limit' into 'main'\n\nGL-7 Rate limit exports\n\nSee merge request acme/api!3"
-	if got != want {
-		t.Errorf("MergeMessage:\n%q\nwant\n%q", got, want)
-	}
-	if got := MergeMessage("GL-7", "b", "main", "GL-7 Already prefixed", "a/b!1"); got != "Merge branch 'b' into 'main'\n\nGL-7 Already prefixed\n\nSee merge request a/b!1" {
-		t.Errorf("a prefixed title was prefixed again: %q", got)
-	}
+func TestSquashMessage(t *testing.T) {
 	if got := SquashMessage("GL-7", "Rate limit"); got != "GL-7 Rate limit" {
 		t.Errorf("SquashMessage = %q", got)
+	}
+	if got := SquashMessage("GL-7", "GL-7 Already prefixed"); got != "GL-7 Already prefixed" {
+		t.Errorf("a prefixed title was prefixed again: %q", got)
 	}
 }

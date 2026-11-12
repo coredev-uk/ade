@@ -199,7 +199,7 @@ func (m model) openBrowser() (model, tea.Cmd) {
 	url := r.url()
 	if !m.canOpenBrowser() {
 		// No browser here: show the address and copy it, like `y`.
-		m = m.toast("ui.url", events.Info, r.ref()+": "+url, "copied; open it from a browser")
+		m = m.toast("ui.url", events.Info, r.ref()+": "+url, "no browser here: copied through OSC 52, paste it in a browser")
 		return m, tea.SetClipboard(url)
 	}
 	return m, func() tea.Msg { return browserMsg{url: url, err: openURL(url)} }
@@ -319,12 +319,12 @@ func (m model) recentEvents(n int) []notify.Item {
 
 // eventLine is one Activity entry: severity glyph, age, title.
 func (m model) eventLine(it notify.Item, w int) string {
-	age := stFaint.Render(pad(agoShort(it.Time), 4))
+	age := stFaint.Render(pad(m.g, agoShort(it.Time), 4))
 	title := it.Title
 	if it.Read {
-		title = stFaint.Render(ansi.Truncate(title, max(w-8, 8), "…"))
+		title = stFaint.Render(ansi.Truncate(title, max(w-8, 8), m.g.Ell))
 	} else {
-		title = ansi.Truncate(title, max(w-8, 8), "…")
+		title = ansi.Truncate(title, max(w-8, 8), m.g.Ell)
 	}
 	return " " + sevGlyph(m.g, it.Severity) + " " + age + " " + title
 }
@@ -379,7 +379,7 @@ func (m model) railView(w, h int) string {
 			l = append(l, " "+line)
 		}
 	}
-	return fit(strings.Join(l, "\n"), w, h)
+	return fit(m.g, strings.Join(l, "\n"), w, h)
 }
 
 // threeRegion is true at wide widths (>= 140 cells): the list, the preview

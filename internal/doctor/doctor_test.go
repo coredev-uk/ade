@@ -296,7 +296,7 @@ func TestHostDetection(t *testing.T) {
 	}
 	for _, tt := range tests {
 		got := hostChecks(Options{Getenv: func(k string) string { return tt.env[k] }})
-		if len(got) != 2 || got[0].Name != "host" || !strings.Contains(got[0].Detail, tt.want) {
+		if len(got) != 3 || got[0].Name != "host" || !strings.Contains(got[0].Detail, tt.want) {
 			t.Errorf("env %v: got %+v, want %q", tt.env, got, tt.want)
 		}
 	}
@@ -307,7 +307,7 @@ func TestHostReportsTheResolvedEditor(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Host.Editor = "$EDITOR"
 	got := hostChecks(Options{Config: &cfg, Getenv: func(k string) string { return env[k] }})
-	if len(got) != 2 || got[1].Name != "editor" || !strings.Contains(got[1].Detail, "$EDITOR (nano)") {
+	if len(got) != 3 || got[1].Name != "editor" || !strings.Contains(got[1].Detail, "$EDITOR (nano)") {
 		t.Fatalf("%+v", got)
 	}
 }
@@ -353,7 +353,7 @@ func TestRunOrderIsStable(t *testing.T) {
 			groups = append(groups, c.Group)
 		}
 	}
-	if got := strings.Join(groups, ","); got != "config,tools,forge,host" {
+	if got := strings.Join(groups, ","); got != "config,tools,forge,host,cde" {
 		t.Errorf("group order %s", got)
 	}
 	var forge []string
@@ -373,5 +373,17 @@ func TestHasErrors(t *testing.T) {
 	}
 	if !HasErrors([]Check{{Status: OK}, {Status: Error}}) {
 		t.Error("error missed")
+	}
+}
+
+func TestFileWatchingCheckReportsTheMode(t *testing.T) {
+	c := byName(pathChecks(Options{Records: t.TempDir()}), "file watching")
+	if c.Status != OK || !strings.Contains(c.Detail, "fsnotify") {
+		t.Errorf("check = %+v, want ok via fsnotify on a temp dir", c)
+	}
+	// A records dir that does not exist yet is checked through its parent.
+	c = byName(pathChecks(Options{Records: filepath.Join(t.TempDir(), "new", "records")}), "file watching")
+	if c.Status != OK {
+		t.Errorf("missing records dir: %+v", c)
 	}
 }

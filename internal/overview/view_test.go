@@ -214,7 +214,7 @@ func TestNotesSectionIsFaintAndMarkdownIsReadable(t *testing.T) {
 	s := snap(it)
 	s.Notes = "# Plan\n- first thing that is long enough to wrap onto a second line of the pane\n- [x] done already\n\n\n\nlast"
 	got := plain(Render(s, "", 40, now))
-	for _, want := range []string{" Plan\n", " - first thing that is long enough to\n", "   wrap onto a second line of the pane\n", " [x] done already\n\n last\n"} {
+	for _, want := range []string{" Plan\n", " • first thing that is long enough to\n", "   wrap onto a second line of the pane\n", " [x] done already\n\n last\n"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("notes lack %q:\n%s", want, got)
 		}
@@ -269,6 +269,29 @@ func TestAsciiGlyphsAndNoColour(t *testing.T) {
 	for _, want := range []string{"*==*==*==*==@--o--o  ci", "! blocked - x pipeline failed", "| x pipeline failed - x conflicts - m 2 unresolved threads", "1 issue - 1 MR"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("ascii view lacks %q:\n%s", want, p)
+		}
+	}
+}
+
+// Under host.glyphs=ascii the whole pane is ASCII: every section, state and
+// width (the fixtures are ASCII, so anything else is chrome).
+func TestAsciiPaneDrawsOnlyASCII(t *testing.T) {
+	failed := item()
+	failed.Court, failed.Reason, failed.Stage = domain.CourtBlocked, "pipeline failed", domain.StageCI
+	failed.MRs = []forge.MR{{Ref: mrRef("acme/api", 5), State: "opened", Pipeline: &forge.Pipeline{Status: "failed"}, Unresolved: 2, HasConflicts: true}}
+	merged := item()
+	merged.Stage = domain.StageDone
+	merged.MRs = []forge.MR{{Ref: mrRef("acme/api", 6), State: "merged", Pipeline: &forge.Pipeline{Status: "success"}}}
+	for name, it := range map[string]domain.WorkItem{"review": item(), "failed": failed, "merged": merged} {
+		for _, w := range []int{40, 60, 100} {
+			out := plain(Render(snap(it), "ascii", w, now))
+			for i, ln := range lines(out) {
+				for _, r := range ln {
+					if r > 127 {
+						t.Fatalf("%s w=%d line %d has %q:\n%s", name, w, i, r, out)
+					}
+				}
+			}
 		}
 	}
 }

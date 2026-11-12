@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
@@ -13,100 +12,6 @@ import (
 	"github.com/coredev-uk/ade/internal/forge/gitlab/fake"
 	"github.com/coredev-uk/ade/internal/review"
 )
-
-// --- the inline editor --------------------------------------------------------------
-
-func typeInto(e *editor, keys ...string) {
-	for _, k := range keys {
-		e.handle(keyMsg(k))
-	}
-}
-
-func TestEditorEditing(t *testing.T) {
-	var e editor
-	typeInto(&e, "h", "e", "l", "l", "o")
-	if e.String() != "hello" {
-		t.Fatalf("text = %q", e.String())
-	}
-	e.handle(tea.KeyPressMsg{Code: tea.KeyLeft})
-	e.handle(tea.KeyPressMsg{Code: tea.KeyLeft})
-	typeInto(&e, "X")
-	if e.String() != "helXlo" {
-		t.Errorf("insert in the middle = %q", e.String())
-	}
-	typeInto(&e, "backspace")
-	if e.String() != "hello" || e.cur != 3 {
-		t.Errorf("backspace = %q at %d", e.String(), e.cur)
-	}
-	e.handle(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModAlt})
-	typeInto(&e, "w", "o", "r", "l", "d")
-	if e.String() != "hel\nworldlo" {
-		t.Errorf("alt+enter should insert a newline at the cursor: %q", e.String())
-	}
-	// ctrl+w drops the word before the cursor; ctrl+u the line before it.
-	f := newEditor("keep this, drop that")
-	f.handle(tea.KeyPressMsg{Code: 'w', Mod: tea.ModCtrl})
-	if f.String() != "keep this, drop " {
-		t.Errorf("ctrl+w = %q", f.String())
-	}
-	f.handle(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
-	if f.String() != "" {
-		t.Errorf("ctrl+u = %q", f.String())
-	}
-	// Enter, esc and tab belong to the dialog.
-	for _, k := range []string{"enter", "esc", "tab"} {
-		if (&editor{}).handle(keyMsg(k)) {
-			t.Errorf("the editor swallowed %s", k)
-		}
-	}
-}
-
-func TestEditorWrapsAtWordsAndKeepsUnicode(t *testing.T) {
-	e := newEditor("one two three four five")
-	lines := e.wrap(10)
-	var got []string
-	for _, l := range lines {
-		got = append(got, string(e.text[l.start:l.end]))
-	}
-	for _, l := range got {
-		if lipgloss.Width(l) > 10 {
-			t.Errorf("line %q is wider than 10", l)
-		}
-	}
-	if strings.Join(got, "") != "one two three four five" {
-		t.Errorf("wrapping lost text: %q", got)
-	}
-	for _, l := range got[:len(got)-1] {
-		if !strings.HasSuffix(l, " ") {
-			t.Errorf("line %q was cut mid-word", l)
-		}
-	}
-	u := newEditor("héllo wörld ✓")
-	u.handle(keyMsg("backspace"))
-	u.handle(keyMsg("backspace"))
-	if u.String() != "héllo wörld" {
-		t.Errorf("backspace on multi-byte text = %q", u.String())
-	}
-}
-
-// The cursor is drawn as a reverse-video cell wherever it is, including after
-// the last character, and a very long word is cut rather than overflowing.
-func TestEditorViewFitsAndShowsCursor(t *testing.T) {
-	e := newEditor(strings.Repeat("x", 50))
-	rows := e.view(20, 3, "")
-	for _, r := range rows {
-		if lipgloss.Width(r) > 20 {
-			t.Errorf("row %q overflows 20 cells", ansi.Strip(r))
-		}
-	}
-	if len(rows) > 3 {
-		t.Errorf("%d rows, want at most 3", len(rows))
-	}
-	empty := (&editor{}).view(30, 3, "your reply")
-	if len(empty) != 1 || !strings.Contains(ansi.Strip(empty[0]), "your reply") {
-		t.Errorf("empty editor = %q", empty)
-	}
-}
 
 // --- merge readiness ------------------------------------------------------------------
 
@@ -208,7 +113,7 @@ func TestNarrowIsSinglePane(t *testing.T) {
 	e.open(mrRef("api", 1).String())
 	e.press("2")
 	out := e.screen()
-	if strings.Contains(out, " │ ") {
+	if strings.Contains(out, unicodeGlyphs.Pane) {
 		t.Errorf("two panes below 100 columns:\n%s", out)
 	}
 	e.press("enter")

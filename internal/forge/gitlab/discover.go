@@ -88,6 +88,10 @@ func (c *Client) Cadences(ctx context.Context, group string) ([]forge.Cadence, e
 		} `json:"group"`
 	}
 	if err := c.graphql(ctx, cadencesQuery, map[string]any{"path": group}, &out); err != nil {
+		if graphqlMissing(err) {
+			c.markUnavailable(FeatureCadences)
+			return nil, fmt.Errorf("gitlab: cadences of %s: %w", group, forge.ErrUnavailable)
+		}
 		return nil, err
 	}
 	if out.Group == nil {

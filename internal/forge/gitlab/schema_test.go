@@ -52,6 +52,13 @@ func TestEmbeddedQueryIsValidated(t *testing.T) {
 	if capabilitiesQuery != string(src) {
 		t.Fatal("capabilitiesQuery is not queries/capabilities.graphql")
 	}
+	src, err = os.ReadFile("queries/mr_details.graphql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mrDetailsQuery != string(src) {
+		t.Fatal("mrDetailsQuery is not queries/mr_details.graphql")
+	}
 }
 
 // Guards the guard: the validator must reject what a removed or misspelled

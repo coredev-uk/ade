@@ -236,7 +236,7 @@ mapfile -t OMPARGS <"$T/omp/args"
 grep -q '^skills:' "${OMPARGS[1]}" && grep -q 'customDirectories' "${OMPARGS[1]}" && pass "the overlay only adds the skill directory" || fail "overlay: $(cat "${OMPARGS[1]}")"
 SKILL="$T/omp/SKILL.md"
 for want in "name: ade-implement" "# Implement $REF: Retry failed webhook deliveries" "$API_MR" "$API_MR_URL" "$BRANCH" \
-  "Child issue in this repo" "Every commit message starts with \`GL-3\`" "**Stop for review.**" "Do not push" "$WEB_WT"; do
+  "Child issue in this repo" "Only the first commit of the merge request starts with \`GL-3\`" "**Stop for review.**" "Do not push" "$WEB_WT"; do
   grep -qF -- "$want" "$SKILL" || {
     cat "$SKILL" >&2
     fail "the skill lacks: $want"
@@ -348,18 +348,27 @@ for wt in "$API_WT" "$WEB_WT"; do
 done
 [[ $(git -C "$PROJ/api/main" config --worktree --get ade.commitPrefix 2>/dev/null || true) == "" ]] && pass "the baseline tree and other worktrees are untouched" || fail "baseline tree has the prefix"
 git -C "$PROJ/api/.bare" config --get extensions.worktreeConfig | grep -qx true && pass "extensions.worktreeConfig is on" || fail "extensions.worktreeConfig"
-# A commit-msg hook can read it (the docs/manifest.md sample).
+[[ $(git -C "$API_WT" config --worktree --get ade.target) == main ]] && pass "ade.target records the MR's target branch (main)" || fail "ade.target of $API_WT"
+# A commit-msg hook can read it (the docs/manifest.md sample): only the MR's first commit is prefixed.
 mkdir -p "$T/hooks"
 cat >"$T/hooks/commit-msg" <<'HOOK'
 #!/bin/sh
 prefix=$(git config --get ade.commitPrefix) || exit 0
+[ -n "$prefix" ] || exit 0
+target=$(git config --get ade.target) || exit 0
+ahead=$(git rev-list --count "$target..HEAD" 2>/dev/null || git rev-list --count "origin/$target..HEAD" 2>/dev/null) || exit 0
+[ "$ahead" = 0 ] || exit 0
 case "$(head -n1 "$1")" in "$prefix"*) ;; *) printf '%s %s\n' "$prefix" "$(cat "$1")" >"$1" ;; esac
 HOOK
 chmod +x "$T/hooks/commit-msg"
+hookcommit() { git -C "$API_WT" add "$1" && git -C "$API_WT" -c core.hooksPath="$T/hooks" -c user.name=t -c user.email=t@example.com commit -q -m "$2"; }
 echo hook >"$API_WT/hook.txt"
-git -C "$API_WT" add hook.txt && git -C "$API_WT" -c core.hooksPath="$T/hooks" -c user.name=t -c user.email=t@example.com commit -q -m "add hook file"
-[[ $(git -C "$API_WT" log -1 --format=%s) == "GL-3 add hook file" ]] && pass "a commit-msg hook reading ade.commitPrefix prefixes the user's own commit" || fail "hook result: $(git -C "$API_WT" log -1 --format=%s)"
-git -C "$API_WT" reset -q --hard HEAD~1
+hookcommit hook.txt "add hook file"
+[[ $(git -C "$API_WT" log -1 --format=%s) == "GL-3 add hook file" ]] && pass "a commit-msg hook reading ade.commitPrefix prefixes the MR's first commit" || fail "hook result: $(git -C "$API_WT" log -1 --format=%s)"
+echo hook2 >"$API_WT/hook2.txt"
+hookcommit hook2.txt "add second file"
+[[ $(git -C "$API_WT" log -1 --format=%s) == "add second file" ]] && pass "the second commit of the branch is not prefixed" || fail "second hook commit: $(git -C "$API_WT" log -1 --format=%s)"
+git -C "$API_WT" reset -q --hard HEAD~2
 
 step "agent commit and merge carry the prefix"
 "$ADE" agent plan "$REF" --repo api --yes --json >"$T/plan.json" || { cat "$T/plan.json" >&2; fail "agent plan"; }
@@ -378,12 +387,12 @@ SUBJECT=$(git -C "$API_WT" log -1 --format=%s "$SHA")
 "$ADE" mr ready "$API_MR" >/dev/null || fail "ade mr ready"
 "$ADE" sync >/dev/null
 "$ADE" mr merge "$API_MR" --squash --auto --dry-run >"$T/merge-dry.txt" 2>&1 || { cat "$T/merge-dry.txt" >&2; fail "mr merge --dry-run"; }
-grep -q 'GL-3 ' "$T/merge-dry.txt" && grep -q "See merge request $API_MR" "$T/merge-dry.txt" \
-  && pass "mr merge --dry-run shows the message: GL-3 + MR title + See merge request $API_MR" || { cat "$T/merge-dry.txt" >&2; fail "dry-run message"; }
+grep -q 'GL-3 ' "$T/merge-dry.txt" && grep -q 'squash message:' "$T/merge-dry.txt" \
+  && pass "mr merge --dry-run shows the squash message: GL-3 + MR title" || { cat "$T/merge-dry.txt" >&2; fail "dry-run message"; }
 if "$ADE" mr merge "$API_MR" --squash --auto --yes >"$T/merge.txt" 2>&1; then
   "$ADE" audit --json >"$T/audit.json" 2>"$T/audit.err" || { cat "$T/audit.err" >&2; fail "ade audit"; }
-  expect_json "the merge request sent merge and squash messages with the prefix (audited)" "$T/audit.json" \
-    '[.[] | select(.action == "forge.mr.merge" and .outcome == "ok")] | length >= 1 and all(.[]; (.params.message | startswith("Merge branch ")) and (.params.message | contains("\n\nGL-3 ")) and (.params.message | endswith("See merge request '"$API_MR"'")) and (.params.squash_message | startswith("GL-3 ")))'
+  expect_json "the merge request sent a prefixed squash message and no merge message (audited)" "$T/audit.json" \
+    '[.[] | select(.action == "forge.mr.merge" and .outcome == "ok")] | length >= 1 and all(.[]; (.params.message == null) and (.params.squash_message | startswith("GL-3 ")))'
 else
   cat "$T/merge.txt" >&2
   "$ADE" mr show "$API_MR" >&2 || true

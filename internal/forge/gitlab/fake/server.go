@@ -11,6 +11,7 @@ package fake
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -61,6 +62,13 @@ type Server struct {
 
 	inflight, maxInflight int
 	throttle              throttle
+	rate                  rateWindow
+}
+
+// rateWindow is the fixed window WithRateLimit counts requests in.
+type rateWindow struct {
+	reset time.Time
+	count int
 }
 
 type throttle struct {
@@ -73,6 +81,12 @@ type options struct {
 	pageSize int
 	latency  time.Duration
 	gitRoot  string
+
+	noMRDetails bool
+	rateLimit   int
+	rateWindow  time.Duration
+
+	selfHosted
 }
 
 // Option customises a Server.
@@ -88,6 +102,20 @@ func WithPageSize(n int) Option { return func(o *options) { o.pageSize = n } }
 // WithLatency delays every response, letting tests observe concurrency.
 func WithLatency(d time.Duration) Option { return func(o *options) { o.latency = d } }
 
+// WithRateLimit makes the fake rate-limit like GitLab.com: n requests per
+// window, RateLimit-* headers on every answer, and a 429 with Retry-After for
+// the requests past n until the window ends.
+func WithRateLimit(n int, window time.Duration) Option {
+	return func(o *options) { o.rateLimit, o.rateWindow = n, window }
+}
+
+// SetLatency changes the per-response delay of a running server.
+func (s *Server) SetLatency(d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.opts.latency = d
+}
+
 // New starts a fake GitLab of the given tier. Close it when done.
 func New(tier Tier, opts ...Option) *Server {
 	o := options{clock: time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC), pageSize: 100}
@@ -95,7 +123,7 @@ func New(tier Tier, opts ...Option) *Server {
 		f(&o)
 	}
 	s := &Server{tier: tier, opts: o, st: seed(o.clock, tier)}
-	s.Server = httptest.NewServer(s.routes())
+	s.Server = s.start()
 	return s
 }
 
@@ -170,13 +198,19 @@ func (s *Server) serve(next http.Handler) http.HandlerFunc {
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		s.begin()
 		defer func() { s.end(r, rec.status) }()
-		if s.opts.latency > 0 {
-			time.Sleep(s.opts.latency)
+		s.mu.Lock()
+		latency := s.opts.latency
+		s.mu.Unlock()
+		if latency > 0 {
+			time.Sleep(latency)
 		}
 		switch {
+		case s.rateLimited(rec):
 		case s.throttled(rec):
 		case r.Header.Get("PRIVATE-TOKEN") != Token:
 			writeJSON(rec, http.StatusUnauthorized, map[string]string{"message": "401 Unauthorized"})
+		case s.opts.missing(r):
+			notFound(rec)
 		default:
 			next.ServeHTTP(rec, r)
 		}
@@ -195,6 +229,32 @@ func (s *Server) end(r *http.Request, status int) {
 	defer s.mu.Unlock()
 	s.inflight--
 	s.log = append(s.log, Request{Method: r.Method, Path: r.URL.EscapedPath(), Query: r.URL.RawQuery, Status: status})
+}
+
+// rateLimited counts the request against the WithRateLimit window.
+func (s *Server) rateLimited(w http.ResponseWriter) bool {
+	if s.opts.rateLimit <= 0 {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	if now.After(s.rate.reset) {
+		s.rate = rateWindow{reset: now.Add(s.opts.rateWindow)}
+	}
+	s.rate.count++
+	secs := int64(math.Ceil(time.Until(s.rate.reset).Seconds()))
+	h := w.Header()
+	h.Set("RateLimit-Limit", strconv.Itoa(s.opts.rateLimit))
+	h.Set("RateLimit-Remaining", strconv.Itoa(max(s.opts.rateLimit-s.rate.count, 0)))
+	h.Set("RateLimit-Reset", strconv.FormatInt(now.Unix()+secs, 10))
+	if s.rate.count <= s.opts.rateLimit {
+		return false
+	}
+	h.Set("Retry-After", strconv.FormatInt(secs, 10))
+	w.WriteHeader(http.StatusTooManyRequests)
+	_, _ = w.Write([]byte("Retry later\n"))
+	return true
 }
 
 func (s *Server) throttled(w http.ResponseWriter) bool {

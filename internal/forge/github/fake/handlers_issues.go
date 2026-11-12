@@ -1,6 +1,7 @@
 package fake
 
 import (
+	"encoding/json"
 	"net/http"
 	"slices"
 	"strconv"
@@ -13,6 +14,7 @@ func (s *Server) issueRoutes(mux *http.ServeMux) {
 	s.handle(mux, "GET "+r+"/issues", s.listIssues)
 	s.handle(mux, "POST "+r+"/issues", s.createIssue)
 	s.handle(mux, "GET "+r+"/issues/{n}", s.getIssue)
+	s.handle(mux, "PATCH "+r+"/issues/{n}", s.updateIssue)
 	s.handle(mux, "POST "+r+"/issues/{n}/labels", s.addLabels)
 	s.handle(mux, "DELETE "+r+"/issues/{n}/labels/{name}", s.removeLabel)
 	s.handle(mux, "GET "+r+"/issues/{n}/sub_issues", s.listSubIssues)
@@ -328,4 +330,45 @@ func (s *Server) listFeed(w http.ResponseWriter, r *http.Request) {
 		return int(b.ID - a.ID)
 	})
 	paged(s, w, r, evs, func(ev *feedEvent) any { return s.renderFeedEvent(rp, ev) })
+}
+
+// updateIssue answers PATCH /issues/{n} for the one field ADE writes: the
+// milestone (a number, or null to clear it).
+func (s *Server) updateIssue(w http.ResponseWriter, r *http.Request) {
+	rp, it := s.issueOf(w, r)
+	if it == nil {
+		return
+	}
+	var in struct {
+		Milestone json.RawMessage `json:"milestone"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	if in.Milestone != nil {
+		at := s.st.now()
+		var n float64
+		if string(in.Milestone) == "null" {
+			if old := rp.milestone(it.Milestone); old != nil {
+				s.st.addEvent(it, "demilestoned", viewer, at).Milestone = old.Title
+			}
+			it.Milestone = 0
+		} else {
+			_ = json.Unmarshal(in.Milestone, &n)
+			ms := rp.milestone(int(n))
+			if ms == nil {
+				validation(w, fieldError{Resource: "Issue", Field: "milestone", Code: "invalid"})
+				return
+			}
+			if it.Milestone != ms.Number {
+				if old := rp.milestone(it.Milestone); old != nil {
+					s.st.addEvent(it, "demilestoned", viewer, at).Milestone = old.Title
+				}
+				it.Milestone = ms.Number
+				s.st.addEvent(it, "milestoned", viewer, at).Milestone = ms.Title
+			}
+		}
+		it.Updated = at
+	}
+	writeJSON(w, http.StatusOK, s.renderIssue(rp, it))
 }

@@ -40,8 +40,8 @@ const (
 	secSearch   // open MRs the forge search found beyond the synced ones
 )
 
-func (s homeSection) title() string {
-	return [...]string{"My work", "Reviews requested", "Sprint · open", "Next sprint", "Previous sprint", "Open MRs · search"}[s]
+func (s homeSection) title(g glyphs) string {
+	return g.T([...]string{"My work", "Reviews requested", "Sprint · open", "Next sprint", "Previous sprint", "Open MRs · search"}[s])
 }
 
 // homeFilter narrows Home to one kind of attention.
