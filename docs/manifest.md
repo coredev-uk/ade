@@ -547,8 +547,12 @@ A `*.local.toml` beside a manifest (`acme.ade.toml` → `acme.ade.local.toml`) h
 
 ```sh
 ade config check                 # validates the user config and every registered manifest
+ade config check --manifest acme.ade.toml   # only this file, no fetching; works before any user config exists
 ade doctor --probe               # read-only: confirms the forge exposes what the manifest relies on
 ```
+
+Without a user config (a team lead's draft, a CDE image build), `--manifest` checks everything except the
+`forge` name, which only a user config can resolve: it is reported as a warning and the check still passes.
 
 `ade config check` reports unknown keys, cross-references that do not resolve, dependency cycles and bad enum
 values with the path of the offending key. A manifest that fails validation is rejected before ADE touches the
