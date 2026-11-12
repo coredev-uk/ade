@@ -463,6 +463,23 @@ type MRWriter interface {
 	PublishDraftNotes(ctx context.Context, mr Ref) error
 }
 
+// Commit is one commit of a merge request.
+type Commit struct {
+	SHA     string `json:"sha"`
+	Title   string `json:"title"`
+	Message string `json:"message,omitempty"`
+	Author  string `json:"author,omitempty"`
+}
+
+// MRTextWriter is what describing a merge request needs beyond MRWriter: its
+// commits (oldest first) and a rewrite of its description. A driver that has
+// not implemented it simply does not satisfy it; callers say so and stop.
+type MRTextWriter interface {
+	MRCommits(ctx context.Context, ref Ref) ([]Commit, error)
+	// SetMRDescription replaces the MR's description and nothing else.
+	SetMRDescription(ctx context.Context, ref Ref, description string) error
+}
+
 // ErrUnavailable marks a feature this forge instance does not offer
 // (e.g. a Premium endpoint on a Free instance).
 var ErrUnavailable = errors.New("feature unavailable on this forge")

@@ -8,9 +8,11 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/coredev-uk/ade/internal/ai"
 	"github.com/coredev-uk/ade/internal/app"
 	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/forge"
@@ -78,7 +80,7 @@ func newItemCmd() *cobra.Command {
 					return err
 				}
 			}
-			return printItem(cmd.OutOrStdout(), ref, name, rec, itemTrees(cmd.Context(), a, ref))
+			return printItem(cmd.OutOrStdout(), ref, name, rec, itemTrees(cmd.Context(), a, ref), itemResearch(a, name, ref))
 		},
 	}
 	cmd.Flags().BoolVar(&edit, "edit", false, "open the record in your editor at the notes")
@@ -141,9 +143,23 @@ type itemOut struct {
 	Snapshot    string         `json:"snapshot"`
 	Notes       string         `json:"notes"`
 	Worktrees   []itemWorktree `json:"worktrees"` // [] when the item has none or is not cached
+	// Research is the item's latest research job (`ade ai research`); absent
+	// when there is none.
+	Research *records.Research `json:"research,omitempty"`
 }
 
-func printItem(w io.Writer, ref forge.Ref, forgeName string, rec records.Record, trees []itemWorktree) error {
+// itemResearch reads the item's research job from its record: a worker that
+// died shows as failed. nil when there is none.
+func itemResearch(a *app.App, forgeName string, ref forge.Ref) *records.Research {
+	svc := &ai.Service{Records: records.New(a.RecordsDir), Now: time.Now}
+	v, err := svc.ReadResearch(forgeName, ref)
+	if err != nil {
+		return nil
+	}
+	return &v.Research
+}
+
+func printItem(w io.Writer, ref forge.Ref, forgeName string, rec records.Record, trees []itemWorktree, research *records.Research) error {
 	if jsonOut {
 		fm := map[string]any{}
 		for k, v := range rec.Frontmatter.Scalars {
@@ -152,7 +168,7 @@ func printItem(w io.Writer, ref forge.Ref, forgeName string, rec records.Record,
 		for k, v := range rec.Frontmatter.Lists {
 			fm[k] = v
 		}
-		return printJSON(w, itemOut{Ref: ref.String(), Forge: forgeName, Path: rec.Path, Frontmatter: fm, Snapshot: rec.Snapshot, Notes: rec.Notes, Worktrees: trees})
+		return printJSON(w, itemOut{Ref: ref.String(), Forge: forgeName, Path: rec.Path, Frontmatter: fm, Snapshot: rec.Snapshot, Notes: rec.Notes, Worktrees: trees, Research: research})
 	}
 	sc := rec.Frontmatter.Scalars
 	head := []string{ref.String()}
@@ -170,6 +186,9 @@ func printItem(w io.Writer, ref forge.Ref, forgeName string, rec records.Record,
 	fmt.Fprintln(w, strings.Join(head, " · "))
 	fmt.Fprintf(w, "record: %s\n", rec.Path)
 	printItemWorktrees(w, trees)
+	if research != nil {
+		fmt.Fprintf(w, "%s: ade ai research %s --show\n", researchLine(*research), ref)
+	}
 	fmt.Fprintln(w)
 	if rec.Snapshot != "" {
 		fmt.Fprintln(w, rec.Snapshot)

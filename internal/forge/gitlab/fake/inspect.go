@@ -79,3 +79,15 @@ func (s *Server) Title(ref forge.Ref) (string, error) {
 	}
 	return m.Title, nil
 }
+
+// Description is the MR's current description and how many times a client
+// rewrote it.
+func (s *Server) Description(ref forge.Ref) (desc string, writes int, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m, err := s.mr(ref)
+	if err != nil {
+		return "", 0, err
+	}
+	return m.Desc, m.DescWrites, nil
+}

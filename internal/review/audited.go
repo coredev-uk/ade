@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 
 	"github.com/coredev-uk/ade/internal/audit"
@@ -16,7 +17,7 @@ import (
 // Actions: forge.thread.reply, forge.thread.resolve, forge.thread.create,
 // forge.approve, forge.unapprove, forge.mr.draft, forge.mr.merge,
 // forge.pipeline.retry, forge.draftnote.add, forge.draftnote.delete,
-// forge.draftnote.publish.
+// forge.draftnote.publish, forge.mr.description.
 type AuditedWriter struct {
 	forge.MRWriter
 	log *audit.Log
@@ -134,4 +135,18 @@ func (a *AuditedWriter) DeleteDraftNote(ctx context.Context, mr forge.Ref, id in
 
 func (a *AuditedWriter) PublishDraftNotes(ctx context.Context, mr forge.Ref) error {
 	return a.do("forge.draftnote.publish", mr.String(), "", nil, func() error { return a.MRWriter.PublishDraftNotes(ctx, mr) })
+}
+
+// SetDescription replaces the MR's description (forge.mr.description). The
+// wrapped driver must implement forge.MRTextWriter; one that does not is an
+// error, not a silent no-op. source says what wrote the text ("ai-describe").
+// Like comment bodies, the text itself is not logged, only its length.
+func (a *AuditedWriter) SetDescription(ctx context.Context, mr forge.Ref, description, source string) error {
+	tw, ok := a.MRWriter.(forge.MRTextWriter)
+	if !ok {
+		return fmt.Errorf("this forge cannot update merge request descriptions yet (%s)", mr)
+	}
+	return a.do("forge.mr.description", mr.String(), "", map[string]any{"chars": len(description), "source": source}, func() error {
+		return tw.SetMRDescription(ctx, mr, description)
+	})
 }
