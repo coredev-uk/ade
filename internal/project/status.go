@@ -25,7 +25,8 @@ type TreeStatus struct {
 	Name        string `json:"name"` // directory name
 	Path        string `json:"path"`
 	Branch      string `json:"branch"`
-	Dirty       bool   `json:"dirty"`
+	Dirty       bool   `json:"dirty"`                  // also true when git could not tell
+	StatusError string `json:"status_error,omitempty"` // why git could not tell
 	HasUpstream bool   `json:"has_upstream"`
 	Ahead       int    `json:"ahead"`
 	Behind      int    `json:"behind"`
@@ -178,9 +179,16 @@ func repoStatus(ctx context.Context, dir, name string, inManifest bool) RepoStat
 	return rs
 }
 
+// StatusOf is the disk state of one worktree, as `ade project status` reports it.
+func StatusOf(ctx context.Context, t git.Worktree) TreeStatus {
+	return treeStatus(ctx, git.Client{}, t)
+}
+
 func treeStatus(ctx context.Context, c git.Client, t git.Worktree) TreeStatus {
 	ts := TreeStatus{Name: filepath.Base(t.Path), Path: t.Path, Branch: t.Branch}
-	if clean, err := c.IsClean(ctx, t.Path); err == nil {
+	if clean, err := c.IsClean(ctx, t.Path); err != nil {
+		ts.Dirty, ts.StatusError = true, git.Reason(err)
+	} else {
 		ts.Dirty = !clean
 	}
 	ahead, behind, err := c.AheadBehind(ctx, t.Path)

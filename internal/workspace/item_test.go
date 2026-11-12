@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/domain"
 	"github.com/coredev-uk/ade/internal/forge"
 )
@@ -15,6 +16,13 @@ import (
 // gitRepo makes <repoDir>/.bare with a main worktree and one worktree per
 // extra branch, the layout `ade project add` produces.
 func gitRepo(t *testing.T, repoDir string, branches ...string) {
+	t.Helper()
+	gitRepoOn(t, repoDir, "main", branches...)
+}
+
+// gitRepoOn is gitRepo for a repo whose default branch (the bare clone's HEAD,
+// and its baseline tree) is def.
+func gitRepoOn(t *testing.T, repoDir, def string, branches ...string) {
 	t.Helper()
 	run := func(dir string, args ...string) {
 		t.Helper()
@@ -27,16 +35,16 @@ func gitRepo(t *testing.T, repoDir string, branches ...string) {
 		}
 	}
 	seed := t.TempDir()
-	run(seed, "init", "-q", "-b", "main")
+	run(seed, "init", "-q", "-b", def)
 	run(seed, "commit", "-q", "--allow-empty", "-m", "init")
 	bare := filepath.Join(repoDir, ".bare")
 	if err := os.MkdirAll(repoDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	run(repoDir, "clone", "-q", "--bare", seed, bare)
-	run(bare, "worktree", "add", "-q", filepath.Join(repoDir, "main"), "main")
+	run(bare, "worktree", "add", "-q", filepath.Join(repoDir, def), def)
 	for _, b := range branches {
-		run(bare, "worktree", "add", "-q", "-b", b, filepath.Join(repoDir, b), "main")
+		run(bare, "worktree", "add", "-q", "-b", b, filepath.Join(repoDir, b), def)
 	}
 }
 
@@ -170,5 +178,46 @@ func TestItemOfAndBranchOf(t *testing.T) {
 	}
 	if _, _, ok := ItemOf(items, "demo", "grp/web", ""); ok {
 		t.Fatal("a detached tree belongs to no item")
+	}
+}
+
+// A repo whose bare HEAD is develop and whose manifest sets no default_branch
+// has its baseline in develop/, not main/.
+func TestBaselineDirFollowsTheBareHead(t *testing.T) {
+	f := newFixture(t, strings.ReplaceAll(gitManifest, `default_branch = "main"`+"\n", ""))
+	projectDir := filepath.Join(f.root, "demo")
+	gitRepoOn(t, filepath.Join(projectDir, "api"), "develop")
+	gitRepoOn(t, filepath.Join(projectDir, "web"), "develop")
+	loc, err := Locate(f.root, filepath.Join(projectDir, "web", "develop"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := BaselineDir(context.Background(), projectDir, loc.Manifest, "api")
+	if err != nil || got != filepath.Join(projectDir, "api", "develop") {
+		t.Fatalf("BaselineDir = %q, %v; want api/develop", got, err)
+	}
+}
+
+func TestBaselineDirIsNamedAfterTheDefaultBranch(t *testing.T) {
+	root, loc := gitFixture(t, nil, nil)
+	ctx := context.Background()
+	projectDir := filepath.Join(root, "demo")
+	got, err := BaselineDir(ctx, projectDir, loc.Manifest, "api")
+	if err != nil || got != filepath.Join(projectDir, "api", "main") {
+		t.Fatalf("BaselineDir = %q, %v", got, err)
+	}
+
+	// default_branch = "release/1" puts the baseline in release-1/.
+	m := *loc.Manifest
+	m.Repos = map[string]config.Repo{"api": {Path: "grp/api", DefaultBranch: "release/1"}}
+	if _, err := BaselineDir(ctx, projectDir, &m, "api"); err == nil || !strings.Contains(err.Error(), "release-1") {
+		t.Fatalf("a missing baseline tree must name release-1: %v", err)
+	}
+	want := filepath.Join(projectDir, "api", "release-1")
+	if err := os.MkdirAll(want, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := BaselineDir(ctx, projectDir, &m, "api"); err != nil || got != want {
+		t.Fatalf("BaselineDir = %q, %v; want %q", got, err, want)
 	}
 }

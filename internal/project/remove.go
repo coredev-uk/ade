@@ -95,7 +95,9 @@ func repoBlockers(ctx context.Context, projectDir string, rs RepoStatus) []Block
 		if ts.Branch != "" {
 			checked[ts.Branch] = true
 		}
-		if keep := localGuard(ctx, c, ts, nil); len(keep) > 0 {
+		// Planning a removal uses no network, so the remote-tracking refs are
+		// taken as they are.
+		if keep, _ := localGuard(ctx, c, ts, pushEvidence{}); len(keep) > 0 {
 			out = append(out, Blocker{Where: rel(ts.Path), Reasons: keep})
 		}
 	}

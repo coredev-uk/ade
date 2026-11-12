@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -21,13 +22,14 @@ import (
 	"github.com/coredev-uk/ade/internal/git"
 	"github.com/coredev-uk/ade/internal/records"
 	"github.com/coredev-uk/ade/internal/review"
+	"github.com/coredev-uk/ade/internal/startwork"
 	"github.com/coredev-uk/ade/internal/store"
 )
 
 // fakeOMP stands in for the omp binary: it speaks omp's JSON event stream.
 // FAKE_OMP picks the scenario; the process works in its cwd like the real one.
 const fakeOMP = `#!/bin/sh
-cat >/dev/null
+cat >"${FAKE_OMP_PROMPT:-/dev/null}"
 write=no
 case "$*" in *--auto-approve*) write=yes;; esac
 echo '{"type":"session","id":"SESSION-MARKER-7f3a"}'
@@ -43,6 +45,10 @@ overspend)
 hang)
   turn toolUse "working" 0.01
   sleep 30
+  ;;
+envdump)
+  printf '%s' "${ADE_AGENT_RUN-unset}" >"$FAKE_OMP_ENV"
+  turn stop "# Plan" 0.01
   ;;
 fail)
   echo "boom: no credentials" >&2
@@ -131,6 +137,7 @@ func newEnv(t *testing.T) *env {
 		Models: map[string]string{"explain": "fake-model", "plan": "fake-model", "implement": "fake-model"},
 	}}
 	cfg.Budget.AgentRunUSD = 0.5
+	cfg.Paths.Root = filepath.Join(tmp, "root") // no real ~/ade is read
 	st := NewStore(cache, records.New(rec), rec)
 	bus := events.NewBus()
 	evs, cancel := bus.Subscribe(64)
@@ -385,6 +392,24 @@ func TestCostCapKillsTheProcess(t *testing.T) {
 	}
 }
 
+// The agent process carries ADE_AGENT_RUN=1 so a global pre-push hook can
+// refuse its pushes; ADE itself (and so its own push) does not.
+func TestAgentRunMarksOnlyTheAgentProcess(t *testing.T) {
+	e := newEnv(t)
+	seen := filepath.Join(t.TempDir(), "env")
+	t.Setenv("FAKE_OMP", "envdump")
+	t.Setenv("FAKE_OMP_ENV", seen)
+	if _, err := e.m.Plan(context.Background(), e.newRun(KindPlan, e.ctx()).ID); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(seen); err != nil || string(b) != "1" {
+		t.Errorf("the agent saw ADE_AGENT_RUN=%q (%v), want 1", b, err)
+	}
+	if v, ok := os.LookupEnv("ADE_AGENT_RUN"); ok {
+		t.Errorf("ADE_AGENT_RUN=%q leaked into ADE's own environment", v)
+	}
+}
+
 func TestAgentFailureSurfacesStderr(t *testing.T) {
 	e := newEnv(t)
 	t.Setenv("FAKE_OMP", "fail")
@@ -621,15 +646,15 @@ func TestCommitPrefixFromWorktreeConfig(t *testing.T) {
 	ctx := context.Background()
 	r := e.newRun(KindPlan, e.ctx())
 	r.Worktree = e.wt
-	if got := e.m.commitPrefix(ctx, r); got != "" {
-		t.Fatalf("no prefix configured, got %q", got)
+	if got, known := e.m.commitPrefix(ctx, r); got != "" || known {
+		t.Fatalf("no worktree config and no manifest: got %q known %v", got, known)
 	}
 	if err := commitprefix.WriteWorktreeConfig(ctx, e.wt, 42, "GL-42", ""); err != nil {
 		t.Fatal(err)
 	}
-	prefix := e.m.commitPrefix(ctx, r)
-	if prefix != "GL-42" {
-		t.Fatalf("prefix = %q", prefix)
+	prefix, known := e.m.commitPrefix(ctx, r)
+	if prefix != "GL-42" || !known {
+		t.Fatalf("prefix = %q known %v", prefix, known)
 	}
 	author := Author{Name: "Test User (ade agent)", Email: "test@example.com"}
 	for i, tc := range []struct{ in, want string }{
@@ -670,5 +695,154 @@ func TestFirstCommitOnly(t *testing.T) {
 	}
 	if commitprefix.FirstCommit(ctx, e.wt) {
 		t.Fatal("a commit is ahead of the target: not first any more")
+	}
+}
+
+// writeManifest stores the snapshot `ade project add` leaves for project
+// "demo" under the test's projects root.
+func (e *env) writeManifest(commitPrefix string) {
+	e.t.Helper()
+	root, err := e.m.Cfg.RootDir()
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	dir := filepath.Join(root, "demo")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		e.t.Fatal(err)
+	}
+	body := "name = \"demo\"\nforge = \"gl\"\n\n[tracker]\nproject = \"g/tracker\"\n\n[repos.api]\npath = \"g/api\"\n"
+	if commitPrefix != "" {
+		body += "\n[conventions]\ncommit_prefix = \"" + commitPrefix + "\"\n"
+	}
+	snap := "source = \"demo.ade.toml\"\nfetched_at = 2026-11-11T12:00:00Z\nlast_update = 2026-11-11T12:00:00Z\nmanifest = '''" + body + "'''\n"
+	if err := os.WriteFile(filepath.Join(dir, ".project.toml"), []byte(snap), 0o600); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func TestCommitPrefixFromTheManifest(t *testing.T) {
+	ctx := context.Background()
+	child := forge.Ref{Project: "g/api", IID: 7, Kind: forge.KindIssue}
+	for _, tc := range []struct {
+		name, tmpl string
+		child      *forge.Ref
+		want       string
+		known      bool
+	}{
+		{"no manifest on disk", "-", nil, "", false},
+		{"manifest sets none", "", nil, "", true},
+		{"parent template", "GL-{parent}", nil, "GL-42", true},
+		{"child template with the child", "GL-{child}", &child, "GL-7", true},
+		{"child template without the child", "GL-{child}", nil, "", false},
+		{"invalid template", "GL-{nope}", nil, "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			if tc.tmpl != "-" {
+				e.writeManifest(tc.tmpl)
+			}
+			r := e.newRun(KindPlan, e.ctx())
+			r.Worktree, r.Child = e.wt, tc.child
+			got, known := e.m.commitPrefix(ctx, r)
+			if got != tc.want || known != tc.known {
+				t.Errorf("commitPrefix = %q, %v; want %q, %v", got, known, tc.want, tc.known)
+			}
+		})
+	}
+}
+
+func TestPromptsCarryTheCommitPrefix(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	r := e.newRun(KindPlan, e.ctx())
+	r.Worktree = e.wt
+	c := e.ctx()
+
+	// Nothing says what the project does: the prompt makes no claim.
+	if p := PlanPrompt(e.m.targetOf(ctx, r), c); strings.Contains(p, "prefix") {
+		t.Errorf("plan prompt with an unknown prefix mentions one:\n%s", p)
+	}
+	e.writeManifest("")
+	if p := PlanPrompt(e.m.targetOf(ctx, r), c); !strings.Contains(p, "The project sets no commit prefix.") {
+		t.Errorf("plan prompt for a project without a prefix:\n%s", p)
+	}
+	if err := commitprefix.WriteWorktreeConfig(ctx, e.wt, 42, "GL-42", ""); err != nil {
+		t.Fatal(err)
+	}
+	want := `ADE adds the prefix "GL-42" to the MR's first commit when it commits; do not add it yourself.`
+	for name, p := range map[string]string{
+		"plan":    PlanPrompt(e.m.targetOf(ctx, r), c),
+		"run":     RunPrompt(e.m.targetOf(ctx, r), c, "the plan"),
+		"address": AddressPrompt(e.m.targetOf(ctx, r), c),
+	} {
+		if !strings.Contains(p, want) {
+			t.Errorf("%s prompt lacks %q:\n%s", name, want, p)
+		}
+	}
+}
+
+// The prompt the agent receives, not only the builder's output, names the
+// prefix: New and Plan must thread the target through.
+func TestSentPromptsCarryTheCommitPrefix(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	if err := commitprefix.WriteWorktreeConfig(ctx, e.wt, 42, "GL-42", ""); err != nil {
+		t.Fatal(err)
+	}
+	sent := filepath.Join(t.TempDir(), "prompt")
+	t.Setenv("FAKE_OMP_PROMPT", sent)
+	want := `ADE adds the prefix "GL-42" to the MR's first commit when it commits; do not add it yourself.`
+	sentPrompt := func() string {
+		b, err := os.ReadFile(sent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+
+	r := e.newRun(KindPlan, e.ctx())
+	if _, err := e.m.Plan(ctx, r.ID); err != nil {
+		t.Fatal(err)
+	}
+	if p := sentPrompt(); !strings.Contains(p, want) {
+		t.Errorf("plan prompt sent to the agent lacks %q:\n%s", want, p)
+	}
+	if _, err := e.m.Approve(r.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.m.Implement(ctx, r.ID); err != nil {
+		t.Fatal(err)
+	}
+	if p := sentPrompt(); !strings.Contains(p, want) || !strings.Contains(p, "Implement the approved plan") {
+		t.Errorf("run prompt sent to the agent lacks %q:\n%s", want, p)
+	}
+}
+
+// A repo whose default branch is not main has its baseline tree named after
+// it, and a required repo without an item worktree falls back to that tree.
+func TestRequiredDirsFallBackToTheBaselineOfAnyDefaultBranch(t *testing.T) {
+	e := newEnv(t)
+	projectDir := filepath.Join(t.TempDir(), "demo")
+	repoDir := filepath.Join(projectDir, "web")
+	seed := filepath.Join(t.TempDir(), "seed")
+	sh(t, filepath.Dir(seed), "init", "-q", "-b", "develop", seed)
+	sh(t, seed, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "-m", "init")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bare := filepath.Join(repoDir, ".bare")
+	sh(t, repoDir, "clone", "-q", "--bare", seed, bare)
+	sh(t, bare, "worktree", "add", "-q", filepath.Join(repoDir, "develop"), "develop")
+
+	m := &config.Manifest{Repos: map[string]config.Repo{"web": {Path: "g/web"}, "api": {Path: "g/api"}}}
+	got := requiredDirs(context.Background(), projectDir, m, []string{"web"}, nil)
+	if want := []string{filepath.Join(repoDir, "develop")}; !slices.Equal(got, want) {
+		t.Errorf("dirs = %v, want %v", got, want)
+	}
+	// The item's own worktree wins; a repo with no clone at all is left out.
+	found := map[string]startwork.Found{"web": {Worktree: e.wt}}
+	got = requiredDirs(context.Background(), projectDir, m, []string{"web", "api"}, found)
+	if want := []string{e.wt}; !slices.Equal(got, want) {
+		t.Errorf("dirs = %v, want %v", got, want)
 	}
 }

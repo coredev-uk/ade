@@ -143,7 +143,7 @@ func TestGCDryRunExplainsEveryTree(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	for _, want := range []string{
-		"remove  demo-gl/web/2-fix-truncated-column-headers-in-export-preview  (web!2 merged)",
+		"remove  demo-gl/web/2-fix-truncated-column-headers-in-export-preview  (web!2 merged; pushed: not ahead of origin/main)",
 		"keep    demo-gl/api/1-rate-limit-the-export-endpoint  merge request api!1 is still open",
 		"1 of 2 worktrees can be removed",
 	} {

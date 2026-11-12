@@ -13,10 +13,11 @@ import (
 )
 
 // LoadSprints reads the manifest's sprints from the forge exactly as a sync
-// does (iterations, milestones or label-derived, by tracker.iterations).
-func LoadSprints(ctx context.Context, f forge.Forge, m *config.Manifest, now time.Time) ([]domain.Sprint, error) {
+// does (iterations, milestones or label-derived, by tracker.iterations). caps
+// are the tracker namespace's: a user namespace has milestones only.
+func LoadSprints(ctx context.Context, f forge.Forge, m *config.Manifest, caps forge.Caps, now time.Time) ([]domain.Sprint, error) {
 	p := &pipeline{f: f, m: m, forgeName: m.Forge, now: now}
-	return p.loadSprints(ctx)
+	return p.loadSprints(ctx, caps)
 }
 
 // RecordSprintMove writes a sprint move into the cached work item of the

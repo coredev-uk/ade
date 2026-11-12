@@ -108,8 +108,8 @@ func TestBuildLayoutAgentPaneStartsOmpWithTheSkillOverlay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `pane name="agent" size="60%" focus=true command="/bin/omp" {
-                args "--config" "/cache/ws/agent/x/omp.yml" "Read skill://ade-implement and implement \"it\""
+	want := `pane name="agent" size="60%" focus=true command="env" {
+                args "ADE_AGENT_RUN=1" "/bin/omp" "--config" "/cache/ws/agent/x/omp.yml" "Read skill://ade-implement and implement \"it\""
             }`
 	if !strings.Contains(got, want) {
 		t.Fatalf("agent pane:\n%s", got)
@@ -117,7 +117,7 @@ func TestBuildLayoutAgentPaneStartsOmpWithTheSkillOverlay(t *testing.T) {
 	// Without omp installed the pane is a plain shell, with no dangling args.
 	s.Tools.Omp = ""
 	got, _ = BuildLayout(s)
-	if strings.Contains(got, "omp.yml") || !strings.Contains(got, `pane name="agent"`) {
+	if strings.Contains(got, "omp.yml") || strings.Contains(got, "ADE_AGENT_RUN") || !strings.Contains(got, `pane name="agent"`) {
 		t.Fatalf("fallback:\n%s", got)
 	}
 }
@@ -128,9 +128,9 @@ func TestBuildLayoutVariants(t *testing.T) {
 		want   []string
 		not    []string
 	}{
-		{LayoutAgent, []string{`name="agent"`, `command="/bin/omp"`, `name="lazygit"`, `name="api.dev"`, `name="web.dev"`}, []string{`name="editor"`}},
-		{LayoutReview, []string{`name="diff"`, `command="sh"`, `args "-c" "git diff 'origin/main'...HEAD | '/bin/delta'"`}, []string{`name="editor"`, `command="/bin/omp"`}},
-		{LayoutManual, []string{`name="shell" size="60%"`, `name="lazygit"`, `name="web.dev"`}, []string{`command="/bin/omp"`, `name="editor"`}},
+		{LayoutAgent, []string{`name="agent"`, `"ADE_AGENT_RUN=1" "/bin/omp"`, `name="lazygit"`, `name="api.dev"`, `name="web.dev"`}, []string{`name="editor"`}},
+		{LayoutReview, []string{`name="diff"`, `command="sh"`, `args "-c" "git diff 'origin/main'...HEAD | '/bin/delta'"`}, []string{`name="editor"`, `"/bin/omp"`}},
+		{LayoutManual, []string{`name="shell" size="60%"`, `name="lazygit"`, `name="web.dev"`}, []string{`"/bin/omp"`, `ADE_AGENT_RUN`, `name="editor"`}},
 	}
 	for _, tc := range tests {
 		got, err := BuildLayout(baseSpec(tc.layout))

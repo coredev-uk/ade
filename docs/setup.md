@@ -126,6 +126,8 @@ ade project bootstrap --forge gitlab --group acme             # writes ./.ade.to
 ade project bootstrap --forge gitlab --group acme --publish   # opens an MR adding .ade.toml to the tracker repo
 ```
 
+A tracker under a personal (user) namespace works too: its milestones come from the tracker project, and there are no iterations or epics. `ade doctor --probe` reports `user namespace: group endpoints skipped` for it.
+
 Useful flags: `--tracker <repo>` (default: detected), `--name`, `--match <glob>` to limit repos, `--out <file>` (`-` prints), `--force` to overwrite, `--yes` never to prompt. `--forge` names an entry of your `[forges]`, and teammates must use the same name. Merge the MR, then tell the team the manifest address: `git+https://gitlab.example.com/acme/tracker.git#.ade.toml`.
 
 ### Teammate: onboard
@@ -146,7 +148,7 @@ ade init --yes --forge gitlab --host gitlab.example.com --token-env GITLAB_TOKEN
 # or a token command:  --token-cmd 'pass show ade/gitlab'
 ```
 
-It writes the config, clones every repo as `~/ade/<project>/<repo>/{.bare,main}`, runs the first sync and `ade doctor`. An existing config is kept unless you pass `--force` (then a `config.toml.bak-<timestamp>` stays beside it). `--handle <username>` sets your forge username instead of asking the forge.
+It writes the config, clones every repo as `~/ade/<project>/<repo>/{.bare,<default-branch>}` (the baseline folder is named after the repo's default branch, e.g. `main/` or `develop/`; a `/` in the name becomes `-`), runs the first sync and `ade doctor`. An existing config is kept unless you pass `--force` (then a `config.toml.bak-<timestamp>` stays beside it). `--handle <username>` sets your forge username instead of asking the forge.
 
 ### Check, then open
 
@@ -166,6 +168,17 @@ Already inside zellij, `ade` runs the dashboard in your current pane. `ade dash`
 4. **`v`** opens a multi-root VS Code workspace for the item (all repos of the project).
 5. **Enter** on an MR opens the MR page: threads, diff, CI; reply, resolve, approve, mark ready, merge. `ade review <group/project!N>` opens someone else's MR in a review tab; collected line comments go out as one review batch.
 6. **Clean up** with `ade gc`, which removes worktrees of merged or closed MRs when they are clean and pushed.
+
+### Moving work from another tool
+
+A branch you started elsewhere (another clone, a worktree made by hand) can join ADE's layout with `ade adopt`. It writes nothing to the forge.
+
+```sh
+ade adopt acme api 15-export-limit --from ~/src/api --item acme/tracker#15
+ade adopt acme api 15-export-limit --from ~/src/api --dry-run   # only print the steps
+```
+
+`--from` carries commits you have not pushed into ADE's clone. Without it the branch is taken from `origin`. ADE then records the item and commit prefix in the worktree. The dashboard shows the worktree under the item once a merge request from the branch exists, or when the branch name starts with a child issue's iid and a dash.
 
 ### AI and budgets (optional)
 
@@ -275,7 +288,7 @@ What one run does, in order (each step prints one line; `--json` prints the summ
 1. **Config.** With no user config it creates one like `ade init --yes` from flags or `ADE_SETUP_*` variables (below), or copies a team template with `--config-from <path|https-url>` (validated first). An existing config is validated and never overwritten.
 2. **Token.** Every configured forge's token is resolved and checked. An empty or rejected token skips the forge steps, says so, and the run exits 3. Setup never waits for input.
 3. **Projects.** `project add` for each configured project (clone, baseline worktrees, `post_worktree` hooks; a repeat only fills gaps), then `update` (fetch and fast-forward), then the first `sync`.
-4. **Machine.** Writes the zellij unlock-first preset next to the config, checks git, zellij, lazygit, direnv, nix, omp and the VS Code remote `code` CLI, and prints what is missing with one `nix profile install nixpkgs#...` line. `--warm` pre-builds each repo's baseline dev shell (`nix develop <repo>/main -c true`, or `direnv allow` then `direnv exec` for a `.envrc`: asking for `--warm` is asking to trust those repos' `.envrc` files) so the first work tab opens fast.
+4. **Machine.** Writes the zellij unlock-first preset next to the config, checks git, zellij, lazygit, direnv, nix, omp and the VS Code remote `code` CLI, and prints what is missing with one `nix profile install nixpkgs#...` line. `--warm` pre-builds each repo's baseline dev shell (`nix develop <repo>/<default-branch> -c true`, or `direnv allow` then `direnv exec` for a `.envrc`: asking for `--warm` is asking to trust those repos' `.envrc` files) so the first work tab opens fast.
 5. **Session.** `--session` starts the detached zellij session with the dashboard layout when it is not running (a resurrectable one is resurrected), so the VS Code remote terminal or web tty only attaches. `--session-name` picks another name (default `ade`).
 6. **Doctor.** A final `ade doctor` summary, informational: it never changes the exit code.
 

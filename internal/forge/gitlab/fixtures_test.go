@@ -302,6 +302,7 @@ func TestIterationStateComesFromTheFilter(t *testing.T) {
 // the documented shapes.
 func TestCapabilitiesFromFixtures(t *testing.T) {
 	const iterations = "GET /api/v4/groups/my-group/iterations"
+	const namespace = "GET /api/v4/namespaces/my-group"
 	tests := []struct {
 		name   string
 		routes map[string]route
@@ -309,18 +310,18 @@ func TestCapabilitiesFromFixtures(t *testing.T) {
 	}{
 		{
 			"free",
-			map[string]route{iterations: {file: "403"}, "POST /api/graphql": {file: "free/graphql_capabilities.json"}},
+			map[string]route{namespace: {file: "namespace_group.json"}, iterations: {file: "403"}, "POST /api/graphql": {file: "free/graphql_capabilities.json"}},
 			forge.Caps{ProbedAt: clock},
 		},
 		{
 			"premium",
-			map[string]route{iterations: {file: "premium/group_iterations.json"}, "POST /api/graphql": {file: "premium/graphql_capabilities.json"}},
+			map[string]route{namespace: {file: "namespace_group.json"}, iterations: {file: "premium/group_iterations.json"}, "POST /api/graphql": {file: "premium/graphql_capabilities.json"}},
 			forge.Caps{Iterations: true, Cadences: true, Weight: true, ApprovalRules: true, BlocksLinks: true, Epics: true, ProbedAt: clock},
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := fixtureClient(t, tc.routes).Capabilities(context.Background(), "my-group")
+			got, err := fixtureClient(t, tc.routes).Capabilities(context.Background(), "my-group", "")
 			if err != nil {
 				t.Fatal(err)
 			}

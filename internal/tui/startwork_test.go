@@ -47,7 +47,10 @@ type swEnvT struct {
 	root   string
 }
 
-func newSWEnv(t *testing.T) *swEnvT {
+func newSWEnv(t *testing.T) *swEnvT { return newSWEnvWith(t, func(s string) string { return s }) }
+
+// newSWEnvWith is newSWEnv with the sandbox manifest text edited first.
+func newSWEnvWith(t *testing.T, edit func(string) string) *swEnvT {
 	t.Helper()
 	swtest.GitEnv(t)
 	dir := t.TempDir()
@@ -60,7 +63,7 @@ func newSWEnv(t *testing.T) *swEnvT {
 		t.Fatal(err)
 	}
 	mpath := filepath.Join(dir, "demo.ade.toml")
-	if err := os.WriteFile(mpath, manifest, 0o644); err != nil {
+	if err := os.WriteFile(mpath, []byte(edit(string(manifest))), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cfg := config.Defaults()
@@ -280,6 +283,33 @@ func TestStartDialogDraftFlow(t *testing.T) {
 	}
 }
 
+func TestStartDialogAskOffersTheLabelMove(t *testing.T) {
+	e := newSWEnvWith(t, func(s string) string {
+		out := strings.Replace(s, `sync    = "auto"`, `sync    = "ask"`, 1)
+		if out == s {
+			t.Fatal("sandbox manifest has no sync = \"auto\" line to edit")
+		}
+		return out
+	})
+	e.selectRow(trk(3).String())
+	e.press("s", "enter")
+	e.want("4 forge writes", "labels.workflow.sync = ask: press l to move the workflow label", "[ ]")
+	e.wantNot("set workflow::in progress")
+	e.press("l")
+	e.want("5 forge writes", "set workflow::in progress on "+trk(3).String(), "[x]")
+}
+
+func TestStartDialogAskResultNamesTheDialogKey(t *testing.T) {
+	e := newSWEnvWith(t, func(s string) string { return strings.Replace(s, `sync    = "auto"`, `sync    = "ask"`, 1) })
+	e.selectRow(trk(3).String())
+	e.press("s", "enter", "enter")
+	if e.m.sw.stage != swDone {
+		t.Fatalf("stage = %v, err %v", e.m.sw.stage, e.m.sw.err)
+	}
+	e.want("press l in the start") // the note wraps in the dialog
+	e.wantNot("--move-label")
+}
+
 func TestStartDialogBrowseWritesNothing(t *testing.T) {
 	e := newSWEnv(t)
 	e.selectRow(trk(3).String())
@@ -433,8 +463,12 @@ func TestCreateMRKey(t *testing.T) {
 func TestEditedBodyIsSent(t *testing.T) {
 	e := newSWEnv(t)
 	old := swEditorCmd
+	edited := filepath.Join(t.TempDir(), "edited.md")
+	if err := os.WriteFile(edited, []byte("Closes "+startwork.ChildPlaceholder+"\n\nwritten by hand\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	swEditorCmd = func(_ hostedit.Editor, path string) *exec.Cmd {
-		return exec.Command("sh", "-c", `printf 'Closes `+startwork.ChildPlaceholder+`\n\nwritten by hand\n' > "$1"`, "sh", path)
+		return exec.Command("cp", edited, path)
 	}
 	t.Cleanup(func() { swEditorCmd = old })
 	e.selectRow(trk(3).String())

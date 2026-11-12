@@ -124,6 +124,9 @@ func TestDiscoverGitLabFree(t *testing.T) {
 	if got := m.Labels; got.Type.Pattern != "type::{value}" || got.App.Pattern != "app::{value}" || got.Workflow.Pattern != "workflow::{value}" {
 		t.Errorf("labels = %+v", got)
 	}
+	if m.Labels.Workflow.Sync != "ask" || !strings.Contains(d.TOML, `sync    = "ask"`) {
+		t.Errorf("sync = %q: a generated manifest must not move the shared board on its own\n%s", m.Labels.Workflow.Sync, d.TOML)
+	}
 	wantStage := map[string]string{"started": "in progress", "draft": "in progress", "review": "in review", "merged": "done"}
 	if !maps.Equal(m.Labels.Workflow.Stage, wantStage) || m.Labels.Workflow.Done != "done" {
 		t.Errorf("workflow = %+v", m.Labels.Workflow)
@@ -161,6 +164,40 @@ func TestDiscoverGitLabFree(t *testing.T) {
 		if !strings.Contains(d.TOML, want) {
 			t.Errorf("manifest comments lack %q:\n%s", want, d.TOML)
 		}
+	}
+}
+
+// A personal namespace has no group endpoints: sprints are the tracker
+// project's milestones and Premium weight is read from its issues.
+func TestDiscoverGitLabUserNamespace(t *testing.T) {
+	for _, tier := range []fake.Tier{fake.Free, fake.Premium} {
+		t.Run(tier.String(), func(t *testing.T) {
+			srv := fake.New(tier, fake.WithUserNamespace())
+			t.Cleanup(srv.Close)
+			seedRoots(srv)
+			c := gitlab.New(srv.URL, fake.Token)
+
+			d, err := bootstrap.Discover(context.Background(), c, opts())
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := roundTrip(t, d)
+			if m.Tracker.Iterations.Source != "milestones" {
+				t.Errorf("iterations = %+v: the tracker project's milestones are the sprints", m.Tracker.Iterations)
+			}
+			wantWeight := "label"
+			if tier == fake.Premium {
+				wantWeight = "gitlab"
+			}
+			if m.Tracker.Weight.Source != wantWeight {
+				t.Errorf("weight = %+v, want source %q", m.Tracker.Weight, wantWeight)
+			}
+			for _, n := range d.Notes {
+				if strings.Contains(n, "is not a group") {
+					t.Errorf("a user namespace is not a free account: note %q", n)
+				}
+			}
+		})
 	}
 }
 

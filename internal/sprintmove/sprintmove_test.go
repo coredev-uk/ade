@@ -40,9 +40,9 @@ type harness struct {
 	bus <-chan events.Event
 }
 
-func newHarness(t *testing.T, tier fake.Tier, src config.IterationsSource) *harness {
+func newHarness(t *testing.T, tier fake.Tier, src config.IterationsSource, opts ...fake.Option) *harness {
 	t.Helper()
-	srv := fake.New(tier, fake.WithClock(now))
+	srv := fake.New(tier, append([]fake.Option{fake.WithClock(now)}, opts...)...)
 	t.Cleanup(srv.Close)
 	log, err := audit.Open(t.TempDir(), "user")
 	if err != nil {
@@ -245,13 +245,28 @@ func TestNoNextSprintSaysWhatToCreate(t *testing.T) {
 	if err == nil {
 		t.Fatal("Next succeeded with no sprint after Sprint 43")
 	}
-	for _, want := range []string{"after Sprint 43 (ends 2026-11-27)", "create the next milestone", fake.GroupPath, "creates no sprints"} {
+	for _, want := range []string{"after Sprint 43 (ends 2026-11-27)", "create the next milestone in group " + fake.GroupPath, "creates no sprints"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q lacks %q", err, want)
 		}
 	}
 	if _, err := h.target(7).Find("Sprint 99"); err == nil || !strings.Contains(err.Error(), "no sprint \"Sprint 99\"") {
 		t.Errorf("Find(unknown) = %v", err)
+	}
+}
+
+// A user namespace has no group: the message names the tracker project.
+func TestNoNextSprintInAUserNamespaceNamesTheProject(t *testing.T) {
+	h := newHarness(t, fake.Free, config.IterationsSource{Source: "milestones"}, fake.WithUserNamespace())
+	_, err := h.target(7).Next()
+	if err == nil {
+		t.Fatal("Next succeeded with no sprint after Sprint 43")
+	}
+	if want := "create the next milestone in project " + tracker; !strings.Contains(err.Error(), want) {
+		t.Errorf("error %q lacks %q", err, want)
+	}
+	if strings.Contains(err.Error(), "in group") {
+		t.Errorf("error %q names a group", err)
 	}
 }
 

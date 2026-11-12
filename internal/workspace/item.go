@@ -162,7 +162,13 @@ func TargetForMR(ctx context.Context, root string, m *config.Manifest, mr forge.
 	return Target{Project: m.Name, Repo: repo, Worktree: base, Title: filepath.Base(base), Baseline: true}, nil
 }
 
-// baseline is a repo's main/ worktree.
+// BaselineDir is the path of repo's baseline worktree, named after its default
+// branch (the manifest's default_branch, else the bare clone's HEAD).
+func BaselineDir(ctx context.Context, projectDir string, m *config.Manifest, repo string) (string, error) {
+	return baseline(ctx, projectDir, m, repo)
+}
+
+// baseline is a repo's baseline worktree: <repo>/<default branch>.
 func baseline(ctx context.Context, projectDir string, m *config.Manifest, repo string) (string, error) {
 	r := &treeResolver{loc: Location{ProjectDir: projectDir, Manifest: m}}
 	t, err := r.baseline(ctx, repo, filepath.Join(projectDir, repo), m.Repos[repo])

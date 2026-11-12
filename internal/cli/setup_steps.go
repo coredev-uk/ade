@@ -107,7 +107,15 @@ func runSetupProjects(ctx context.Context, say io.Writer, a *app.App, res *setup
 
 // warmShells pre-builds the dev shell of every repo's baseline worktree.
 func warmShells(ctx context.Context, say io.Writer, a *app.App, res *setupResult) {
-	dirs, _ := filepath.Glob(filepath.Join(a.Root, "*", "*", "main"))
+	var dirs []string
+	sts, _ := project.New(a, "ade:setup").Status(ctx, "")
+	for _, ps := range sts {
+		for _, rs := range ps.Repos {
+			if rs.Baseline != nil { // named after the repo's default branch
+				dirs = append(dirs, rs.Baseline.Path)
+			}
+		}
+	}
 	if len(dirs) == 0 {
 		step(say, "warm", "no repos under %s", a.Root)
 		return

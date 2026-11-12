@@ -207,7 +207,7 @@ func (d *Draft) renderLabels(w *writer) {
 	if len(stages) > 0 {
 		w.kv(7, "stage", inline(stages...), "ADE's derived stage -> your board column")
 	}
-	w.kv(7, "sync", quote(l.Workflow.Sync), `auto moves the label when the stage changes; "ask" confirms each move, "off" only shows drift`)
+	w.kv(7, "sync", quote(l.Workflow.Sync), `"ask" (the default when unset) moves it only when you ask (ade start --move-label); "auto" moves the shared board on every stage change; "off" never moves it`)
 	if l.Workflow.Done != "" {
 		w.kv(7, "done", quote(l.Workflow.Done), "an open tracker issue with this value counts as done; remove if you close issues when work ends")
 	}

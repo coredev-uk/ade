@@ -113,9 +113,9 @@ func probeTarget(ctx context.Context, o Options, t ProbeTarget) ProbeReport {
 		return r
 	}
 	p := &prober{ctx: ctx, o: o, base: strings.TrimRight(f.URL, "/"), token: tok}
-	p.probeAll(t)
+	r.Caps, r.CapsError = p.caps(forge.Group(t.Project), t.Project)
+	p.probeAll(t, r.Caps != nil && r.Caps.UserNamespace)
 	r.Endpoints = p.endpoints
-	r.Caps, r.CapsError = p.caps(forge.Group(t.Project))
 	return r
 }
 
@@ -139,7 +139,10 @@ var probeHeaders = []string{"X-Next-Page", "Link", "X-Total", "RateLimit-Limit",
 // docs never define.
 var probeIterationStates = []string{"upcoming", "current", "closed"}
 
-func (p *prober) probeAll(t ProbeTarget) {
+// probeAll probes the tracker and its repos. A user namespace has no group
+// endpoints: they are skipped and the tracker project's milestones are probed
+// instead.
+func (p *prober) probeAll(t ProbeTarget, userNamespace bool) {
 	proj := "/projects/" + url.PathEscape(t.Project)
 	grp := "/groups/" + url.PathEscape(forge.Group(t.Project))
 
@@ -148,9 +151,15 @@ func (p *prober) probeAll(t ProbeTarget) {
 		"iid", "state", "references", "task_completion_status", "milestone", "labels", "assignees",
 		"weight", "iteration", "epic")
 	p.issueRelations(proj)
-	p.probe("group milestones", "/groups/:id/milestones", grp+"/milestones?per_page=1",
-		"id", "title", "state", "start_date", "due_date")
-	p.iterations(grp)
+	if userNamespace {
+		p.note("group endpoints", "/groups/:id", "user namespace: group endpoints skipped")
+		p.probe("project milestones", "/projects/:id/milestones", proj+"/milestones?per_page=1",
+			"id", "title", "state", "start_date", "due_date")
+	} else {
+		p.probe("group milestones", "/groups/:id/milestones", grp+"/milestones?per_page=1",
+			"id", "title", "state", "start_date", "due_date")
+		p.iterations(grp)
+	}
 	p.probe("approval rules", "/projects/:id/approval_rules", proj+"/approval_rules?per_page=1",
 		"id", "name", "rule_type", "approvals_required")
 	p.mergeRequests(append([]string{t.Project}, t.Repos...))
@@ -252,11 +261,11 @@ func (p *prober) mergeRequests(projects []string) {
 	p.note("merge requests", "/projects/:id/merge_requests", "skipped: no merge request in the tracker or its repos to sample")
 }
 
-func (p *prober) caps(group string) (*forge.Caps, string) {
+func (p *prober) caps(group, project string) (*forge.Caps, string) {
 	ctx, cancel := context.WithTimeout(p.ctx, p.o.Timeout)
 	defer cancel()
 	c := gitlab.New(p.base, p.token, gitlab.WithHTTPClient(p.o.HTTP))
-	caps, err := c.Capabilities(ctx, group)
+	caps, err := c.Capabilities(ctx, group, project)
 	if err != nil {
 		return nil, err.Error()
 	}

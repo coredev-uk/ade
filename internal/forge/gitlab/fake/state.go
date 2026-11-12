@@ -175,19 +175,21 @@ type discussion struct {
 }
 
 type state struct {
-	clock      time.Time
-	nextID     int64
-	me         *user
-	users      []*user
-	group      string
-	groupID    int64
-	projects   []*project
-	milestones []*milestone
-	iterations []*iteration
-	issues     []*issue
-	links      []*link
-	mrs        []*mr
-	threads    map[forge.Ref][]*discussion
+	clock   time.Time
+	nextID  int64
+	me      *user
+	users   []*user
+	group   string
+	groupID int64
+	// userNamespace: group is a user's namespace, which has no group endpoints.
+	userNamespace bool
+	projects      []*project
+	milestones    []*milestone
+	iterations    []*iteration
+	issues        []*issue
+	links         []*link
+	mrs           []*mr
+	threads       map[forge.Ref][]*discussion
 	// approvalsRequired is the Premium rule threshold.
 	approvalsRequired int
 }
@@ -207,6 +209,10 @@ func (s *state) findProject(idOrPath string) *project {
 }
 
 func (s *state) hasGroup(idOrPath string) bool {
+	return !s.userNamespace && s.hasNamespace(idOrPath)
+}
+
+func (s *state) hasNamespace(idOrPath string) bool {
 	return idOrPath == s.group || idOrPath == fmt.Sprint(s.groupID)
 }
 

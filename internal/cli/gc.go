@@ -40,10 +40,14 @@ func newGCCmd() *cobra.Command {
 		Short: "Remove worktrees whose merge request is merged or closed",
 		Long: `Looks at every feature worktree of every cloned project and removes the ones whose
 merge request is merged or closed, but only when the tree is clean and everything
-committed is pushed. Each worktree that stays says why. The baseline tree and
-worktrees whose branch has an open merge request or none are never touched.
+committed is pushed. Each worktree that stays says why, and each one to remove says
+what shows it is pushed. A branch without an upstream counts as pushed only when HEAD
+is the head commit of one of its merge requests or is on a remote branch that still
+exists after a fetch (gc fetches each such repo, with --prune, to find out). The
+baseline tree and worktrees whose branch has an open merge request or none are
+never touched.
 
---dry-run only reports. Without --yes it asks first (and refuses to run unattended).
+--dry-run only reports: it touches no worktree or branch, but still fetches. Without --yes it asks first (and refuses to run unattended).
 Exits 2 when a removal failed.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -93,7 +97,7 @@ Exits 2 when a removal failed.`,
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "report what would be removed and why the rest stays; change nothing")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "report what would be removed and why the rest stays; no worktree or branch is touched, but remote-tracking refs are refreshed (fetch --prune)")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "remove without asking")
 	cmd.Flags().StringVar(&only, "project", "", "only this project")
 	return cmd
@@ -135,7 +139,7 @@ func printGC(w io.Writer, rows []gcRow) {
 	for _, r := range rows {
 		if r.Removable() {
 			removable++
-			fmt.Fprintf(w, "remove  %s  (%s)\n", r.Label(), r.MR)
+			fmt.Fprintf(w, "remove  %s  (%s; pushed: %s)\n", r.Label(), r.MR, r.Pushed)
 			continue
 		}
 		fmt.Fprintf(w, "keep    %s  %s\n", r.Label(), strings.Join(r.Keep, "; "))

@@ -82,14 +82,24 @@ pattern = "app::{value}"       # routes a tracker issue to the repos whose `app`
 [labels.workflow]
 pattern = "workflow::{value}"  # the board column
 stage   = { started = "in progress", draft = "in progress", review = "in review", merged = "done" }
-sync    = "auto"               # auto | ask | off
+sync    = "auto"               # auto | ask | off (unset means ask)
 done    = "done"               # optional, see below
 ```
 
 - `type` and `app` missing on an issue puts it in the **needs triage** filter.
 - `workflow.stage` maps the stage ADE *derives* from forge facts (child issue, branch, MR, CI, approvals) to your
-  board column names. With `sync = "auto"` ADE moves the label when the derived stage changes (and removes the
-  old one); `ask` confirms each move; `off` only shows drift. Every move is recorded in the audit log.
+  board column names. `sync` decides who moves the label. Unset means `ask`, so a manifest that never mentions
+  it does not change a shared board on its own. Every move is recorded in the audit log.
+  - `auto`: ADE moves the label when the derived stage changes (and removes the old one), on every sync and in
+    `ade start`. Pass `--no-move-label` to `ade start` to skip the move once.
+  - `ask`: ADE moves the label only when you confirm. `ade start` moves it with `--move-label`, and the start
+    dialog has a checkbox (key `l`). Without that, `ade start` and `ade start --dry-run` print the label they
+    would set. A background sync never moves the label: it lists each stage change as a warning in `ade sync` and
+    in the inbox, naming the label and the item. Set the label on the board, or set `sync = "auto"`.
+  - `off`: ADE never moves the label; the board column only shows as drift.
+  `ade start --dry-run` lists the label move as a forge write when it would run. When it would not, a note
+  says why: `ask` without `--move-label`, `off`, `--no-move-label`, or a label already further along. Browse mode
+  and a manifest that maps no `started` stage never touch the label and print no note.
 - `workflow.done`: some teams leave sprint work open until the sprint review and mark it finished with a label.
   With `done = "done"`, an open tracker issue carrying that value (and no open MR) counts as done and is never
   nagged to close. Leave it out if your team closes issues when work finishes.
@@ -115,6 +125,10 @@ iterations = { source = "gitlab-iterations", cadence = "Delivery" }
 
 `overlap` (default `1`) is how many working days around a boundary also show the adjacent sprint. Working days
 come from each person's `user.workdays` and `user.holidays`.
+
+A tracker in a personal (user) namespace has no group, so no iterations, cadences or epics: sprints are the tracker
+project's milestones. `auto` and `milestones` read them; `gitlab-iterations` and `cadence` fail with an error saying
+iterations need a group. Weight and approval rules are read from the tracker project.
 
 ```toml
 [tracker]
@@ -225,11 +239,36 @@ esac
 printf '%s %s\n' "$prefix" "$(cat "$1")" > "$1.new" && mv "$1.new" "$1"
 ```
 
+ADE sets `ADE_AGENT_RUN=1` in the environment of every agent it starts (`ade agent plan|run|address`, and the `omp`
+pane of the `agent` layout), and not in its own: the push of `ade agent push` is unmarked. A global `pre-push` hook can
+use it to refuse an agent's own `git push`:
+
+```sh
+#!/bin/sh
+# pre-push: refuse pushes made from inside an ADE agent run.
+if [ -n "$ADE_AGENT_RUN" ]; then
+  echo "pre-push: refused: an agent run may not push (review, then ade agent push)" >&2
+  exit 1
+fi
+```
+
+This is a guardrail, not a sandbox. The agent runs as you and still has the forge token in its environment, so it
+can unset the variable or push some other way. It stops the mistake, not a determined agent.
+
 ## Repos, hooks and run graph
 
+Each repo is cloned to `<root>/<project>/<repo>/`, as a `.bare` clone plus a **baseline worktree named after the
+repo's default branch** (`main/`, `develop/`; a `/` in the branch name becomes `-`, so `release/1` is `release-1/`).
+Feature worktrees sit beside it, one per work-item branch. `default_branch` on a repo sets that branch; left out, ADE
+uses the branch the remote's `HEAD` points at.
+
 ```toml
+[repos.api]
+path           = "acme/api"
+default_branch = "develop"               # baseline tree is api/develop/; omit to use the remote's HEAD
+
 [repos.web.hooks]
-post_clone    = ["npm ci"]               # once, in main/ after `ade project add`
+post_clone    = ["npm ci"]               # once, in the baseline tree after `ade project add`
 post_worktree = ["npm ci"]               # every new worktree
 
 [repos.api.tasks.dev]
@@ -261,7 +300,7 @@ review without pushing) or `manual` (a shell). Every layout also shows the item'
 one pane per service of the `run` group (none starts on its own: a pane waits for Enter; Ctrl-C in a running pane stops it, Enter starts it again; the `services` pane starts the whole group).
 Each person can override the default with `host.layout` in their own config; `ade start --layout` and `W` on Home
 choose per tab. A service runs from the work item's own worktree when it has one in that repo, else from the shared
-baseline `main/`, so `{api.dev.port}` in web's `API_URL` follows the item's api when it has one. See
+baseline (default-branch) tree, so `{api.dev.port}` in web's `API_URL` follows the item's api when it has one. See
 [PLAN.md §6.6](PLAN.md#66-agents-and-workspaces-core-function-7).
 
 ### Dev shell per repo

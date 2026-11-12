@@ -58,7 +58,7 @@ func (f *memForge) Me(context.Context) (forge.User, error) {
 	return f.me, nil
 }
 
-func (f *memForge) Capabilities(context.Context, string) (forge.Caps, error) {
+func (f *memForge) Capabilities(context.Context, string, string) (forge.Caps, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.capsCalls++

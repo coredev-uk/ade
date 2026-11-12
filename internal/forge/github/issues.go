@@ -36,7 +36,7 @@ func (c *Client) Me(ctx context.Context) (forge.User, error) {
 // for every owner: no issue weight, iterations, cadences, epics, approval
 // rules or blocks links. The owner is read so an unknown or unreachable one
 // is an error rather than an empty answer.
-func (c *Client) Capabilities(ctx context.Context, group string) (forge.Caps, error) {
+func (c *Client) Capabilities(ctx context.Context, group, _ string) (forge.Caps, error) {
 	if group == "" {
 		return forge.Caps{}, errors.New("github: Capabilities needs an owner")
 	}

@@ -182,6 +182,54 @@ func TestPlanStepsPerMode(t *testing.T) {
 	}
 }
 
+func TestWorkflowPlanStepOrNote(t *testing.T) {
+	item := func(wf string, labels ...string) domain.WorkItem {
+		return domain.WorkItem{Ref: issueRef(tracker, 3), Workflow: wf, Issue: forge.Issue{Ref: issueRef(tracker, 3), Title: "T", Labels: labels}}
+	}
+	for _, tc := range []struct {
+		name     string
+		sync     string
+		item     domain.WorkItem
+		choices  func(*startwork.Choices)
+		wantStep bool   // a workflow step is planned
+		wantNote string // substring of the note, "" for none
+	}{
+		{"auto moves", "auto", item("backlog", "workflow::backlog"), nil, true, ""},
+		{"unset is ask: not moved, noted", "", item("backlog", "workflow::backlog"), nil, false, "would set workflow::in progress on " + tracker + "#3, remove workflow::backlog (sync = ask: pass --move-label"},
+		{"ask is noted", "ask", item(""), nil, false, "would set workflow::in progress"},
+		{"unset with --move-label moves", "", item(""), func(c *startwork.Choices) { c.MoveLabel = true }, true, ""},
+		{"auto with --no-move-label is noted", "auto", item(""), func(c *startwork.Choices) { c.NoMoveLabel = true }, false, "--no-move-label: not applied"},
+		{"off is noted", "off", item(""), nil, false, "not moved (sync = off)"},
+		{"further along is noted", "auto", item("in review", "workflow::in review"), nil, false, "further along"},
+		{"already there is a done step", "ask", item("in progress", "workflow::in progress"), nil, true, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := manifest(t, manifestTOML)
+			m.Labels.Workflow.Sync = tc.sync
+			ch := startwork.Choices{Repos: []string{"api"}, Mode: startwork.ModeDraft, Child: startwork.ChildAuto}
+			if tc.choices != nil {
+				tc.choices(&ch)
+			}
+			p, err := startwork.BuildPlan(startwork.PlanInput{Item: tc.item, Manifest: m, Root: "/r", Choices: ch, Found: map[string]startwork.Found{"api": {}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var step *startwork.Step
+			for i, s := range p.Steps {
+				if s.Kind == startwork.StepWorkflow {
+					step = &p.Steps[i]
+				}
+			}
+			if (step != nil) != tc.wantStep {
+				t.Errorf("workflow step = %+v, want present=%v", step, tc.wantStep)
+			}
+			if tc.wantNote == "" && p.WorkflowNote != "" || !strings.Contains(p.WorkflowNote, tc.wantNote) {
+				t.Errorf("note = %q, want it to contain %q", p.WorkflowNote, tc.wantNote)
+			}
+		})
+	}
+}
+
 func TestLabelMoves(t *testing.T) {
 	m := manifest(t, manifestTOML)
 	mk := func(stage domain.Stage, wf string, labels ...string) domain.WorkItem {
@@ -230,7 +278,7 @@ func TestLabelMoves(t *testing.T) {
 		{"sync off", mk(domain.StageDraft, "in progress"), mk(domain.StageReview, "in progress", "workflow::in progress"), "off", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			m.Labels.Workflow.Sync = cmpOr(tc.sync, "auto")
+			m.Labels.Workflow.Sync = tc.sync
 			got := startwork.LabelMoves([]domain.WorkItem{tc.prev}, []domain.WorkItem{tc.cur}, m)
 			if tc.want == nil {
 				if len(got) != 0 {
@@ -248,13 +296,6 @@ func TestLabelMoves(t *testing.T) {
 	if got := startwork.LabelMoves(nil, []domain.WorkItem{cur}, m); len(got) != 0 {
 		t.Errorf("first sight moved: %+v", got)
 	}
-}
-
-func cmpOr(s, def string) string {
-	if s == "" {
-		return def
-	}
-	return s
 }
 
 func keptOpen(it domain.WorkItem) domain.WorkItem {

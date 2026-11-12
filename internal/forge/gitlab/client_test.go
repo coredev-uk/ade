@@ -3,6 +3,9 @@ package gitlab_test
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -661,7 +664,7 @@ func TestIterations(t *testing.T) {
 
 func TestCapabilities(t *testing.T) {
 	forEachTier(t, func(t *testing.T, tier fake.Tier, c *gitlab.Client, _ *fake.Server) {
-		caps, err := c.Capabilities(context.Background(), group)
+		caps, err := c.Capabilities(context.Background(), group, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -673,18 +676,117 @@ func TestCapabilities(t *testing.T) {
 		if caps != want {
 			t.Errorf("caps = %+v\nwant   %+v", caps, want)
 		}
-		if _, err := c.Capabilities(context.Background(), "no-such-group"); !errors.Is(err, forge.ErrNotFound) {
+		if _, err := c.Capabilities(context.Background(), "no-such-group", ""); !errors.Is(err, forge.ErrNotFound) {
 			t.Errorf("unknown group err = %v, want ErrNotFound", err)
 		}
-		if _, err := c.Capabilities(context.Background(), ""); err == nil {
+		if _, err := c.Capabilities(context.Background(), "", ""); err == nil {
 			t.Error("want error for an empty group")
 		}
 	})
 }
 
+// A user's personal namespace has no group endpoints: the licence is read
+// from the tracker project, and iterations, cadences and epics are off.
+func TestCapabilitiesUserNamespace(t *testing.T) {
+	for _, tier := range tiers {
+		t.Run(tier.String(), func(t *testing.T) {
+			srv := fake.New(tier, fake.WithClock(clock), fake.WithUserNamespace())
+			t.Cleanup(srv.Close)
+			c := gitlab.New(srv.URL, fake.Token, gitlab.WithClock(func() time.Time { return clock }))
+			premium := tier == fake.Premium
+
+			// The seeded merge requests live in web, so it has a licence flag to read.
+			caps, err := c.Capabilities(context.Background(), group, group+"/web")
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := forge.Caps{
+				UserNamespace: true, Weight: premium, ApprovalRules: premium, BlocksLinks: premium, ProbedAt: clock,
+			}
+			if caps != want {
+				t.Errorf("caps = %+v\nwant   %+v", caps, want)
+			}
+			for _, r := range srv.Requests() {
+				if strings.HasPrefix(r.Path, "/api/v4/groups/") || r.Path == "/api/graphql" {
+					t.Errorf("user namespace probe sent %s %s", r.Method, r.Path)
+				}
+			}
+
+			// Without a project there is nothing to sample.
+			caps, err = c.Capabilities(context.Background(), group, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := (forge.Caps{UserNamespace: true, ProbedAt: clock}); caps != want {
+				t.Errorf("caps without a project = %+v\nwant   %+v", caps, want)
+			}
+		})
+	}
+}
+
+// userNamespaceStub answers /namespaces/:id as a user's namespace and every
+// other path with status[path], or 200 [] when it has none.
+func userNamespaceStub(t *testing.T, wantNamespace string, status map[string]int) *gitlab.Client {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch p := r.URL.EscapedPath(); {
+		case p == "/api/v4/namespaces/"+wantNamespace:
+			io.WriteString(w, `{"kind":"user"}`)
+		case status[p] != 0:
+			w.WriteHeader(status[p])
+			io.WriteString(w, `{"message":"nope"}`)
+		case strings.HasPrefix(p, "/api/v4/namespaces/"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			io.WriteString(w, `[]`)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return gitlab.New(srv.URL, fake.Token, gitlab.WithClock(func() time.Time { return clock }))
+}
+
+// A tracker project with issues or merge requests turned off answers 403 or
+// 404 to the sample: nothing to sample, not a failed probe.
+func TestCapabilitiesUserNamespaceProjectWithoutSamples(t *testing.T) {
+	for _, status := range []int{http.StatusForbidden, http.StatusNotFound} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			c := userNamespaceStub(t, "me", map[string]int{
+				"/api/v4/projects/me%2Ftracker/issues":         status,
+				"/api/v4/projects/me%2Ftracker/merge_requests": status,
+			})
+			caps, err := c.Capabilities(context.Background(), "me", "me/tracker")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := (forge.Caps{UserNamespace: true, ProbedAt: clock}); caps != want {
+				t.Errorf("caps = %+v\nwant   %+v", caps, want)
+			}
+		})
+	}
+	t.Run("a rejected token still fails", func(t *testing.T) {
+		c := userNamespaceStub(t, "me", map[string]int{"/api/v4/projects/me%2Ftracker/issues": http.StatusUnauthorized})
+		if _, err := c.Capabilities(context.Background(), "me", "me/tracker"); !errors.Is(err, forge.ErrAuth) {
+			t.Errorf("err = %v, want ErrAuth", err)
+		}
+	})
+}
+
+// A namespace path with a slash is looked up escaped, like a group path.
+func TestCapabilitiesUserNamespaceLookupEscapesSubgroupPaths(t *testing.T) {
+	c := userNamespaceStub(t, "a%2Fb", nil)
+	caps, err := c.Capabilities(context.Background(), "a/b", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !caps.UserNamespace {
+		t.Errorf("caps = %+v, want a user namespace", caps)
+	}
+}
+
 func TestCapabilitiesNeverWrites(t *testing.T) {
 	forEachTier(t, func(t *testing.T, _ fake.Tier, c *gitlab.Client, srv *fake.Server) {
-		if _, err := c.Capabilities(context.Background(), group); err != nil {
+		if _, err := c.Capabilities(context.Background(), group, ""); err != nil {
 			t.Fatal(err)
 		}
 		for _, r := range srv.Requests() {
@@ -875,7 +977,7 @@ func TestErrorMapping(t *testing.T) {
 	if _, err := bad.Me(ctx); !errors.Is(err, forge.ErrAuth) {
 		t.Errorf("bad token err = %v, want ErrAuth", err)
 	}
-	if _, err := bad.Capabilities(ctx, group); !errors.Is(err, forge.ErrAuth) {
+	if _, err := bad.Capabilities(ctx, group, ""); !errors.Is(err, forge.ErrAuth) {
 		t.Errorf("bad token on a probe = %v, want ErrAuth, not a silent false", err)
 	}
 	if _, err := bad.Iterations(ctx, group, ""); !errors.Is(err, forge.ErrAuth) {

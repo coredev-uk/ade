@@ -142,7 +142,7 @@ func TestOpenTrustsCAFileUnderPathPrefix(t *testing.T) {
 	if _, err := c.Me(ctx); err != nil {
 		t.Fatalf("Me with the CA file: %v", err)
 	}
-	if _, err := c.Capabilities(ctx, fake.GroupPath); err != nil {
+	if _, err := c.Capabilities(ctx, fake.GroupPath, ""); err != nil {
 		t.Fatalf("GraphQL and REST both live under the prefix: %v", err)
 	}
 	for _, r := range srv.Requests() {
@@ -282,7 +282,7 @@ func TestOldInstanceDegrades(t *testing.T) {
 		srv := fake.New(fake.Premium, fake.WithMissingEndpoints("/api/graphql"))
 		t.Cleanup(srv.Close)
 		c := gitlab.New(srv.URL, fake.Token)
-		caps, err := c.Capabilities(ctx, fake.GroupPath)
+		caps, err := c.Capabilities(ctx, fake.GroupPath, "")
 		if err != nil {
 			t.Fatalf("Capabilities must survive an instance with no GraphQL: %v", err)
 		}
@@ -315,7 +315,7 @@ func TestOldInstanceDegrades(t *testing.T) {
 		}))
 		t.Cleanup(old.Close)
 		c := gitlab.New(old.URL, fake.Token)
-		caps, err := c.Capabilities(ctx, fake.GroupPath)
+		caps, err := c.Capabilities(ctx, fake.GroupPath, "")
 		if err != nil || caps.Epics || caps.Cadences {
 			t.Fatalf("caps = %+v, err = %v: want GraphQL features off and no error", caps, err)
 		}

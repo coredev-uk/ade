@@ -21,6 +21,7 @@ import (
 
 	"github.com/spf13/pflag"
 
+	"github.com/coredev-uk/ade/internal/app"
 	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/forge/gitlab/fake"
 )
@@ -345,6 +346,41 @@ func TestSetupConcurrentRunsSerialise(t *testing.T) {
 	}
 	if waited == 0 {
 		t.Log("no run had to wait (they happened not to overlap)")
+	}
+}
+
+// A repo whose default branch is develop has its baseline in develop/; warm
+// must find it there, not look for main/.
+func TestWarmShellsFindsTheBaselineOfANonMainDefaultBranch(t *testing.T) {
+	t.Setenv("GIT_AUTHOR_NAME", "t")
+	t.Setenv("GIT_AUTHOR_EMAIL", "t@example.invalid")
+	t.Setenv("GIT_COMMITTER_NAME", "t")
+	t.Setenv("GIT_COMMITTER_EMAIL", "t@example.invalid")
+	root := t.TempDir()
+	projectDir, repoDir := filepath.Join(root, "demo"), filepath.Join(root, "demo", "api")
+	seed := filepath.Join(t.TempDir(), "seed")
+	gitIn(t, filepath.Dir(seed), "init", "-q", "-b", "develop", seed)
+	gitIn(t, seed, "commit", "-q", "--allow-empty", "-m", "init")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bare := filepath.Join(repoDir, ".bare")
+	gitIn(t, repoDir, "clone", "-q", "--bare", seed, bare)
+	gitIn(t, bare, "worktree", "add", "-q", filepath.Join(repoDir, "develop"), "develop")
+	manifest := "name = \"demo\"\nforge = \"f\"\n[tracker]\nproject = \"g/tracker\"\n[repos.api]\npath = \"g/api\"\n"
+	snap := "source = \"test\"\nmanifest = '''\n" + manifest + "'''\n"
+	if err := os.WriteFile(filepath.Join(projectDir, ".project.toml"), []byte(snap), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Defaults()
+	a := &app.App{Config: &cfg, Root: root}
+
+	var res setupResult
+	var progress bytes.Buffer
+	warmShells(context.Background(), &progress, a, &res)
+	want := filepath.Join(repoDir, "develop")
+	if len(res.Warm) != 1 || res.Warm[0].Dir != want {
+		t.Fatalf("warm = %+v, want one entry for %s\n%s", res.Warm, want, progress.String())
 	}
 }
 

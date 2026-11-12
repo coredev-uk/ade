@@ -278,12 +278,16 @@ type Discussion struct {
 // Caps records which gated features this forge instance offers. Features are
 // probed, never inferred from a tier name.
 type Caps struct {
-	Iterations    bool      `json:"iterations"`
-	Cadences      bool      `json:"cadences"`
-	Weight        bool      `json:"weight"`
-	ApprovalRules bool      `json:"approval_rules"`
-	BlocksLinks   bool      `json:"blocks_links"`
-	Epics         bool      `json:"epics"`
+	Iterations    bool `json:"iterations"`
+	Cadences      bool `json:"cadences"`
+	Weight        bool `json:"weight"`
+	ApprovalRules bool `json:"approval_rules"`
+	BlocksLinks   bool `json:"blocks_links"`
+	Epics         bool `json:"epics"`
+	// UserNamespace: the tracker's namespace is a user, not a group. There
+	// are no group endpoints; milestones live on the project. Caps cached
+	// before this field existed decode as false, a group.
+	UserNamespace bool      `json:"user_namespace"`
 	ProbedAt      time.Time `json:"probed_at"`
 }
 
@@ -312,7 +316,10 @@ type MRQuery struct {
 type Forge interface {
 	Kind() string // gitlab | github
 	Me(ctx context.Context) (User, error)
-	Capabilities(ctx context.Context, group string) (Caps, error)
+	// Capabilities probes the tracker's namespace (group). project is the
+	// tracker project's full path and may be empty, as when bootstrap probes
+	// a group before a project is chosen.
+	Capabilities(ctx context.Context, group, project string) (Caps, error)
 	ListIssues(ctx context.Context, q IssueQuery) ([]Issue, error)
 	Issue(ctx context.Context, ref Ref) (Issue, error)
 	Links(ctx context.Context, ref Ref) ([]Link, error)

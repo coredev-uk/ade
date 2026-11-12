@@ -110,10 +110,10 @@ type harness struct {
 	m   *config.Manifest
 }
 
-func newHarness(t *testing.T, tier fake.Tier, src config.WeightSource) *harness {
+func newHarness(t *testing.T, tier fake.Tier, src config.WeightSource, opts ...fake.Option) *harness {
 	t.Helper()
 	clock := time.Date(2026, 11, 11, 9, 0, 0, 0, time.UTC)
-	srv := fake.New(tier, fake.WithClock(clock))
+	srv := fake.New(tier, append([]fake.Option{fake.WithClock(clock)}, opts...)...)
 	t.Cleanup(srv.Close)
 	log, err := audit.Open(t.TempDir(), "user")
 	if err != nil {
@@ -240,6 +240,30 @@ func TestPremiumWritesTheField(t *testing.T) {
 	es := h.auditEntries()
 	if len(es) != 2 || es[0].Params["mode"] != weight.ModeField || es[1].Params["to"] != "none" {
 		t.Errorf("audit = %+v", es)
+	}
+}
+
+// In a user namespace weight is read from the tracker project, so a licensed
+// account still writes the field and never falls back to labels.
+func TestUserNamespaceWritesTheWeightField(t *testing.T) {
+	h := newHarness(t, fake.Premium, config.WeightSource{Source: "auto"}, fake.WithUserNamespace())
+	ctx := context.Background()
+	tg := h.target(8)
+	if !tg.Caps.UserNamespace || !tg.Caps.Weight {
+		t.Fatalf("caps = %+v, want a user namespace that licenses weight", tg.Caps)
+	}
+	plans, err := tg.Plans(ptr(5), false)
+	if err != nil || plans[0].Mode != weight.ModeField || len(plans[0].Add) != 0 {
+		t.Fatalf("plan = %+v, %v", plans, err)
+	}
+	if _, err := weight.Apply(ctx, h.c, h.app, "demo", "", plans); err != nil {
+		t.Fatal(err)
+	}
+	if is, _ := h.c.Issue(ctx, iref(tracker, 8)); is.Weight == nil || *is.Weight != 5 {
+		t.Errorf("weight = %v, want 5", is.Weight)
+	}
+	if ls, _ := h.srv.IssueLabels(iref(tracker, 8)); slices.ContainsFunc(ls, func(l string) bool { return strings.HasPrefix(l, "weight::") }) {
+		t.Errorf("labels = %v, want no weight label", ls)
 	}
 }
 

@@ -22,6 +22,7 @@ import (
 	"github.com/coredev-uk/ade/internal/ledger"
 	"github.com/coredev-uk/ade/internal/project"
 	"github.com/coredev-uk/ade/internal/review"
+	"github.com/coredev-uk/ade/internal/workspace"
 )
 
 // ErrCancelled is returned when a run was cancelled (from this or another
@@ -109,7 +110,7 @@ func (m *Manager) New(ctx context.Context, req Request) (Run, ai.Preflight, erro
 	var prompt string
 	switch req.Kind {
 	case KindPlan:
-		prompt = PlanPrompt(t, req.Context)
+		prompt = PlanPrompt(m.withCommitPrefix(ctx, t), req.Context)
 	case KindAddress:
 		if t.MR == nil {
 			return Run{}, pf, errors.New("address comments needs the item's merge request: start work creates it")
@@ -117,7 +118,7 @@ func (m *Manager) New(ctx context.Context, req Request) (Run, ai.Preflight, erro
 		if len(req.Context.Threads) == 0 {
 			return Run{}, pf, fmt.Errorf("%s has no unresolved threads", t.MR)
 		}
-		prompt = AddressPrompt(t, req.Context)
+		prompt = AddressPrompt(m.withCommitPrefix(ctx, t), req.Context)
 	default:
 		return Run{}, pf, fmt.Errorf("unknown run kind %q", req.Kind)
 	}
@@ -156,7 +157,7 @@ func (m *Manager) New(ctx context.Context, req Request) (Run, ai.Preflight, erro
 	now := m.Now()
 	r := Run{
 		ID: newID(now, rand.Uint32()), Kind: req.Kind, State: StateQueued,
-		Forge: t.Forge, Project: t.Project, Tracker: t.Tracker, Repo: t.Repo,
+		Forge: t.Forge, Project: t.Project, Tracker: t.Tracker, Child: t.Child, Repo: t.Repo,
 		Worktree: t.Worktree, Branch: t.Branch, MR: t.MR, AddDirs: t.AddDirs,
 		Profile: name, Driver: drv.Name(), Model: model, CapUSD: capUSD,
 		Created: now, Updated: now,
@@ -199,7 +200,18 @@ func priceOf(p config.AIProfile, model string) *config.Price {
 
 // target rebuilds the Target from a stored run.
 func (r Run) target() Target {
-	return Target{Forge: r.Forge, Project: r.Project, Tracker: r.Tracker, Repo: r.Repo, Worktree: r.Worktree, Branch: r.Branch, MR: r.MR, AddDirs: r.AddDirs}
+	return Target{Forge: r.Forge, Project: r.Project, Tracker: r.Tracker, Child: r.Child, Repo: r.Repo, Worktree: r.Worktree, Branch: r.Branch, MR: r.MR, AddDirs: r.AddDirs}
+}
+
+// targetOf is the run's Target with the commit prefix for its prompt.
+func (m *Manager) targetOf(ctx context.Context, r Run) Target {
+	return m.withCommitPrefix(ctx, r.target())
+}
+
+// withCommitPrefix sets t.CommitPrefix the way a commit will get it.
+func (m *Manager) withCommitPrefix(ctx context.Context, t Target) Target {
+	t.CommitPrefix, t.PrefixKnown = m.commitPrefix(ctx, Run{Project: t.Project, Tracker: t.Tracker, Child: t.Child, Worktree: t.Worktree})
+	return t
 }
 
 // Plan runs the read-only planning call: queued (or awaiting approval, for a
@@ -219,7 +231,7 @@ func (m *Manager) Plan(ctx context.Context, id string) (Run, error) {
 	if err != nil {
 		return m.fail(r, fmt.Errorf("read context: %w", err))
 	}
-	res, err := m.call(ctx, &r, KindPlan, PlanPrompt(r.target(), c))
+	res, err := m.call(ctx, &r, KindPlan, PlanPrompt(m.targetOf(ctx, r), c))
 	if err != nil {
 		return m.settle(r, err)
 	}
@@ -303,7 +315,7 @@ func (m *Manager) Implement(ctx context.Context, id string) (Run, error) {
 	if err != nil {
 		return m.fail(r, fmt.Errorf("read context: %w", err))
 	}
-	res, err := m.call(ctx, &r, KindRun, RunPrompt(r.target(), c, string(b)))
+	res, err := m.call(ctx, &r, KindRun, RunPrompt(m.targetOf(ctx, r), c, string(b)))
 	if err != nil {
 		return m.settle(r, err)
 	}
@@ -334,7 +346,7 @@ func (m *Manager) Address(ctx context.Context, id string) (Run, error) {
 	if err != nil {
 		return m.fail(r, fmt.Errorf("read context: %w", err))
 	}
-	res, err := m.call(ctx, &r, KindAddress, AddressPrompt(r.target(), c))
+	res, err := m.call(ctx, &r, KindAddress, AddressPrompt(m.targetOf(ctx, r), c))
 	if err != nil {
 		return m.settle(r, err)
 	}
@@ -494,7 +506,8 @@ func (m *Manager) Push(ctx context.Context, id string, o PushOpts) (Run, error) 
 	}
 	// Only the MR's first commit carries the prefix.
 	if commitprefix.FirstCommit(ctx, r.Worktree) {
-		msg = commitmsg.Apply(m.commitPrefix(ctx, r), msg)
+		prefix, _ := m.commitPrefix(ctx, r)
+		msg = commitmsg.Apply(prefix, msg)
 	}
 	author := AuthorFromGit(ctx, r.Worktree)
 	sha, err := commitAll(ctx, r.Worktree, author, msg)
@@ -535,23 +548,37 @@ func (m *Manager) Push(ctx context.Context, id string, o PushOpts) (Run, error) 
 
 // commitPrefix is the commit prefix of the run's item: the worktree's git
 // config first (written at start work and workspace open), else the project
-// manifest's template expanded for the run's tracker issue. "" when none.
-func (m *Manager) commitPrefix(ctx context.Context, r Run) string {
+// manifest's template expanded for the run's issues. known is false when that
+// cannot be told (no readable manifest, an invalid template, or a {child}
+// template without the child), so a prompt does not claim there is none.
+func (m *Manager) commitPrefix(ctx context.Context, r Run) (prefix string, known bool) {
 	if p := commitprefix.Read(ctx, r.Worktree); p != "" {
-		return p
+		return p, true
 	}
 	if m.Cfg == nil || r.Project == "" {
-		return ""
+		return "", false
 	}
 	root, err := m.Cfg.RootDir()
 	if err != nil {
-		return ""
+		return "", false
 	}
 	mf, err := project.LoadManifest(filepath.Join(root, r.Project))
 	if err != nil {
-		return ""
+		return "", false
 	}
-	return commitprefix.ForIssues(mf, r.Tracker.IID, 0)
+	tmpl := mf.Conventions.CommitPrefix
+	if tmpl == "" {
+		return "", true
+	}
+	child := 0
+	if r.Child != nil {
+		child = r.Child.IID
+	}
+	if child == 0 && strings.Contains(tmpl, commitmsg.PlaceholderChild) {
+		return "", false
+	}
+	prefix = commitprefix.ForIssues(mf, r.Tracker.IID, child)
+	return prefix, prefix != ""
 }
 
 func (m *Manager) commitMessage(r Run) string {
@@ -760,6 +787,7 @@ func (m *Manager) call(ctx context.Context, r *Run, kind Kind, prompt string) (c
 	})
 
 	cmd := drv.Command(spec)
+	cmd.Env = append(cmd.Env, workspace.AgentRunEnv+"=1") // only the child: ADE's own push stays unmarked
 	hooks := procHooks{
 		transcript: tf, capUSD: r.CapUSD, spentBefore: spentBefore,
 		onStart: func(pid int) { r.PID = pid; m.saveLive(r) },

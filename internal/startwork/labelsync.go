@@ -51,7 +51,7 @@ func (mv Move) String() string {
 // It is pure: callers apply the moves (auto) or offer them (ask).
 func LabelMoves(prev, cur []domain.WorkItem, m *config.Manifest) []Move {
 	wf := m.Labels.Workflow
-	if wf.Sync == "off" || wf.Pattern == "" {
+	if wf.SyncMode() == "off" || wf.Pattern == "" {
 		return nil
 	}
 	before := make(map[forge.Ref]domain.Stage, len(prev))
@@ -95,35 +95,43 @@ func LabelMoves(prev, cur []domain.WorkItem, m *config.Manifest) []Move {
 // Outcome is what SyncWorkflow did.
 type Outcome struct {
 	Applied []Move `json:"applied,omitempty"`
-	// Pending are moves waiting for confirmation (sync = "ask"); apply them
-	// with ApplyMoves once the user agrees.
+	// Pending are moves left alone because sync is "ask" (the default); they
+	// are reported to the user, and ApplyMoves writes them if a caller agrees.
 	Pending []Move  `json:"pending,omitempty"`
 	Errs    []error `json:"-"`
 }
 
 // SyncWorkflow is the hook forgesync calls after a project sync: it derives
 // the moves between the previous and the new items and, per
-// labels.workflow.sync, applies them ("auto"), raises a pending event ("ask")
-// or does nothing ("off"). Every applied move is audited; failures are
-// returned in Outcome.Errs, never fatal to the sync.
+// labels.workflow.sync, applies them ("auto"), raises a pending event ("ask",
+// also when unset) or does nothing ("off"). Every applied move is audited;
+// failures are returned in Outcome.Errs, never fatal to the sync.
 func SyncWorkflow(ctx context.Context, w forge.IssueWriter, a *app.App, m *config.Manifest, prev, cur []domain.WorkItem) Outcome {
 	moves := LabelMoves(prev, cur, m)
 	var out Outcome
 	if len(moves) == 0 {
 		return out
 	}
-	if m.Labels.Workflow.Sync == "ask" {
+	if m.Labels.Workflow.SyncMode() == "ask" {
 		out.Pending = moves
 		for _, mv := range moves {
-			ev := events.New("workflow.move.pending", events.Info, mv.String())
+			ev := events.New("workflow.move.pending", events.Info, mv.String()+" (not moved)")
 			ev.Project, ev.Subject = m.Name, mv.Ref.String()
-			ev.Detail = "labels.workflow.sync = ask: confirm to move the label"
+			ev.Detail = PendingAdvice(mv, m.Labels)
 			a.Bus.Publish(ev)
 		}
 		return out
 	}
 	out.Applied, out.Errs = ApplyMoves(ctx, w, a, m.Name, "ade:sync", moves)
 	return out
+}
+
+// PendingAdvice says why a move was left alone and how to make it: nothing
+// applies a pending move later, so the label is set on the board by hand, or
+// the manifest switches to "auto".
+func PendingAdvice(mv Move, labels config.Labels) string {
+	return fmt.Sprintf("labels.workflow.sync is %q: set %s on %s on the board, or set sync = \"auto\" in the manifest to move labels on sync",
+		labels.Workflow.SyncMode(), domain.WorkflowLabel(mv.To, labels), mv.Ref)
 }
 
 // ApplyMoves writes the moves, one audited update each, and publishes an event

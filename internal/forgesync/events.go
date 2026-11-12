@@ -107,8 +107,9 @@ func mergedMRs(old, cur Result) []mergedMR {
 // commands; ade gc applies them to every such worktree at once.
 func removableEvents(ctx context.Context, ps *project.Service, name string, merged []mergedMR) []events.Event {
 	var out []events.Event
+	fetch := ps.NewFetcher()
 	for _, m := range merged {
-		t, ok, err := ps.TreeOf(ctx, name, m.mr)
+		t, ok, err := ps.TreeOf(ctx, name, m.mr, fetch)
 		if err != nil || !ok || !t.Removable() {
 			continue
 		}

@@ -50,7 +50,7 @@ func (p *pipeline) run(ctx context.Context, res *Result) error {
 	if err != nil {
 		return fmt.Errorf("capabilities: %w", err)
 	}
-	sprints, err := p.loadSprints(ctx)
+	sprints, err := p.loadSprints(ctx, caps)
 	if err != nil {
 		return fmt.Errorf("sprints: %w", err)
 	}
@@ -84,9 +84,8 @@ func (p *pipeline) me(ctx context.Context) (forge.User, error) {
 
 func (p *pipeline) caps(ctx context.Context) (forge.Caps, error) {
 	group := forge.Group(p.m.Tracker.Project)
-	key := startwork.CapsKey(p.forgeName, group)
-	return store.Cached(p.st, key, startwork.CacheTTL, p.now, func() (forge.Caps, error) {
-		return p.f.Capabilities(ctx, group)
+	return startwork.CachedCapsIn(p.st, p.forgeName, group, p.now, func() (forge.Caps, error) {
+		return p.f.Capabilities(ctx, group, p.m.Tracker.Project)
 	})
 }
 
@@ -145,9 +144,19 @@ func (p *pipeline) work(ctx context.Context, me forge.User, sprints []domain.Spr
 
 // --- sprints ----------------------------------------------------------------
 
-func (p *pipeline) loadSprints(ctx context.Context) ([]domain.Sprint, error) {
+func (p *pipeline) loadSprints(ctx context.Context, caps forge.Caps) ([]domain.Sprint, error) {
 	it := p.m.Tracker.Iterations
 	group := forge.Group(p.m.Tracker.Project)
+	if caps.UserNamespace {
+		// Iterations belong to groups: a user namespace has milestones only,
+		// on the tracker project.
+		switch it.Source {
+		case "", "auto", srcMilestones:
+			return p.milestones(ctx, p.m.Tracker.Project)
+		case srcIterations, "cadence":
+			return nil, fmt.Errorf("iterations source %q needs a group: %s is a user namespace, use milestones", it.Source, group)
+		}
+	}
 	switch it.Source {
 	case "", "auto":
 		sp, err := p.iterations(ctx, group)
@@ -174,11 +183,11 @@ func (p *pipeline) iterations(ctx context.Context, group string) ([]domain.Sprin
 	return domain.SprintsFromIterations(its, cadence), nil
 }
 
-func (p *pipeline) milestones(ctx context.Context, group string) ([]domain.Sprint, error) {
+func (p *pipeline) milestones(ctx context.Context, groupOrProject string) ([]domain.Sprint, error) {
 	if p.f.Kind() == "github" {
-		group = p.m.Tracker.Project // GitHub milestones belong to one repository, the tracker
+		groupOrProject = p.m.Tracker.Project // GitHub milestones belong to one repository, the tracker
 	}
-	ms, err := p.f.Milestones(ctx, group)
+	ms, err := p.f.Milestones(ctx, groupOrProject)
 	if err != nil {
 		return nil, err
 	}

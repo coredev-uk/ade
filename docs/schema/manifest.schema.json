@@ -118,7 +118,8 @@
               "type": "object"
             },
             "sync": {
-              "description": "Whether ADE moves the workflow label when the derived stage changes.",
+              "default": "ask",
+              "description": "Whether ADE moves the workflow label when the derived stage changes: auto moves it, ask moves it only when you confirm (ade start --move-label, or the start dialog) and lists background moves as pending, off never moves it (default ask).",
               "enum": [
                 "auto",
                 "ask",

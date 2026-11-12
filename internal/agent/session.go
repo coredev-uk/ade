@@ -3,18 +3,19 @@ package agent
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/coredev-uk/ade/internal/ai"
 	"github.com/coredev-uk/ade/internal/app"
+	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/git"
 	"github.com/coredev-uk/ade/internal/project"
 	"github.com/coredev-uk/ade/internal/records"
 	"github.com/coredev-uk/ade/internal/review"
 	"github.com/coredev-uk/ade/internal/startwork"
+	"github.com/coredev-uk/ade/internal/workspace"
 )
 
 // ForApp wires a Manager to the app: cache.db for the index and drafts, the
@@ -74,14 +75,21 @@ func ResolveTarget(ctx context.Context, a *app.App, open startwork.OpenFunc, ref
 		mr := f.MR.Ref
 		t.MR = &mr
 	}
-	for _, req := range required {
-		if w := found[req].Worktree; w != "" {
-			t.AddDirs = append(t.AddDirs, w)
-		} else if main := filepath.Join(a.Root, r.Project, req, "main"); dirExists(main) {
-			t.AddDirs = append(t.AddDirs, main)
-		}
-	}
+	t.AddDirs = requiredDirs(ctx, filepath.Join(a.Root, r.Project), r.Manifest, required, found)
 	return t, r.Forge, nil
 }
 
-func dirExists(p string) bool { st, err := os.Stat(p); return err == nil && st.IsDir() }
+// requiredDirs are the trees of the required repos: the item's own worktree
+// where it has one, else the repo's baseline tree. A repo with neither is left
+// out.
+func requiredDirs(ctx context.Context, projectDir string, m *config.Manifest, required []string, found map[string]startwork.Found) []string {
+	var dirs []string
+	for _, req := range required {
+		if w := found[req].Worktree; w != "" {
+			dirs = append(dirs, w)
+		} else if base, err := workspace.BaselineDir(ctx, projectDir, m, req); err == nil {
+			dirs = append(dirs, base)
+		}
+	}
+	return dirs
+}
