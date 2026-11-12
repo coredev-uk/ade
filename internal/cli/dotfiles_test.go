@@ -205,3 +205,39 @@ func TestDotfilesCommandDryRunWritesNothingAndDoctorWarns(t *testing.T) {
 		t.Error("an unknown project must be an error")
 	}
 }
+
+func TestDotfilesStatusAgreesWithDoctorWhenTheRepoChanged(t *testing.T) {
+	e := newInitEnv(t)
+	e.setupEnvVars()
+	e.addDotfiles(dotfilesRepo(t, "#!/bin/sh\ntrue\n"), "")
+	if _, p, err := e.setup(); err != nil {
+		t.Fatalf("setup: %v\n%s", err, p)
+	}
+	if out, err := e.dotfilesCmd("status"); err != nil || !strings.Contains(out, "applied ") || strings.Contains(out, "never") {
+		t.Fatalf("status after setup: %v\n%s", err, out)
+	}
+
+	// The user points the project at another repo: what was applied is of the old one.
+	other := dotfilesRepo(t, "#!/bin/sh\ntrue\n")
+	f, err := os.OpenFile(e.configPath(), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.WriteString("\n[dotfiles]\nrepo = \"" + other + "\"\n") //nolint:errcheck
+	f.Close()                                                 //nolint:errcheck
+	if out, err := e.dotfilesCmd("status"); err != nil || !strings.Contains(out, "never applied") {
+		t.Errorf("status after the repo changed: %v\n%s", err, out)
+	}
+}
+
+func TestInstallScriptDoesNotGetForgeTokens(t *testing.T) {
+	e := newInitEnv(t)
+	e.setupEnvVars()
+	e.addDotfiles(dotfilesRepo(t, "#!/bin/sh\nprintf '%s' \"${"+initToken+"-unset}\" > \"$HOME/seen-token\"\n"), "")
+	if _, p, err := e.setup(); err != nil {
+		t.Fatalf("setup: %v\n%s", err, p)
+	}
+	if got, _ := os.ReadFile(filepath.Join(e.home, "seen-token")); string(got) != "unset" {
+		t.Errorf("script saw the forge token variable: %q", got)
+	}
+}

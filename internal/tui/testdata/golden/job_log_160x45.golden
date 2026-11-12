@@ -42,4 +42,4 @@ src/audit/pager.ts:3 no-unused-vars
 
 
 
-j/k scroll   pgup/pgdn page   g/G ends   h/l side   / search   n/N match   esc close
+esc close   j/k scroll   pgup/pgdn page   g/G ends   h/l side   / search   n/N match

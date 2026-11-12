@@ -30,7 +30,7 @@ func (m model) agileHeaderLeft() string {
 func (m model) agileFooter(w int) string {
 	narrow := w < narrowW
 	var proj []string
-	if len(m.results) > 1 {
+	if len(m.sprintProjects()) > 1 {
 		proj = []string{"p", "project"} // the review opens on one project; this picks another
 	}
 	switch {
@@ -42,7 +42,8 @@ func (m model) agileFooter(w int) string {
 		kv := append([]string{"j/k", "scroll", "[ ]", "sprint", "m", "mine", "J/K", "item", ">", "move", "M", "move mine"}, proj...)
 		return " " + keys(append(kv, "esc", "back", "?", "keys")...)
 	}
-	return " " + keys("j/k", "scroll", "[ ]", "sprint", "m", "mine: "+onOff(m.ag.mine), "J/K", "carried item", ">", "move to next sprint", "M", "move mine", "p", "project", "r", "reload", "n", "AI narrative", "y", "copy", "esc", "back", "?", "keys", "q", "quit")
+	kv := append([]string{"j/k", "scroll", "[ ]", "sprint", "m", "mine: " + onOff(m.ag.mine), "J/K", "carried item", ">", "move to next sprint", "M", "move mine"}, proj...)
+	return " " + keys(append(kv, "r", "reload", "n", "AI narrative", "y", "copy", "esc", "back", "?", "keys", "q", "quit")...)
 }
 
 func onOff(b bool) string {

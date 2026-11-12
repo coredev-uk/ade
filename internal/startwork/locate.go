@@ -25,23 +25,41 @@ type Located struct {
 	Parent *forge.Issue
 }
 
+// ErrForgeUndefined means a manifest names a forge the user config lacks.
+var ErrForgeUndefined = errors.New("is not defined in the user config")
+
+// ServingManifest returns the manifest of the project named preferred when it
+// serves path, else the first registered one that does (see project.Serving).
+// Two manifests can both list a repo; the item's own project decides which
+// labels and forge apply. preferred "" takes the first.
+func ServingManifest(ctx context.Context, a *app.App, preferred, path string) (*config.Manifest, error) {
+	if preferred != "" {
+		for _, pr := range a.Config.Projects {
+			if m, err := project.CachedManifest(ctx, a, pr); err == nil && m.Name == preferred && project.Serves(m, path) {
+				return m, nil
+			}
+		}
+	}
+	return project.Serving(ctx, a, project.CachedManifest, path)
+}
+
 // Locate finds the registered project whose tracker or repos hold the issue
-// ref and reads it. Manifests that fail to load are skipped (see
-// project.Serving). open nil uses OpenForge.
-func Locate(ctx context.Context, a *app.App, open OpenFunc, ref forge.Ref) (*Located, error) {
+// ref (the one named preferred first, see ServingManifest) and reads it.
+// Manifests that fail to load are skipped. open nil uses OpenForge.
+func Locate(ctx context.Context, a *app.App, open OpenFunc, preferred string, ref forge.Ref) (*Located, error) {
 	if open == nil {
 		open = OpenForge
 	}
 	if ref.Kind != forge.KindIssue {
 		return nil, fmt.Errorf("%s is a merge request: want an issue", ref)
 	}
-	m, err := project.Serving(ctx, a, project.CachedManifest, ref.Project)
+	m, err := ServingManifest(ctx, a, preferred, ref.Project)
 	if err != nil {
 		return nil, err
 	}
 	fc, ok := a.Config.Forges[m.Forge]
 	if !ok {
-		return nil, fmt.Errorf("forge %q is not defined in the user config", m.Forge)
+		return nil, fmt.Errorf("forge %q %w", m.Forge, ErrForgeUndefined)
 	}
 	f, err := open(ctx, m.Forge, fc)
 	if err != nil {

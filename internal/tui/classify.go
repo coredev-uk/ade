@@ -15,6 +15,7 @@ import (
 	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/domain"
 	"github.com/coredev-uk/ade/internal/forge"
+	"github.com/coredev-uk/ade/internal/project"
 	"github.com/coredev-uk/ade/internal/startwork"
 	"github.com/coredev-uk/ade/internal/weight"
 )
@@ -42,8 +43,9 @@ type clLabel struct {
 }
 
 type classifyDialog struct {
-	ref   forge.Ref
-	stage clStage
+	ref     forge.Ref
+	project string // ADE project of the item: its manifest is preferred when locating
+	stage   clStage
 
 	res *startwork.Located
 	in  ai.ClassifyInput
@@ -85,7 +87,7 @@ func (m model) openClassify() (model, tea.Cmd) {
 		return m, nil
 	}
 	it := m.homeRows[m.homeSel].item
-	d := &classifyDialog{ref: it.Ref, stage: clResolving}
+	d := &classifyDialog{ref: it.Ref, project: it.Project, stage: clResolving}
 	m.cl = d
 	ctx, a, sync, results := m.ctx, m.app, m.sync, m.results
 	return m, func() tea.Msg {
@@ -103,7 +105,7 @@ func (m model) openClassify() (model, tea.Cmd) {
 			}
 			return w, nil
 		}
-		res, err := startwork.Locate(ctx, a, open, d.ref)
+		res, err := startwork.Locate(ctx, a, open, d.project, d.ref)
 		if err != nil {
 			return clResolvedMsg{d: d, err: err}
 		}
@@ -222,7 +224,7 @@ func (m model) classifyKey(ks string) (model, tea.Cmd) {
 			}
 			ref, title := d.ref, d.res.Issue.Title
 			m.cl = nil
-			return m.openWeightFor(ref, title, d.cr.Suggestion.Weight, d.cr.Suggestion.WeightReason)
+			return m.openWeightFor(d.project, ref, title, d.cr.Suggestion.Weight, d.cr.Suggestion.WeightReason)
 		case "enter", "y":
 			var add []string
 			for _, l := range d.labels {
@@ -347,11 +349,20 @@ func (m model) classifyOverlay(w, h int) string {
 func classifyFailure(d *classifyDialog) string {
 	switch d.failedAt {
 	case clResolving:
-		return "could not read the issue: " + oneLine(d.err.Error()) + " · check the connection and press c again"
+		return "could not read the issue: " + oneLine(d.err.Error()) + " · " + readFailureFix(d.err, "c")
 	case clApplying:
 		return "the labels were not added · try again, or add them on the forge"
 	}
 	return ai.Human(d.err)
+}
+
+// readFailureFix is what to do about a failed read: a registration or config
+// error needs a fix first, anything else is worth another try on key.
+func readFailureFix(err error, key string) string {
+	if errors.Is(err, project.ErrNoProjects) || errors.Is(err, project.ErrNotServed) || errors.Is(err, startwork.ErrForgeUndefined) {
+		return "see `ade project list` and `ade config check`"
+	}
+	return "check the connection and press " + key + " again"
 }
 
 // auditClassifyFailure records a classify attempt that failed before any AI

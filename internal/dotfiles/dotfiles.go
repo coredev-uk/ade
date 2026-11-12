@@ -13,10 +13,14 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/coredev-uk/ade/internal/config"
@@ -104,6 +108,9 @@ type Applier struct {
 	Home    string // where dotfiles are symlinked
 	Root    string // projects root, handed to install scripts as ADE_ROOT
 	DryRun  bool   // report what would happen, write nothing
+	// DropEnv names environment variables the install script does not get:
+	// the forge token variables, which the script has no use for.
+	DropEnv []string
 	Getenv  func(string) string
 	Git     func(ctx context.Context, forge, rawURL string) (git.Client, error)
 	Now     func() time.Time
@@ -131,17 +138,42 @@ func (a Applier) now() time.Time {
 func CoderDir(home string) string { return filepath.Join(home, ".config", "coderv2", "dotfiles") }
 
 // CoderApplied reports whether this is a Coder workspace whose own dotfiles
-// step already applied repo: its clone's origin is the same URL.
+// step already applied repo: its clone's origin is the same URL. Without an
+// absolute home the clone cannot be found.
 func CoderApplied(ctx context.Context, getenv func(string) string, home, repo string) bool {
-	if getenv("CODER") != "true" {
+	if getenv("CODER") != "true" || !filepath.IsAbs(home) {
 		return false
 	}
 	origin, err := (git.Client{}).RemoteURL(ctx, CoderDir(home))
 	return err == nil && sameURL(origin, repo)
 }
 
-func sameURL(a, b string) bool {
-	return strings.TrimSuffix(strings.TrimSpace(a), "/") == strings.TrimSuffix(strings.TrimSpace(b), "/")
+// sameURL reports whether a and b name the same repository: the scheme (ssh
+// or https), user, port, case of the host, a trailing .git and slashes do not
+// matter.
+func sameURL(a, b string) bool { return repoKey(a) == repoKey(b) }
+
+// repoKey reduces a git URL (https://, ssh://, scp-like user@host:path or a
+// local path) to host/path.
+func repoKey(raw string) string {
+	raw = strings.TrimSpace(raw)
+	host, path := "", raw
+	if u, err := url.Parse(raw); err == nil && u.Scheme != "" && u.Host != "" {
+		host, path = strings.ToLower(u.Hostname()), u.Path
+	} else if before, after, ok := strings.Cut(raw, ":"); ok && !strings.Contains(before, "/") {
+		// scp-like: [user@]host:path
+		if _, h, found := strings.Cut(before, "@"); found {
+			before = h
+		}
+		host, path = strings.ToLower(before), after
+	}
+	path = strings.TrimRight(path, "/")
+	path = strings.TrimSuffix(path, ".git")
+	path = strings.TrimRight(path, "/")
+	if host == "" {
+		return path
+	}
+	return host + "/" + strings.TrimLeft(path, "/")
 }
 
 // Apply clones or updates the project's dotfiles and runs the install script
@@ -278,29 +310,56 @@ func (a Applier) clone(ctx context.Context, c git.Client, s Spec, dir string) er
 	return err
 }
 
+// pull brings the clone to origin's branch: the configured one, else origin's
+// default. The clone is ADE-managed, so when it cannot fast-forward (the
+// remote was force-pushed, a script changed it) it is reset to origin.
 func (a Applier) pull(ctx context.Context, c git.Client, dir, branch string) error {
-	if branch != "" {
-		cur, err := c.Run(ctx, dir, "branch", "--show-current")
-		if err != nil {
-			return err
-		}
-		if strings.TrimSpace(cur) != branch {
-			if _, err := c.Run(ctx, dir, "fetch", "origin"); err != nil {
-				return err
-			}
-			if _, err := c.Run(ctx, dir, "checkout", branch); err != nil {
-				return err
-			}
-		}
+	if _, err := c.Run(ctx, dir, "fetch", "--quiet", "origin"); err != nil {
+		return err
 	}
-	_, err := c.Run(ctx, dir, "pull", "--ff-only", "--quiet")
-	return err
+	cur, err := c.Run(ctx, dir, "branch", "--show-current")
+	if err != nil {
+		return err
+	}
+	cur = strings.TrimSpace(cur)
+	if branch == "" {
+		branch = defaultBranch(ctx, c, dir, cur)
+	}
+	if branch == "" {
+		return errors.New("the clone is not on a branch and origin names no default branch: set dotfiles.branch")
+	}
+	remote := "origin/" + branch
+	if cur != branch {
+		_, err := c.Run(ctx, dir, "checkout", "--force", "-B", branch, remote)
+		return err
+	}
+	if _, err := c.Run(ctx, dir, "merge", "--ff-only", "--quiet", remote); err != nil {
+		_, err = c.Run(ctx, dir, "reset", "--hard", "--quiet", remote)
+		return err
+	}
+	return nil
+}
+
+// defaultBranch is origin's default branch, or fallback when origin does not
+// say.
+func defaultBranch(ctx context.Context, c git.Client, dir, fallback string) string {
+	if _, err := c.Run(ctx, dir, "remote", "set-head", "origin", "--auto"); err != nil {
+		return fallback
+	}
+	ref, err := c.Run(ctx, dir, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+	if name := strings.TrimPrefix(strings.TrimSpace(ref), "origin/"); err == nil && name != "" {
+		return name
+	}
+	return fallback
 }
 
 // findScript returns the install script (relative to dir) to run: install if
 // set, else the first of installScripts that exists. "" means none.
 func findScript(dir, install string) (string, error) {
 	if install != "" {
+		if !filepath.IsLocal(install) {
+			return "", fmt.Errorf("install script %s must be a path inside the dotfiles repo", install)
+		}
 		if fi, err := os.Stat(filepath.Join(dir, install)); err != nil || fi.IsDir() {
 			return "", fmt.Errorf("install script %s is not in the dotfiles repo", install)
 		}
@@ -314,6 +373,22 @@ func findScript(dir, install string) (string, error) {
 	return "", nil
 }
 
+// scriptWaitDelay is how long output is read after the script itself has
+// exited, for a daemon it started that keeps stdout open.
+var scriptWaitDelay = 5 * time.Second
+
+// scriptEnv is the environment of the install script: ours, without DropEnv.
+func (a Applier) scriptEnv() []string {
+	env := os.Environ()
+	if len(a.DropEnv) == 0 {
+		return env
+	}
+	return slices.DeleteFunc(env, func(kv string) bool {
+		name, _, _ := strings.Cut(kv, "=")
+		return slices.Contains(a.DropEnv, name)
+	})
+}
+
 // runScript runs the script in the clone: directly when it is executable,
 // through sh when not.
 func (a Applier) runScript(ctx context.Context, s Spec, dir, script string) error {
@@ -323,14 +398,20 @@ func (a Applier) runScript(ctx context.Context, s Spec, dir, script string) erro
 		cmd = exec.CommandContext(ctx, "sh", path)
 	}
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "ADE_PROJECT="+s.Project, "ADE_ROOT="+a.Root, "ADE_DOTFILES_DIR="+dir)
+	cmd.Env = append(a.scriptEnv(), "ADE_PROJECT="+s.Project, "ADE_ROOT="+a.Root, "ADE_DOTFILES_DIR="+dir)
+	// Its own process group, killed whole on timeout or cancel, so a script's
+	// background children cannot outlive it holding the output pipes open.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = scriptWaitDelay
 	var tail bytes.Buffer
 	var w io.Writer = &tail
 	if a.Out != nil {
 		w = io.MultiWriter(a.Out, &tail)
 	}
 	cmd.Stdout, cmd.Stderr = w, w
-	if err := cmd.Run(); err != nil {
+	// A script that exits 0 but leaves a daemon holding the pipes is a success.
+	if err := cmd.Run(); err != nil && (!errors.Is(err, exec.ErrWaitDelay) || ctx.Err() != nil) {
 		if ctx.Err() != nil {
 			err = ctx.Err()
 		}
@@ -354,8 +435,12 @@ func isDotfile(name string) bool {
 
 // symlinkAll links each dotfile of dir into Home and returns how many it
 // linked or relinked. An existing file or directory is moved to <name>.bak
-// first, an existing symlink is replaced, a link already in place is left.
+// first (<name>.bak.1, ... when that is taken, so no backup is overwritten),
+// an existing symlink is replaced, a link already in place is left.
 func (a Applier) symlinkAll(dir string) (int, error) {
+	if !filepath.IsAbs(a.Home) {
+		return 0, fmt.Errorf("cannot symlink dotfiles: the home directory is %q, not an absolute path (is HOME set?)", a.Home)
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return 0, err
@@ -375,7 +460,10 @@ func (a Applier) symlinkAll(dir string) (int, error) {
 			}
 			err = os.Remove(to)
 		case err == nil:
-			err = os.Rename(to, to+".bak")
+			var backup string
+			if backup, err = freeBackup(to); err == nil {
+				err = os.Rename(to, backup)
+			}
 		case errors.Is(err, fs.ErrNotExist):
 			err = nil
 		}
@@ -389,6 +477,21 @@ func (a Applier) symlinkAll(dir string) (int, error) {
 		n++
 	}
 	return n, errors.Join(errs...)
+}
+
+// freeBackup returns the first of path.bak, path.bak.1, ... that does not exist.
+func freeBackup(path string) (string, error) {
+	for i := 0; ; i++ {
+		name := path + ".bak"
+		if i > 0 {
+			name += "." + strconv.Itoa(i)
+		}
+		if _, err := os.Lstat(name); errors.Is(err, fs.ErrNotExist) {
+			return name, nil
+		} else if err != nil {
+			return "", err
+		}
+	}
 }
 
 // State is the record of the last successful apply of a project's dotfiles.

@@ -236,13 +236,58 @@ func TestBranchIsCheckedOutOnCloneAndPull(t *testing.T) {
 	if got := gitIn(t, dir, "branch", "--show-current"); got != "team" {
 		t.Errorf("cloned branch %q", got)
 	}
-	// Dropping the branch from the manifest leaves the clone where it is; naming
-	// main moves it back.
+	// Naming another branch moves the clone to it.
 	if res := e.apply(repo, func(s *Spec) { s.Branch = "main" }); res.Status != StatusOK {
 		t.Fatalf("pull: %+v", res)
 	}
 	if got := gitIn(t, dir, "branch", "--show-current"); got != "main" {
 		t.Errorf("branch after pull %q", got)
+	}
+}
+
+func TestDroppingTheBranchReturnsToTheDefaultBranch(t *testing.T) {
+	e := newEnv(t)
+	repo := srcRepo(t, map[string]string{"A": "main"})
+	gitIn(t, repo, "checkout", "-q", "-b", "team")
+	writeFiles(t, repo, map[string]string{"B": "team"})
+	commitAll(t, repo)
+	gitIn(t, repo, "checkout", "-q", "main")
+	dir := Dir(e.data, "acme")
+
+	if res := e.apply(repo, func(s *Spec) { s.Branch = "team" }); res.Status != StatusOK {
+		t.Fatalf("clone: %+v", res)
+	}
+	if res := e.apply(repo); res.Status != StatusOK {
+		t.Fatalf("pull: %+v", res)
+	}
+	if got := gitIn(t, dir, "branch", "--show-current"); got != "main" {
+		t.Errorf("branch after dropping the setting %q, want the default", got)
+	}
+}
+
+func TestPullResetsAFlattenedHistoryAndLocalChanges(t *testing.T) {
+	e := newEnv(t)
+	repo := srcRepo(t, map[string]string{"VERSION": "one", "OTHER": "x"})
+	if res := e.apply(repo, func(s *Spec) { s.Symlink = false }); res.Status != StatusOK {
+		t.Fatalf("first: %+v", res)
+	}
+	dir := Dir(e.data, "acme")
+
+	// A script edited the clone, and the remote rewrote its history.
+	writeFiles(t, dir, map[string]string{"VERSION": "local edit"})
+	writeFiles(t, repo, map[string]string{"VERSION": "two"})
+	gitIn(t, repo, "add", "-A")
+	gitIn(t, repo, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--amend", "-m", "rewritten")
+
+	res := e.apply(repo, func(s *Spec) { s.Symlink = false })
+	if res.Status != StatusOK || res.Method != MethodPull {
+		t.Fatalf("second: %+v", res)
+	}
+	if got, _ := os.ReadFile(filepath.Join(dir, "VERSION")); string(got) != "two" {
+		t.Errorf("VERSION = %q, want the remote's", got)
+	}
+	if want := gitIn(t, repo, "rev-parse", "HEAD"); res.Commit != want {
+		t.Errorf("commit = %q, want %q", res.Commit, want)
 	}
 }
 
@@ -414,5 +459,164 @@ func TestResolveAppliesUserOverrides(t *testing.T) {
 				t.Errorf("got %+v, %v; want %+v, %v", got, ok, tt.want, tt.ok)
 			}
 		})
+	}
+}
+
+func TestSymlinkNeedsAnAbsoluteHome(t *testing.T) {
+	e := newEnv(t)
+	work := t.TempDir()
+	t.Chdir(work)
+	writeFiles(t, work, map[string]string{".bashrc": "mine"})
+	e.app.Home = ""
+	repo := srcRepo(t, map[string]string{".bashrc": "team"})
+	res := e.apply(repo)
+	if !res.Failed() || !strings.Contains(res.Error, "home directory") {
+		t.Fatalf("result = %+v", res)
+	}
+	if got, _ := os.ReadFile(filepath.Join(work, ".bashrc")); string(got) != "mine" {
+		t.Errorf(".bashrc in the working directory = %q: it must be left alone", got)
+	}
+	if _, err := os.Lstat(filepath.Join(work, ".bashrc.bak")); err == nil {
+		t.Error("nothing may be moved aside without a home")
+	}
+}
+
+func TestCoderAppliedNeedsAnAbsoluteHome(t *testing.T) {
+	repo := srcRepo(t, map[string]string{"README": "x"})
+	work := t.TempDir()
+	gitIn(t, work, "clone", "-q", repo, filepath.Join(work, ".config", "coderv2", "dotfiles"))
+	t.Chdir(work)
+	coder := func(k string) string {
+		if k == "CODER" {
+			return "true"
+		}
+		return ""
+	}
+	if CoderApplied(context.Background(), coder, "", repo) {
+		t.Error("a relative CoderDir must not be consulted")
+	}
+	if !CoderApplied(context.Background(), coder, work, repo) {
+		t.Error("an absolute home with the clone is applied")
+	}
+}
+
+func TestSymlinkNeverOverwritesABackup(t *testing.T) {
+	e := newEnv(t)
+	repo := srcRepo(t, map[string]string{".bashrc": "team"})
+	writeFiles(t, e.home, map[string]string{".bashrc": "original"})
+	if res := e.apply(repo); res.Status != StatusOK {
+		t.Fatalf("first: %+v", res)
+	}
+	// A tool replaces the link with a real file; the next run must keep the
+	// first backup, and a directory in the way of the name must not fail it.
+	bashrc := filepath.Join(e.home, ".bashrc")
+	if err := os.Remove(bashrc); err != nil {
+		t.Fatal(err)
+	}
+	writeFiles(t, e.home, map[string]string{".bashrc": "second", ".bashrc.bak.1/keep": "dir"})
+	if res := e.apply(repo); res.Status != StatusOK {
+		t.Fatalf("second: %+v", res)
+	}
+	for name, want := range map[string]string{".bashrc.bak": "original", ".bashrc.bak.2": "second"} {
+		if got, _ := os.ReadFile(filepath.Join(e.home, name)); string(got) != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestSameURLIgnoresSchemeHostCaseAndGitSuffix(t *testing.T) {
+	tests := []struct {
+		a, b string
+		same bool
+	}{
+		{"git@gitlab.example.com:acme/dotfiles.git", "https://gitlab.example.com/acme/dotfiles", true},
+		{"ssh://git@gitlab.example.com:2222/acme/dotfiles.git/", "https://GitLab.Example.com/acme/dotfiles.git", true},
+		{" https://h/a/b/ ", "https://h/a/b.git", true},
+		{"git@h:/a/b", "git@h:a/b", true},
+		{"/tmp/repo.git", "/tmp/repo", true},
+		{"git@h:acme/dotfiles.git", "git@h:acme/other.git", false},
+		{"git@h:acme/dotfiles.git", "git@other:acme/dotfiles.git", false},
+		{"https://h/acme/Dotfiles", "https://h/acme/dotfiles", false},
+	}
+	for _, tt := range tests {
+		if got := sameURL(tt.a, tt.b); got != tt.same {
+			t.Errorf("sameURL(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.same)
+		}
+	}
+}
+
+func TestCoderDetectionAcceptsAnotherSpellingOfTheURL(t *testing.T) {
+	e := newEnv(t)
+	repo := srcRepo(t, map[string]string{"README": "x"})
+	gitIn(t, filepath.Dir(repo), "clone", "-q", repo, CoderDir(e.home))
+	gitIn(t, CoderDir(e.home), "remote", "set-url", "origin", "git@h:Team/D.git")
+	e.app.Getenv = func(k string) string {
+		if k == "CODER" {
+			return "true"
+		}
+		return ""
+	}
+	res := e.apply("https://h/Team/D")
+	if res.Status != StatusAppliedByCoder {
+		t.Errorf("result = %+v", res)
+	}
+}
+
+func TestInstallOverrideMustStayInsideTheRepo(t *testing.T) {
+	dir := t.TempDir()
+	for _, install := range []string{"../x.sh", "/bin/sh", "a/../../x"} {
+		if _, err := findScript(dir, install); err == nil || !strings.Contains(err.Error(), "inside the dotfiles repo") {
+			t.Errorf("findScript(%q) = %v", install, err)
+		}
+	}
+}
+
+func TestScriptDoesNotGetDroppedVariables(t *testing.T) {
+	e := newEnv(t)
+	e.app.DropEnv = []string{"FORGE_TOKEN"}
+	t.Setenv("FORGE_TOKEN", "secret")
+	t.Setenv("KEPT_VAR", "kept")
+	out := t.TempDir()
+	t.Setenv("HOME_OUT", out)
+	repo := srcRepo(t, map[string]string{"install.sh*": "#!/bin/sh\nprintf '%s|%s' \"${FORGE_TOKEN-unset}\" \"$KEPT_VAR\" > \"$HOME_OUT/out\"\n"})
+	if res := e.apply(repo); res.Status != StatusOK {
+		t.Fatalf("result = %+v", res)
+	}
+	if got, _ := os.ReadFile(filepath.Join(out, "out")); string(got) != "unset|kept" {
+		t.Errorf("script saw %q", got)
+	}
+}
+
+func TestScriptLeavingADaemonDoesNotHang(t *testing.T) {
+	old := scriptWaitDelay
+	scriptWaitDelay = 200 * time.Millisecond
+	t.Cleanup(func() { scriptWaitDelay = old })
+	e := newEnv(t)
+	repo := srcRepo(t, map[string]string{"install.sh*": "#!/bin/sh\nsleep 30 &\nexit 0\n"})
+	start := time.Now()
+	res := e.apply(repo)
+	if res.Status != StatusOK {
+		t.Fatalf("result = %+v", res)
+	}
+	if d := time.Since(start); d > 10*time.Second {
+		t.Errorf("took %v: waited for the daemon", d)
+	}
+}
+
+func TestTimeoutKillsTheScriptsChildren(t *testing.T) {
+	old := scriptWaitDelay
+	scriptWaitDelay = time.Minute
+	t.Cleanup(func() { scriptWaitDelay = old })
+	e := newEnv(t)
+	repo := srcRepo(t, map[string]string{"install.sh*": "#!/bin/sh\nsleep 30 &\nwait\n"})
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	res := e.app.Apply(ctx, Spec{Project: "acme", Repo: repo})
+	if !res.Failed() {
+		t.Fatalf("result = %+v", res)
+	}
+	if d := time.Since(start); d > 15*time.Second {
+		t.Errorf("took %v: the script's child kept the pipes open", d)
 	}
 }

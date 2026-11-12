@@ -262,3 +262,18 @@ func TestPickProjectWithSeveralCachedProjects(t *testing.T) {
 		t.Error("no project with sprints should stay an error")
 	}
 }
+
+func TestNoProjectWithSprintsIsNotTheSeveralProjectsError(t *testing.T) {
+	results := []forgesync.Result{
+		{Project: "a", Items: []domain.WorkItem{{}}},
+		{Project: "b", Items: []domain.WorkItem{{}}},
+	}
+	_, err := pickProject(results, "")
+	var several *severalProjectsError
+	if !errors.As(err, &several) {
+		t.Fatalf("pickProject = %v, want the several-projects error", err)
+	}
+	if _, err := several.first(); !errors.Is(err, ErrNoSprints) || strings.Contains(err.Error(), "--project") {
+		t.Errorf("first = %v, want ErrNoSprints without the advice to pick a project", err)
+	}
+}

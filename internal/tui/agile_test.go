@@ -448,10 +448,21 @@ func TestReviewWithSeveralProjectsOpensOnTheFirstWithSprints(t *testing.T) {
 		t.Errorf("the page header should name the project:\n%s", out)
 	}
 	for _, w := range []int{80, 120, 160} {
-		m.w = w
+		if foot := ansi.Strip(m.agileFooter(w)); strings.Contains(foot, "p project") {
+			t.Errorf("footer at %d columns offers `p project` with one project that has sprints: %q", w, foot)
+		}
+	}
+	if m, cmd := press(m, "p"); cmd != nil || m.ag.reviewProj != "other" {
+		t.Errorf("p with one sprint project: project %q, cmd %v: want a no-op", m.ag.reviewProj, cmd)
+	}
+	m.results[0].Sprints = m.results[1].Sprints
+	for _, w := range []int{80, 120, 160} {
 		if foot := ansi.Strip(m.agileFooter(w)); !strings.Contains(foot, "p project") {
 			t.Errorf("footer at %d columns lacks `p project`: %q", w, foot)
 		}
+	}
+	if m, cmd := press(m, "p"); cmd == nil || m.ag.reviewProj != sampleResult().Project {
+		t.Errorf("p with two sprint projects: project %q, cmd %v: want the other project and a reload", m.ag.reviewProj, cmd)
 	}
 	single := agileModel(unicodeGlyphs)
 	single.ag.kind = agileReview

@@ -36,8 +36,11 @@ setup, script/install.sh, ..., or the manifest's dotfiles.install). Without a
 script, its dotfiles are symlinked into $HOME (an existing file becomes
 <name>.bak), unless the manifest sets symlink = false.
 
-The install script is team code and runs with your environment (ADE_PROJECT,
-ADE_ROOT and ADE_DOTFILES_DIR are added). ` + "`ade setup`" + ` runs this step too;
+The clone is ADE-managed: when it cannot fast-forward (the remote was
+force-pushed) it is reset to origin's branch, discarding local edits. The
+install script is team code and runs with your environment, except the
+variables holding your forge tokens (ADE_PROJECT, ADE_ROOT and
+ADE_DOTFILES_DIR are added). ` + "`ade setup`" + ` runs this step too;
 ` + "`ade project sync`" + ` never does. In a Coder workspace whose own dotfiles step
 already applied the same repo, nothing is done.
 
@@ -119,7 +122,8 @@ func newDotfilesStatusCmd() *cobra.Command {
 			list := []dotfilesStatus{}
 			for _, s := range specs {
 				st := dotfilesStatus{Project: s.Project, Repo: s.Repo, Dir: dotfiles.Dir(a.Paths.DataDir, s.Project)}
-				if rec, ok := dotfiles.ReadState(a.Paths.DataDir, s.Project); ok {
+				// A record of another repo is not this repo applied: doctor says the same.
+				if rec, ok := dotfiles.ReadState(a.Paths.DataDir, s.Project); ok && rec.Repo == s.Repo {
 					st.Applied, st.Commit, st.Method, st.AppliedAt = true, rec.Commit, rec.Method, rec.AppliedAt
 				} else if dotfiles.CoderApplied(cmd.Context(), os.Getenv, homeDir(), s.Repo) {
 					st.Applied, st.ByCoder = true, true
@@ -194,8 +198,19 @@ func newDotfilesApplier(a *app.App, dryRun bool, out io.Writer) dotfiles.Applier
 	svc := project.New(a, "user")
 	return dotfiles.Applier{
 		DataDir: a.Paths.DataDir, Home: homeDir(), Root: a.Root, DryRun: dryRun, Out: out,
-		Git: svc.ClientFor,
+		Git: svc.ClientFor, DropEnv: forgeTokenEnvs(a),
 	}
+}
+
+// forgeTokenEnvs names the environment variables holding forge tokens.
+func forgeTokenEnvs(a *app.App) []string {
+	var names []string
+	for _, f := range a.Config.Forges {
+		if f.TokenEnv != "" {
+			names = append(names, f.TokenEnv)
+		}
+	}
+	return names
 }
 
 func dotfilesLine(r dotfiles.Result) string {

@@ -2,12 +2,15 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/coredev-uk/ade/internal/forge"
 )
 
 func typeInto(e *editor, keys ...string) {
@@ -278,5 +281,75 @@ func TestJobLogSearchJumpsBetweenMatches(t *testing.T) {
 	m.modalKey(tea.KeyPressMsg{Code: tea.KeyEscape})
 	if m.mr.modal != nil {
 		t.Error("esc should close the log")
+	}
+}
+
+func TestCleanLogShowsWhatTheTerminalWouldHaveLeftOnScreen(t *testing.T) {
+	for _, c := range []struct {
+		name, in string
+		want     []string
+	}{
+		{"tabs go to the next multiple of 8", "ok\tpkg\n12345678\tx\n", []string{"ok      pkg", "12345678        x"}},
+		{"other controls are dropped", "a\x07b\x08c\x7fd\x00e\r\n", []string{"abcde"}},
+		{"colour is dropped", "\x1b[31mred\x1b[0m\n", []string{"red"}},
+		{"progress keeps the last segment", "10%\r20%\r\x1b[0K30%\nnext\n", []string{"30%", "next"}},
+		{"a trailing carriage return is not a segment", "plain\r\nline\r\n", []string{"plain", "line"}},
+		{
+			"sections become a header",
+			"\x1b[0Ksection_start:1700000000:step_script[collapsed=true]\r\x1b[0K\x1b[36mRunning\x1b[0m\nwork\n\x1b[0Ksection_end:1700000009:step_script\r\x1b[0K\ndone\n",
+			[]string{"── step_script", "Running", "work", "done"},
+		},
+		{"an empty trace has no lines", "", nil},
+		{"a blank trace has no lines", " \n\r\n\n", nil},
+	} {
+		if got := cleanLog(c.in); !slices.Equal(got, c.want) {
+			t.Errorf("%s: cleanLog(%q) = %q, want %q", c.name, c.in, got, c.want)
+		}
+	}
+}
+
+func TestJobLogWithoutTextSaysSo(t *testing.T) {
+	m := model{g: unicodeGlyphs, mr: &mrPage{}}
+	md := &mrModal{kind: modalLog}
+	md.setLog(mrResultMsg{out: jobLog{text: "\n"}})
+	m.mr.modal = md
+	if out := ansi.Strip(m.logScreen(md, 80, 12)); !strings.Contains(out, "The job has no log.") || strings.Contains(out, "1-1 of 1") {
+		t.Errorf("an empty trace should say the job has no log:\n%s", out)
+	}
+}
+
+func TestJobLogIgnoresALateAnswerForAnotherJob(t *testing.T) {
+	ref := mrRef("web", 1)
+	m := model{g: unicodeGlyphs, mr: &mrPage{}, mrCache: map[string]*mrData{ref.String(): {}}}
+	m.mr.modal = &mrModal{kind: modalLog, job: forge.Job{ID: 2, Name: "lint"}, logLoading: true}
+	m.onMRResult(mrResultMsg{ref: ref, what: "log", job: 1, out: jobLog{job: forge.Job{ID: 1}, text: "from job one\n"}})
+	if md := m.mr.modal; !md.logLoading || len(md.logRaw) != 0 {
+		t.Fatalf("job 1's log landed in job 2's viewer: loading=%v lines=%q", md.logLoading, md.logRaw)
+	}
+	m.onMRResult(mrResultMsg{ref: ref, what: "log", job: 2, out: jobLog{job: forge.Job{ID: 2}, text: "from job two\n"}})
+	if md := m.mr.modal; md.logLoading || !slices.Equal(md.logRaw, []string{"from job two"}) {
+		t.Errorf("job 2's own log was not shown: loading=%v lines=%q", md.logLoading, md.logRaw)
+	}
+}
+
+func TestJobLogKeepsTheMatchCountAndEscOnNarrowScreens(t *testing.T) {
+	m := model{g: unicodeGlyphs, mr: &mrPage{}}
+	md := logModal(100, "")
+	md.job.Name = "integration-tests-with-a-long-name"
+	m.mr.modal = md
+	md.logCut = true
+	md.logSearch("#5")
+	for _, w := range []int{40, 60, 80} {
+		rows := strings.Split(ansi.Strip(m.logScreen(md, w, 24)), "\n")
+		if !strings.Contains(rows[0], "1 of 11") {
+			t.Errorf("width %d: the match count is gone from the title %q", w, rows[0])
+		}
+		if hint := rows[len(rows)-1]; !strings.Contains(hint, "esc close") {
+			t.Errorf("width %d: the hint lost `esc close`: %q", w, hint)
+		}
+	}
+	rows := strings.Split(ansi.Strip(m.logScreen(md, 200, 24)), "\n")
+	if !strings.Contains(rows[0], "start cut off") || !strings.Contains(rows[0], "1 of 11") {
+		t.Errorf("a wide title should keep the range, the cut-off note and the count: %q", rows[0])
 	}
 }

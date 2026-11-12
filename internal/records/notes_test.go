@@ -2,8 +2,10 @@ package records
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -164,5 +166,55 @@ func TestParseNotesNewestFirstAndIgnoresFreeText(t *testing.T) {
 	}
 	if !Blocked(ParseNotes("- 2026-11-12 14:20 [blocked] x")) || Blocked(nil) {
 		t.Error("Blocked: newest blocked note should block, none should not")
+	}
+}
+
+func TestAppendNoteEscapesATypedBlockedTag(t *testing.T) {
+	s, _ := newStore(t)
+	wi := item("Rate limit")
+	if _, _, err := s.WriteSnapshot("gl", wi, nil, 5); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 11, 12, 14, 20, 0, 0, time.UTC)
+	if err := s.AppendNote("gl", wi.Ref, "[blocked] is a tag I typed", at, false); err != nil {
+		t.Fatal(err)
+	}
+	text, _ := s.ReadNotes("gl", wi.Ref)
+	got := ParseNotes(text)
+	if len(got) != 1 || got[0].Blocked || got[0].Text != "[blocked] is a tag I typed" {
+		t.Errorf("notes = %+v from %q: want one unblocked note with the typed text", got, text)
+	}
+}
+
+func TestNotesAndSnapshotsRunningTogetherLoseNoNote(t *testing.T) {
+	s, clock := newStore(t)
+	wi := item("Rate limit")
+	if _, _, err := s.WriteSnapshot("gl", wi, nil, 5); err != nil {
+		t.Fatal(err)
+	}
+	const n = 40
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := range n {
+			if err := s.AppendNote("gl", wi.Ref, fmt.Sprintf("note %d", i), *clock, false); err != nil {
+				t.Error(err)
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := range n {
+			w := item(fmt.Sprintf("Rate limit %d", i))
+			if _, _, err := s.WriteSnapshot("gl", w, nil, 5); err != nil {
+				t.Error(err)
+			}
+		}
+	}()
+	wg.Wait()
+	text, _ := s.ReadNotes("gl", wi.Ref)
+	if got := len(ParseNotes(text)); got != n {
+		t.Errorf("%d of %d notes survived the concurrent syncs", got, n)
 	}
 }

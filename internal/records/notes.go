@@ -102,6 +102,11 @@ func notesSplit(data string) (head, notes string, found bool) {
 // snapshot belongs to sync.
 func (s *Store) WriteNotes(forgeName string, ref forge.Ref, notes string) error {
 	path := s.ItemPath(forgeName, ref)
+	unlock, err := lockDir(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return ErrNoRecord
@@ -137,6 +142,11 @@ func (s *Store) AppendNote(forgeName string, ref forge.Ref, text string, now tim
 		return errors.New("note is empty")
 	}
 	path := s.ItemPath(forgeName, ref)
+	unlock, err := lockDir(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return ErrNoRecord
@@ -151,6 +161,8 @@ func (s *Store) AppendNote(forgeName string, ref forge.Ref, text string, now tim
 	line := "- " + now.Format(noteStamp) + " "
 	if blocked {
 		line += blockedTag
+	} else if strings.HasPrefix(text, strings.TrimSpace(blockedTag)) {
+		text = `\` + text // ParseNotes would read the typed tag as blocked
 	}
 	out := head + "\n"
 	if strings.TrimSpace(notes) != "" {
@@ -184,6 +196,8 @@ func ParseNotes(text string) []Note {
 		blocked := strings.HasPrefix(body, strings.TrimSpace(blockedTag))
 		if blocked {
 			body = strings.TrimSpace(strings.TrimPrefix(body, strings.TrimSpace(blockedTag)))
+		} else if strings.HasPrefix(body, `\`+strings.TrimSpace(blockedTag)) {
+			body = body[1:] // AppendNote's escape of a typed tag
 		}
 		out = append(out, Note{At: at, Blocked: blocked, Text: body})
 	}

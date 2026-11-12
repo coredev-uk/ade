@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,8 @@ import (
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/forge/gitlab"
 	"github.com/coredev-uk/ade/internal/forge/gitlab/fake"
+	"github.com/coredev-uk/ade/internal/project"
+	"github.com/coredev-uk/ade/internal/startwork"
 )
 
 // newClassifyEnv is the Start work env with tracker#11 (no type or app label)
@@ -339,11 +342,29 @@ func TestClassifyReadFailureShowsTheError(t *testing.T) {
 	if e.m.cl == nil || e.m.cl.stage != clFailed {
 		t.Fatalf("dialog = %+v", e.m.cl)
 	}
-	e.want("could not read the issue: no registered project serves other/place", "press c again")
-	e.wantNot("from the forge")
+	// A registration problem is not fixed by trying again.
+	e.want("could not read the issue: no registered project serves other/place", "ade project list")
+	e.wantNot("from the forge", "check the connection", "press c again")
 	// The unreadable manifest is named when it is why nothing serves the issue.
 	e.m.cl = nil
 	e.app.Config.Projects = []config.ProjectRef{{Source: filepath.Join(t.TempDir(), "gone.ade.toml")}}
 	e.press("c")
 	e.want("1 manifest(s) could not be")
+}
+
+func TestReadFailureFix(t *testing.T) {
+	tests := []struct {
+		err  error
+		want string
+	}{
+		{fmt.Errorf("%w x", project.ErrNotServed), "ade project list"},
+		{fmt.Errorf("%w: run it", project.ErrNoProjects), "ade project list"},
+		{fmt.Errorf("forge %q %w", "f", startwork.ErrForgeUndefined), "ade project list"},
+		{errors.New("dial tcp: timeout"), "check the connection and press = again"},
+	}
+	for _, tt := range tests {
+		if got := readFailureFix(tt.err, "="); !strings.Contains(got, tt.want) {
+			t.Errorf("readFailureFix(%v) = %q, want %q", tt.err, got, tt.want)
+		}
+	}
 }

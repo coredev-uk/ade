@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/coredev-uk/ade/internal/agent"
+	"github.com/coredev-uk/ade/internal/ai"
 	"github.com/coredev-uk/ade/internal/app"
 	"github.com/coredev-uk/ade/internal/domain"
 	"github.com/coredev-uk/ade/internal/events"
@@ -173,7 +174,7 @@ func (m model) noteSave(d *notesDialog) (model, tea.Cmd) {
 	case text == "":
 		d.warn = m.g.T("write the note first · esc cancels")
 	default:
-		if err := records.New(m.app.RecordsDir).AppendNote(d.forgeName, d.ref, text, time.Now(), blocked); err != nil {
+		if err := records.New(m.app.RecordsDir).AppendNote(d.forgeName, d.ref, text, time.Now().In(ai.Location(m.app.Config)), blocked); err != nil {
 			d.warn = m.g.T("the note could not be saved · check the records directory (ade doctor)")
 			break
 		}
@@ -299,12 +300,21 @@ func (m model) noteAddOverlay(d *notesDialog, dw, inner int) string {
 	} else if d.blocked {
 		input = "[blocked] " + input
 	}
-	l = append(l, g.Prompt+" "+ansi.Truncate(input, max(inner-3, 1), g.Ell)+g.Cursor)
+	l = append(l, g.Prompt+" "+inputTail(input, max(inner-3, 1), g.Ell)+g.Cursor)
 	if d.warn != "" {
 		l = append(l, "", stWarn.Render(ansi.Wrap(g.Warn+" "+d.warn, inner, "")))
 	}
 	l = append(l, "", keys("enter", "save", "tab or !", "blocked", "esc", "cancel"))
 	return m.dialog(m.g.T("Note · ")+d.ref.String(), l, dw)
+}
+
+// inputTail is the end of the text typed so far, w columns at most: the part
+// being typed stays visible.
+func inputTail(s string, w int, ell string) string {
+	if n := ansi.StringWidth(s); n > w {
+		return ell + ansi.TruncateLeft(s, n-w+ansi.StringWidth(ell), "")
+	}
+	return s
 }
 
 // noteLine is one dated note on one line, blocked ones in the warn style.

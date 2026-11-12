@@ -248,6 +248,9 @@ func (m model) agileKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		if m.ag.kind != agileReview {
 			return m, nil, false
 		}
+		if ks == "p" && len(m.sprintProjects()) < 2 {
+			return m, nil, true // nothing to cycle to
+		}
 		m.stepReview(ks)
 		next, cmd := m.reload()
 		return next, cmd, true
@@ -266,12 +269,7 @@ func (m *model) stepReview(key string) {
 	case "m":
 		m.ag.mine = !m.ag.mine
 	case "p":
-		var names []string
-		for _, r := range m.results {
-			if len(r.Sprints) > 0 {
-				names = append(names, r.Project)
-			}
-		}
+		names := m.sprintProjects()
 		cur := -1
 		for i, n := range names {
 			if n == res.Project {
@@ -305,6 +303,18 @@ func (m *model) stepReview(key string) {
 			m.ag.reviewSpr = sp[i].Title
 		}
 	}
+}
+
+// sprintProjects names the cached projects that have sprints: the ones the
+// review can show and `p` cycles.
+func (m model) sprintProjects() []string {
+	var names []string
+	for _, r := range m.results {
+		if len(r.Sprints) > 0 {
+			names = append(names, r.Project)
+		}
+	}
+	return names
 }
 
 // reviewResult is the cached project the review page concerns.

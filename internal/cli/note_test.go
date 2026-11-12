@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/coredev-uk/ade/internal/domain"
 	"github.com/coredev-uk/ade/internal/forge"
@@ -63,5 +64,23 @@ func TestNoteMakesTheRecordFromTheCache(t *testing.T) {
 	}
 	if _, err := e.note(trackerProj+"#99", "x"); err == nil {
 		t.Error("a note on an item that is neither recorded nor cached was accepted")
+	}
+}
+
+func TestNoteStampsInTheConfiguredTimezone(t *testing.T) {
+	e := notesEnv(t)
+	e.app.Config.User.Timezone = "Pacific/Kiritimati" // UTC+14, far from any CI zone
+	ref := forge.Ref{Project: trackerProj, IID: 1, Kind: forge.KindIssue}
+	e.writeRecord(ref, "")
+	if out, err := e.note(ref.String(), "zoned"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	text, _ := records.New(e.app.RecordsDir).ReadNotes("sandbox-gitlab", ref)
+	got := records.ParseNotes(text)
+	loc, _ := time.LoadLocation("Pacific/Kiritimati")
+	wall := time.Now().In(loc)
+	want := time.Date(wall.Year(), wall.Month(), wall.Day(), wall.Hour(), wall.Minute(), 0, 0, time.UTC)
+	if len(got) != 1 || got[0].At.Sub(want).Abs() > 2*time.Minute {
+		t.Errorf("notes = %+v from %q: want a stamp near %s", got, text, want.Format("2006-01-02 15:04"))
 	}
 }

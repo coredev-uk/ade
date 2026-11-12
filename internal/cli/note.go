@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/coredev-uk/ade/internal/ai"
 	"github.com/coredev-uk/ade/internal/app"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/forgesync"
@@ -64,7 +65,8 @@ func newNoteCmd() *cobra.Command {
 // appendNote adds the note, making the record from the cached item first when
 // the item has none: notes do not wait for a sync.
 func appendNote(a *app.App, st *records.Store, forgeName string, ref forge.Ref, text string, blocked bool) error {
-	err := st.AppendNote(forgeName, ref, text, time.Now(), blocked)
+	now := time.Now().In(ai.Location(a.Config))
+	err := st.AppendNote(forgeName, ref, text, now, blocked)
 	if !errors.Is(err, records.ErrNoRecord) {
 		return err
 	}
@@ -84,7 +86,7 @@ func appendNote(a *app.App, st *records.Store, forgeName string, ref forge.Ref, 
 			if _, _, werr := st.WriteSnapshot(forgeName, wi, nil, a.Config.Records.SnapshotComments); werr != nil {
 				return werr
 			}
-			return st.AppendNote(forgeName, ref, text, time.Now(), blocked)
+			return st.AppendNote(forgeName, ref, text, now, blocked)
 		}
 	}
 	return fmt.Errorf("%s: %w", ref, err)

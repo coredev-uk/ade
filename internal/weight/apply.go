@@ -2,7 +2,6 @@ package weight
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -44,11 +43,17 @@ var bareIID = regexp.MustCompile(`^#?(\d+)$`)
 // issue of a code repo is fine: weights are set on what the row shows. open
 // nil uses startwork.OpenForge.
 func Resolve(ctx context.Context, a *app.App, open startwork.OpenFunc, arg string) (*Target, error) {
+	return ResolveIn(ctx, a, open, "", arg)
+}
+
+// ResolveIn is Resolve preferring the manifest of the project named preferred
+// when it serves the issue (see startwork.ServingManifest).
+func ResolveIn(ctx context.Context, a *app.App, open startwork.OpenFunc, preferred, arg string) (*Target, error) {
 	if open == nil {
 		open = startwork.OpenForge
 	}
 	if len(a.Config.Projects) == 0 {
-		return nil, errors.New("no projects registered: run `ade project add <manifest>`")
+		return nil, fmt.Errorf("%w: run `ade project add <manifest>`", project.ErrNoProjects)
 	}
 	var ref forge.Ref
 	if mt := bareIID.FindStringSubmatch(strings.TrimSpace(arg)); mt != nil {
@@ -70,13 +75,13 @@ func Resolve(ctx context.Context, a *app.App, open startwork.OpenFunc, arg strin
 			return nil, fmt.Errorf("%s is a merge request: weights belong to issues", ref)
 		}
 	}
-	m, err := project.Serving(ctx, a, project.CachedManifest, ref.Project)
+	m, err := startwork.ServingManifest(ctx, a, preferred, ref.Project)
 	if err != nil {
 		return nil, err
 	}
 	fc, ok := a.Config.Forges[m.Forge]
 	if !ok {
-		return nil, fmt.Errorf("forge %q is not defined in the user config", m.Forge)
+		return nil, fmt.Errorf("forge %q %w", m.Forge, startwork.ErrForgeUndefined)
 	}
 	f, err := open(ctx, m.Forge, fc)
 	if err != nil {

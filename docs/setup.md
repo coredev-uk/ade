@@ -357,7 +357,7 @@ Coder applies *your* dotfiles repo (`coder dotfiles <repo>`, or the template's d
 
 The *team's* dotfiles, the repo the project uses with `coder dotfiles`, go in the manifest as `[dotfiles] repo = "..."`. `ade setup` applies them in the dotfiles step, after the projects are cloned: same clone, pull, install-script and symlink behaviour as `coder dotfiles`, kept under ADE's data directory (`~/.local/share/ade/dotfiles/<project>`). If the Coder workspace already applied the same repo (its clone at `~/.config/coderv2/dotfiles` has the same origin URL), ADE skips it and reports `applied by coder`, so the install script does not run twice. A personal Coder dotfiles repo with a different URL is untouched.
 
-The install script is team code and runs with your environment, tokens included; review changes to that repo as you would a CI pipeline. Opt out with `[dotfiles] enabled = false` in your config. See [manifest.md](manifest.md#team-dotfiles).
+The clone is ADE-managed, so each run resets it to the remote branch (a force-push is followed; local edits to tracked files are discarded). Symlinking needs `$HOME` to be set. The install script is team code and runs with your environment, except the variables your forges' `token_env` name; it still gets your other variables, so review changes to that repo as you would a CI pipeline. Opt out with `[dotfiles] enabled = false` in your config. See [manifest.md](manifest.md#team-dotfiles).
 
 ### Attaching
 

@@ -390,17 +390,29 @@ symlink = true                # optional; default true: link the dotfiles when t
 
 `ade setup` and `ade dotfiles` apply the repo the way `coder dotfiles` does, so a team's Coder dotfiles also work
 outside Coder. The repo is cloned to `<data dir>/dotfiles/<project>` (a URL on a configured forge host is cloned with
-that forge's token; SSH host keys stay checked) and pulled on later runs. When `repo` changes, the old clone is moved to
-`<project>.backup-<timestamp>` and the new one cloned.
+that forge's token; SSH host keys stay checked) and updated on later runs. The clone is ADE-managed: do not edit it.
+Each run fetches and moves it to `origin/<branch>` (`branch`, else the remote's default branch), switching branch when
+that changed. If it cannot fast-forward (the remote was force-pushed, or something changed the clone), it is reset to
+`origin/<branch>` and local commits and edits to tracked files are discarded. When `repo` changes, the old clone is
+moved to `<project>.backup-<timestamp>` and the new one cloned. Two URLs are the same repository when host and path
+match, whatever the scheme (`ssh` or `https`), user, port, case of the host, trailing `.git` or slash.
 
 Then ADE runs the first of `install.sh`, `install`, `bootstrap.sh`, `bootstrap`, `setup.sh`, `setup`,
 `script/install.sh`, `script/install`, `script/bootstrap.sh`, `script/bootstrap`, `script/setup.sh`, `script/setup` that
 exists, or the file named by `install`, inside the clone. A script without the executable bit runs through `sh`. It sees `ADE_PROJECT`,
 `ADE_ROOT` and `ADE_DOTFILES_DIR`. With no script and `symlink = true`, every top-level entry whose name starts with
 `.` is linked into `$HOME`, except `.git*` files other than `.gitconfig`; an existing file is first moved to
-`<name>.bak`, an existing link is replaced. Running again changes nothing that is already in place.
+`<name>.bak` (`<name>.bak.1`, `<name>.bak.2`, ... when that name is taken; a backup is never overwritten), an existing
+link is replaced. Running again changes nothing that is already in place. Symlinking needs an absolute `$HOME`; without
+one the project fails instead of writing into the working directory.
 
-**Security.** The install script is code your team pushes, and it runs with your environment (tokens included).
+The script runs in its own process group with a 10 minute limit; on timeout or cancel the whole group is killed. After
+the script exits, ADE stops reading its output after 5 seconds, so a daemon it started cannot hang the run.
+`install` must be a path inside the repo; this is checked again when the script runs.
+
+**Security.** The install script is code your team pushes. It runs with your environment, minus the variables named by
+`token_env` in your `[forges.*]` config. It still receives everything else: other secrets in your environment,
+`SSH_AUTH_SOCK`, and files you can read. Tokens from `token_cmd` are not in its environment.
 Treat changes to `[dotfiles]` and to that repo like changes to a CI pipeline. `ade project sync` never runs it; only
 `ade setup` and `ade dotfiles` do.
 

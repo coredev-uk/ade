@@ -268,7 +268,8 @@ func TestWeightDialogShowsWhyTheIssueCouldNotBeRead(t *testing.T) {
 	if e.m.wt == nil || e.m.wt.stage != wtFailed {
 		t.Fatalf("dialog = %+v", e.m.wt)
 	}
-	e.want("could not read the issue: no registered project serves other/place")
+	e.want("could not read the issue: no registered project serves other/place", "ade project list")
+	e.wantNot("check the connection")
 }
 
 func TestWeightDialogOpensOnAnAppRepoRowAndSurvivesABrokenManifest(t *testing.T) {

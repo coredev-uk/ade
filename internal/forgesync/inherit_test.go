@@ -144,3 +144,34 @@ func TestReviewsLeaveOutDraftsUntilTheyAreReady(t *testing.T) {
 		t.Errorf("the request was announced again (%d)", n)
 	}
 }
+
+// A teammate's issue whose tracker parent is outside the sprint window still
+// gives its review row the parent's facets, and the parent is not a work item.
+func TestReviewRowsReadAParentOutsideTheWindow(t *testing.T) {
+	h := newHarness(t, manifest("demo", "demo", "tracker", "milestones"))
+	seed(h.f)
+	h.f.update(func(f *memForge) {
+		for i := range f.issues {
+			if f.issues[i].Ref == ref("g/tracker#5") {
+				f.issues[i].Labels = []string{"type::chore", "app::web", "weight::2"}
+			}
+		}
+		child := issue("g/api#10", "Teammate's chore", nil, "rae")
+		child.Labels = nil
+		child.Description = "Parent: g/tracker#5"
+		f.issues = append(f.issues, child)
+		mr := forge.MR{Ref: ref("g/api!10"), Title: "Chore", State: "opened", SourceBranch: "10-chore", Author: user("rae"), Reviewers: []forge.User{user("me")}}
+		f.mrs = append(f.mrs, mr)
+		f.mrDetail[mr.Ref] = mr
+	})
+
+	r := h.sync()[0]
+	f, ok := r.ReviewFacets["g/api!10"]
+	if !ok {
+		t.Fatalf("no facets for g/api!10: %v", r.ReviewFacets)
+	}
+	assertParentFacets(t, f.Type, f.Apps, f.Weight, nil)
+	if _, ok := byRef(r)["g/tracker#5"]; ok {
+		t.Error("the parent read for the facets became a work item")
+	}
+}

@@ -251,3 +251,34 @@ func TestNotesAreReadOncePerRefreshNotPerRender(t *testing.T) {
 	e.m.setResults(e.m.results)
 	e.wantNot("cached note")
 }
+
+// wallWithin reports whether the naive note time at is within a minute or two
+// of now's wall clock in loc.
+func wallWithin(at time.Time, loc *time.Location) bool {
+	wall := time.Now().In(loc)
+	want := time.Date(wall.Year(), wall.Month(), wall.Day(), wall.Hour(), wall.Minute(), 0, 0, time.UTC)
+	return at.Sub(want).Abs() <= 2*time.Minute
+}
+
+func TestNoteAddStampsInTheConfiguredTimezone(t *testing.T) {
+	e, st := newNotesEnv(t)
+	e.app.Config.User.Timezone = "Pacific/Kiritimati" // UTC+14, far from any CI zone
+	e.press("N")
+	e.typ("zoned")
+	e.press("enter")
+	text, _ := st.ReadNotes("sandbox-gitlab", trk(11))
+	got := records.ParseNotes(text)
+	loc, _ := time.LoadLocation("Pacific/Kiritimati")
+	if len(got) != 1 || !wallWithin(got[0].At, loc) {
+		t.Errorf("notes = %+v from %q: want a stamp in Pacific/Kiritimati", got, text)
+	}
+}
+
+func TestNoteAddShowsTheTailOfALongInput(t *testing.T) {
+	e, _ := newNotesEnv(t)
+	e.m.w, e.m.h = 100, 40
+	e.press("N")
+	e.typ("THE-HEAD-OF-IT " + strings.Repeat("and a long note ", 8) + "THE-END-OF-IT")
+	e.want("THE-END-OF-IT")
+	e.wantNot("THE-HEAD-OF-IT")
+}

@@ -70,6 +70,10 @@ func (c *Collector) cached() ([]forgesync.Result, error) {
 // ErrNoCache says nothing has been synced yet.
 var ErrNoCache = errors.New("nothing cached yet: run `ade sync` first")
 
+// ErrNoSprints says projects are cached but none has sprints, so there is
+// nothing to review.
+var ErrNoSprints = errors.New("no project has sprints: run `ade sync` once the tracker has them")
+
 // manifests returns the manifest of every registered project by name.
 func (c *Collector) manifests(ctx context.Context) (map[string]*config.Manifest, []string) {
 	out := map[string]*config.Manifest{}
@@ -309,14 +313,14 @@ func (e *severalProjectsError) Error() string {
 	return fmt.Sprintf("several projects (%v): choose one with --project", e.names)
 }
 
-// first is the first cached project that has sprints.
+// first is the first cached project that has sprints (ErrNoSprints if none).
 func (e *severalProjectsError) first() (forgesync.Result, error) {
 	for _, r := range e.results {
 		if len(r.Sprints) > 0 {
 			return r, nil
 		}
 	}
-	return forgesync.Result{}, e
+	return forgesync.Result{}, ErrNoSprints
 }
 
 func (e *severalProjectsError) chose(name string) string {

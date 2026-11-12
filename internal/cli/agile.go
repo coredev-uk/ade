@@ -209,7 +209,7 @@ type sprintFlags struct {
 }
 
 func (s *sprintFlags) bind(cmd *cobra.Command) {
-	cmd.Flags().StringVar(&s.project, "project", "", "ADE project (default: the only one)")
+	cmd.Flags().StringVar(&s.project, "project", "", "ADE project (default: the only one, else the first with sprints)")
 	cmd.Flags().StringVar(&s.sprint, "sprint", "", "sprint title or key (default: the current sprint)")
 	cmd.Flags().IntVarP(&s.velocity, "last", "n", agile.DefaultVelocitySprints, "closed sprints in the velocity")
 	cmd.Flags().BoolVar(&s.mine, "mine", false, "only issues assigned to you")
@@ -291,6 +291,9 @@ func newSprintVelocityCmd() *cobra.Command {
 			r, err := agile.NewCollector(appFrom(cmd)).Review(cmd.Context(), sf.options())
 			if err != nil {
 				return err
+			}
+			for _, w := range r.Warnings { // the project chosen without --project
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", w)
 			}
 			return ex.emit(cmd, r.Velocity, func(f agile.Format) string { return agile.RenderVelocity(r.Velocity, f) })
 		},

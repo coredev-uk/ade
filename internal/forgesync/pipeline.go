@@ -147,7 +147,11 @@ func (p *pipeline) work(ctx context.Context, me forge.User, sprints []domain.Spr
 			MRs: r.mrs, Branches: branches(r.mrs), Sprints: sprints, Now: p.now,
 		})
 	}
-	return items, reviews, p.reviewFacets(reviews, repos, tracker, parents), nil
+	facets, err := p.reviewFacets(ctx, reviews, repos, tracker, parents)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("review parents: %w", err)
+	}
+	return items, reviews, facets, nil
 }
 
 // --- sprints ----------------------------------------------------------------
@@ -690,36 +694,67 @@ func parentIssue(refs []forge.Ref, tracker []forge.Issue) *forge.Issue {
 	return nil
 }
 
+// maxReviewParents bounds the tracker parents read only to give review rows
+// their facets.
+const maxReviewParents = 50
+
 // reviewFacets gives each review whose issue is loaded (named by the MR's
 // branch prefix or its Closes line, see mrTargets) the facets of that issue,
-// or of its loaded tracker parent. It reads nothing from the forge: an MR
+// or of its tracker parent. A parent outside the loaded tracker issues (a
+// teammate's issue under a parent outside the sprint window) is read into a
+// lookup of its own, so it facets the row without becoming a work item. An MR
 // whose issue is not among the recently active ones has no facets.
-func (p *pipeline) reviewFacets(reviews []forge.MR, repos []repoData, tracker []forge.Issue, parents map[forge.Ref]forge.Ref) map[string]ReviewFacets {
+func (p *pipeline) reviewFacets(ctx context.Context, reviews []forge.MR, repos []repoData, tracker []forge.Issue, parents map[forge.Ref]forge.Ref) (map[string]ReviewFacets, error) {
 	issues := map[forge.Ref]forge.Issue{}
 	for _, r := range repos {
 		for _, is := range r.issues {
 			issues[is.Ref] = is
 		}
 	}
-	var out map[string]ReviewFacets
+	type target struct {
+		mr    forge.MR
+		issue forge.Issue
+	}
+	var targets []target
+	have := map[forge.Ref]bool{}
+	for _, t := range tracker {
+		have[t.Ref] = true
+	}
+	var missing []forge.Ref
 	for _, mr := range reviews {
 		for _, t := range mrTargets(mr) {
 			is, ok := issues[t]
 			if !ok {
 				continue
 			}
-			f, w := domain.Inherit(is, parentIssue(p.inTracker(domain.Parents(is, parents)), tracker), p.m)
-			if f.Type == "" && len(f.Apps) == 0 && w == nil {
-				continue
+			targets = append(targets, target{mr, is})
+			for _, pr := range p.inTracker(domain.Parents(is, parents)) {
+				if !have[pr] && len(missing) < maxReviewParents {
+					have[pr] = true
+					missing = append(missing, pr)
+				}
 			}
-			if out == nil {
-				out = map[string]ReviewFacets{}
-			}
-			out[mr.Ref.String()] = ReviewFacets{Type: f.Type, Apps: f.Apps, Weight: w}
 			break
 		}
 	}
-	return out
+	fetched, err := p.fetchIssues(ctx, missing)
+	if err != nil {
+		return nil, err
+	}
+	lookup := mergeIssues(slices.Clone(tracker), fetched)
+
+	var out map[string]ReviewFacets
+	for _, t := range targets {
+		f, w := domain.Inherit(t.issue, parentIssue(p.inTracker(domain.Parents(t.issue, parents)), lookup), p.m)
+		if f.Type == "" && len(f.Apps) == 0 && w == nil {
+			continue
+		}
+		if out == nil {
+			out = map[string]ReviewFacets{}
+		}
+		out[t.mr.Ref.String()] = ReviewFacets{Type: f.Type, Apps: f.Apps, Weight: w}
+	}
+	return out, nil
 }
 
 // mrDetails fetches full detail (pipeline, approvals, threads) once for every

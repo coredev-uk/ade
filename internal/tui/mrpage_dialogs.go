@@ -115,10 +115,7 @@ func (md *mrModal) setLog(msg mrResultMsg) {
 		return
 	}
 	jl, _ := msg.out.(jobLog)
-	lines := strings.Split(strings.TrimRight(strings.ReplaceAll(jl.text, "\r", ""), "\n"), "\n")
-	for i, ln := range lines {
-		lines[i] = stripCtl(ln)
-	}
+	lines := cleanLog(jl.text)
 	md.logView = viewport.New()
 	md.logView.SetContentLines(lines)
 	md.logRaw = lines
@@ -534,7 +531,7 @@ func (m model) mergeDialog(md *mrModal, inner int) (string, []string) {
 }
 
 // logScreen is the open job log: the whole screen, a title line, the log and
-// a hint line. The log is plain text in ADE's own ink (stripCtl).
+// a hint line. The log is plain text in ADE's own ink (cleanLog).
 func (m model) logScreen(md *mrModal, w, h int) string {
 	g := m.g
 	title := stBold.Render(g.T("Job log · ") + md.job.Name)
@@ -555,23 +552,39 @@ func (m model) logScreen(md *mrModal, w, h int) string {
 			md.logTail = false
 		}
 		top := md.logView.YOffset()
-		guide := fmt.Sprintf(g.T(" · %d-%d of %d lines"), top+1, min(md.logLines, top+rows), md.logLines)
+		rng := fmt.Sprintf(g.T(" · %d-%d of %d lines"), top+1, min(md.logLines, top+rows), md.logLines)
+		cut := ""
 		if md.logCut {
-			guide += fmt.Sprintf(g.T(" · start cut off: only the last %d KiB"), logTail>>10)
+			cut = fmt.Sprintf(g.T(" · start cut off: only the last %d KiB"), logTail>>10)
 		}
-		title += stFaint.Render(guide)
+		search := ""
 		if md.logQuery != "" {
-			found := g.T(" · /") + md.logQuery + " "
+			search = g.T(" · /") + md.logQuery + " "
 			if n := len(md.logHits); n > 0 {
-				found += fmt.Sprintf("%d of %d", md.logHit+1, n)
+				search += fmt.Sprintf("%d of %d", md.logHit+1, n)
 			} else {
-				found += "not found"
+				search += "not found"
 			}
-			title += stWarn.Render(found)
+		}
+		// What does not fit goes in this order: the cut-off note, the range,
+		// then the job name; the match count stays.
+		fits := func(parts ...string) bool { return ansi.StringWidth(strings.Join(parts, "")) <= w }
+		switch {
+		case fits(g.T("Job log · "), md.job.Name, rng, cut, search):
+			title += stFaint.Render(rng + cut)
+		case fits(g.T("Job log · "), md.job.Name, rng, search):
+			title += stFaint.Render(rng)
+		case search != "":
+			title = ansi.Truncate(title, max(w-ansi.StringWidth(search), 0), g.Ell)
+		default:
+			title += stFaint.Render(rng + cut)
+		}
+		if search != "" {
+			title += stWarn.Render(search)
 		}
 		body = strings.Split(md.logView.View(), "\n")
 	}
-	hint := keys("j/k", "scroll", "pgup/pgdn", "page", "g/G", "ends", "h/l", "side", "/", "search", "n/N", "match", "esc", "close")
+	hint := keys("esc", "close", "j/k", "scroll", "pgup/pgdn", "page", "g/G", "ends", "h/l", "side", "/", "search", "n/N", "match")
 	if md.logTyping {
 		hint = stBold.Render("/") + md.logQuery + g.Cursor + "  " + keys("enter", "keep", "esc", "clear")
 	}
@@ -588,8 +601,59 @@ func (m model) logScreen(md *mrModal, w, h int) string {
 	return strings.Join(out, "\n")
 }
 
-// stripCtl drops ANSI colour from CI output: the log is shown in ADE's own ink.
-func stripCtl(s string) string { return ansi.Strip(s) }
+// cleanLog turns a raw job trace into the lines to show: ANSI colour is
+// dropped (the log is shown in ADE's own ink), a carriage-return line keeps
+// what its last non-empty segment left on screen, GitLab's section markers
+// become a "── name" header (section_end is dropped), tabs expand to the next
+// multiple of 8 columns and other control characters go. A log with no text
+// has no lines.
+func cleanLog(text string) []string {
+	var lines []string
+	for raw := range strings.SplitSeq(strings.TrimRight(text, "\r\n"), "\n") {
+		var shown string
+		var headers []string
+		marked := false
+		for seg := range strings.SplitSeq(strings.TrimSuffix(raw, "\r"), "\r") {
+			seg = ansi.Strip(seg)
+			switch {
+			case strings.HasPrefix(seg, "section_start:"):
+				marked = true
+				if f := strings.SplitN(seg, ":", 3); len(f) == 3 {
+					name, _, _ := strings.Cut(f[2], "[") // "[collapsed=true]" options
+					headers = append(headers, "── "+strings.TrimSpace(name))
+				}
+			case strings.HasPrefix(seg, "section_end:"):
+				marked = true
+			case strings.TrimSpace(seg) != "":
+				shown = seg
+			}
+		}
+		lines = append(lines, headers...)
+		if shown != "" || !marked {
+			lines = append(lines, plainLine(shown))
+		}
+	}
+	if !slices.ContainsFunc(lines, func(l string) bool { return strings.TrimSpace(l) != "" }) {
+		return nil
+	}
+	return lines
+}
+
+// plainLine expands tabs to the next multiple of 8 columns and drops the
+// other C0 controls, DEL and C1 controls, which a terminal would act on.
+func plainLine(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r == '\t':
+			b.WriteString(strings.Repeat(" ", 8-ansi.StringWidth(b.String())%8))
+		case r < 0x20 || r >= 0x7f && r <= 0x9f:
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
 
 // spinnerFrame is the progress mark: braille dots, or | / - \ in the ascii
 // glyph set.

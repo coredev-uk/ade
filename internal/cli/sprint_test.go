@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -61,5 +62,38 @@ func TestSprintReviewWithSeveralProjectsTakesTheFirstWithSprints(t *testing.T) {
 	}
 	if _, err := e.sprint("review", "--project", "nope"); err == nil || !strings.Contains(err.Error(), `no cached project "nope"`) {
 		t.Errorf("--project nope: %v", err)
+	}
+}
+
+func TestSprintVelocityWithSeveralProjectsSaysWhichItChose(t *testing.T) {
+	e := notesEnv(t)
+	ms, err := gitlab.New(e.srv.URL, fake.Token).Milestones(context.Background(), fake.GroupPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sprints := domain.SprintsFromMilestones(ms)
+	synced := time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)
+	cacheProjects(t, e,
+		forgesync.Result{Project: "demo-gl", Forge: "sandbox-gitlab", Tracker: trackerProj, Sprints: sprints, SyncedAt: synced},
+		forgesync.Result{Project: "zzz-other", Forge: "sandbox-gitlab", Sprints: sprints, SyncedAt: synced},
+	)
+	out, err := e.sprint("velocity")
+	if err != nil {
+		t.Fatalf("sprint velocity with several projects: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "warning: several projects (demo-gl, zzz-other): reviewing demo-gl") {
+		t.Errorf("the chosen project is not reported:\n%s", out)
+	}
+}
+
+func TestSprintReviewWhenNoProjectHasSprints(t *testing.T) {
+	e := notesEnv(t)
+	synced := time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)
+	cacheProjects(t, e,
+		forgesync.Result{Project: "aaa", Forge: "sandbox-gitlab", Items: []domain.WorkItem{{Project: "aaa"}}, SyncedAt: synced},
+		forgesync.Result{Project: "bbb", Forge: "sandbox-gitlab", Items: []domain.WorkItem{{Project: "bbb"}}, SyncedAt: synced},
+	)
+	if _, err := e.sprint("review"); !errors.Is(err, agile.ErrNoSprints) {
+		t.Errorf("sprint review with no sprints: %v, want ErrNoSprints", err)
 	}
 }
