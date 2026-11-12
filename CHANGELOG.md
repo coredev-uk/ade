@@ -17,7 +17,9 @@
 - **Weight suggestion** ranks closed issues by the shared title words that matter (inflected stop words no longer match), takes the score-weighted median of the five nearest, says when only one issue matched, and lists the matches with their weights.
 - **Bare `ade`** lands on the dashboard: it focuses (or recreates) the `home` tab of the `ade` session, also when run inside zellij.
 - **Install hooks:** `[repos.<r>.hooks] install` runs once per worktree (again when the commands change, or with `ade ws install --force`), inside the repo's dev shell.
-- **Background services:** opening a workspace for the first time also opens an unfocused `<tab> · services` tab. It runs the install hooks first, then each service in dependency order, with no "waiting to run" panes. A required service with a port and no `ready` check counts as ready when its port accepts connections. `[workspaces.<w>] services = "manual"` keeps the old on-demand strip.
+- **`ade start --branch <repo>=<branch>`** (and `b` in the start dialog) pins a sibling repo to a named branch: an existing branch and its MR are reused, a new name is created. The dry run notes the branch per repo.
+- **AI answers cut short** show a note beside the text, never inside it, so a draft reply or a parsed answer never contains it. The same prompt is not re-bought for 30 minutes unless you refresh, and the pre-flight shows the retry's worst case. Summaries, draft replies, standups and sprint reviews are renewed once.
+- **Background services:** opening a workspace for the first time also opens an unfocused `<tab> · services` tab. It runs the install hooks first, then each service in dependency order, with no "waiting to run" panes. A required service with a port and no `ready` check counts as ready when its port accepts connections. `[workspaces.<w>] services = "manual"` keeps the old on-demand strip. A waiting pane reports every 30 seconds and stops with the reason when its dependency or the install failed, or after `--wait-timeout` (10 minutes by default). A lockfile change at the worktree root reruns the install.
 
 ## v0.1.0
 
