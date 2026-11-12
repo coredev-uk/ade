@@ -117,7 +117,7 @@ func TestNarrowIsSinglePane(t *testing.T) {
 		t.Errorf("two panes below 100 columns:\n%s", out)
 	}
 	e.press("enter")
-	e.want("reviewer-rae ·") // the conversation replaces the list
+	e.want("Rae Reviewer (reviewer-rae) ·") // the conversation replaces the list
 	e.wantNot("Unresolved (")
 	e.press("esc")
 	e.want("Unresolved (")

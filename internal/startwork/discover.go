@@ -179,26 +179,43 @@ func (e *Env) treeOf(ctx context.Context, bare string, cloned bool, branch strin
 }
 
 // findChild finds the open child of tracker in project: first through its
-// links (any relates_to/sub-issue link into the project), then through a
-// "Parent:" line in the project's open issues, which catches a child whose
-// link write never happened.
+// links (any relates_to/sub-issue link into the project) and the forge's
+// hierarchy, then through a "Parent:" line in the project's open issues, which
+// catches a child whose link write never happened. linked says the chosen
+// child carries a child link.
 func (e *Env) findChild(ctx context.Context, tracker forge.Issue, project string) (child *forge.Issue, linked bool, warn string, err error) {
 	links, err := e.Forge.Links(ctx, tracker.Ref)
 	if err != nil {
 		return nil, false, "", fmt.Errorf("links of %s: %w", tracker.Ref, err)
 	}
-	var found []forge.Issue
+	var refs []forge.Ref
+	isLinked := map[forge.Ref]bool{}
 	for _, l := range links {
-		if !domain.IsChildLink(l) || l.Ref.Project != project {
-			continue
+		if domain.IsChildLink(l) && l.Ref.Project == project {
+			refs = append(refs, l.Ref)
+			isLinked[l.Ref] = true
 		}
-		is, err := e.Forge.Issue(ctx, l.Ref)
+	}
+	if pr, ok := e.Forge.(forge.Parenter); ok {
+		// Where the instance has no hierarchy this is an error to ignore.
+		if kids, herr := pr.Children(ctx, tracker.Ref); herr == nil {
+			for _, k := range kids {
+				if k.Project == project && !slices.Contains(refs, k) {
+					refs = append(refs, k)
+				}
+			}
+		} else if ctx.Err() != nil {
+			return nil, false, "", ctx.Err()
+		}
+	}
+	var found []forge.Issue
+	for _, r := range refs {
+		is, err := e.Forge.Issue(ctx, r)
 		if err != nil {
 			return nil, false, "", err
 		}
 		if is.State == "opened" {
 			found = append(found, is)
-			linked = true
 		}
 	}
 	if len(found) == 0 {
@@ -219,7 +236,7 @@ func (e *Env) findChild(ctx context.Context, tracker forge.Issue, project string
 	if len(found) > 1 {
 		warn = fmt.Sprintf("%s has %d open children in %s: using %s", tracker.Ref, len(found), project, found[0].Ref)
 	}
-	return &found[0], linked, warn, nil
+	return &found[0], isLinked[found[0].Ref], warn, nil
 }
 
 // findBranchAndMR fills Branch and MR. A child names its branch by number

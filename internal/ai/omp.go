@@ -85,7 +85,8 @@ func (d *omp) Complete(ctx context.Context, c Call) (Response, error) {
 }
 
 // parseOMP reads omp's JSON event stream: usage and cost are summed over
-// turns, the answer is the last turn's text.
+// turns, the answer is the last turn's text. omp takes no output cap from ADE,
+// so a length stop (the model's own limit) is only reported, never retried.
 func parseOMP(out []byte) (Response, error) {
 	var r Response
 	var failure string
@@ -138,6 +139,7 @@ func parseOMP(out []byte) (Response, error) {
 			}
 		}
 		r.Text = text.String()
+		r.Truncated = m.StopReason == "length" || m.StopReason == "max_tokens"
 		if m.StopReason == "error" || m.StopReason == "aborted" {
 			failure = firstNonEmpty(m.ErrorMessage, "stop reason "+m.StopReason)
 		} else {

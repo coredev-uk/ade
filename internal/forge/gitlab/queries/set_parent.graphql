@@ -1,0 +1,8 @@
+mutation SetWorkItemParent($id: WorkItemID!, $parentId: WorkItemID) {
+  workItemUpdate(input: {id: $id, hierarchyWidget: {parentId: $parentId}}) {
+    errors
+    workItem {
+      id
+    }
+  }
+}

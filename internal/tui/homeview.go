@@ -200,7 +200,7 @@ func (m model) homeList(w, h int) string {
 	courtW := 12
 	for _, r := range m.homeRows {
 		if r.item != nil {
-			courtW = max(courtW, lipgloss.Width(courtText(m.g, r.item)))
+			courtW = max(courtW, lipgloss.Width(courtText(m.g, withAuthor(r))))
 		}
 	}
 	lay := layoutFor(w, refW, courtW)
@@ -384,7 +384,9 @@ func (m model) sectionGuide(res *forgesync.Result, sec homeSection, n int) strin
 	switch sec {
 	case secReviews:
 		return fmt.Sprintf("%d waiting on you", n)
-	case secSprintOpen, secNext:
+	case secSprintOpen:
+		return fmt.Sprintf("%d unassigned in the tracker", n)
+	case secNext:
 		return fmt.Sprintf("%d not assigned to you", n)
 	case secPrevious:
 		title := "the last sprint"
@@ -441,7 +443,7 @@ func (m model) homeRowLine(r homeRow, lay homeLayout, selected bool, titleW int,
 			title = stBold.Render(title)
 		}
 		left := mark + stFaint.Render(ref) + "  " + pad(m.g, ansi.Truncate(title, titleW-lipgloss.Width(unread), m.g.Ell)+unread, titleW)
-		right := stFaint.Render(mr.Author.Username) + stFaint.Render(" "+m.g.Sep+" ") + mrStatus(m.g, mr)
+		right := stFaint.Render(mr.Author.Display()) + stFaint.Render(" "+m.g.Sep+" ") + mrStatus(m.g, mr)
 		return left + "  " + strings.Repeat(" ", lay.trackW()+lay.badgeGap()+2+lay.weightW) + "  " + ansi.Truncate(right, lay.courtW, m.g.Ell)
 	}
 	it := r.item
@@ -464,7 +466,20 @@ func (m model) homeRowLine(r homeRow, lay homeLayout, selected bool, titleW int,
 		badge = m.rowBadge(it) + "  "
 	}
 	return mark + stFaint.Render(ref) + "  " + titleCell + "  " + tr + "  " + badge +
-		pad(m.g, weightText(m.g, it.Weight), lay.weightW) + "  " + courtFit(m.g, it, lay.courtW)
+		pad(m.g, weightText(m.g, it.Weight), lay.weightW) + "  " + courtFit(m.g, withAuthor(r), lay.courtW)
+}
+
+// withAuthor is the row's item, with the reason "unassigned" swapped for the
+// tracker issue's author in the sprint sections: nobody holds those tickets,
+// so who raised one is what tells them apart.
+func withAuthor(r homeRow) *domain.WorkItem {
+	it := r.item
+	if r.section < secSprintOpen || r.section > secPrevious || it.Reason != "unassigned" || it.Issue.Author.Display() == "" {
+		return it
+	}
+	c := *it
+	c.Reason = "by " + it.Issue.Author.Display()
+	return &c
 }
 
 // titleCell is the title, the unread mark, then the epic faint after them when
@@ -583,6 +598,9 @@ func (m model) itemDetail(it *domain.WorkItem, w int) string {
 	if it.Issue.Epic != "" {
 		meta = append(meta, "epic "+it.Issue.Epic)
 	}
+	if a := it.Issue.Author.Display(); a != "" {
+		meta = append(meta, "by "+a)
+	}
 	l = append(l, stFaint.Render(ansi.Truncate(strings.Join(meta, " "+g.Sep+" "), w, m.g.Ell)))
 	if it.Workflow != "" || it.WantWorkflow != "" {
 		lbl := "label " + orDash(m.g, it.Workflow)
@@ -649,7 +667,7 @@ func (m model) stationEvidence(it *domain.WorkItem) []string {
 	ev := make([]string, len(domain.Stations))
 	var who []string
 	for _, a := range it.Issue.Assignees {
-		who = append(who, a.Username)
+		who = append(who, a.Display())
 	}
 	ev[domain.StageAssigned] = stFaint.Render(orDash(m.g, strings.Join(who, ", ")))
 	var kids []string
@@ -694,7 +712,7 @@ func (m model) mrDetail(mr *forge.MR, w int) string {
 	gl := m.g
 	l := []string{
 		stBold.Render(ansi.Truncate(mr.Ref.String()+"  "+mr.Title, w, m.g.Ell)),
-		stFaint.Render(ansi.Truncate(mr.Author.Username+" "+gl.Sep+" "+mr.SourceBranch+m.g.T(" → ")+mr.TargetBranch, w, m.g.Ell)),
+		stFaint.Render(ansi.Truncate(mr.Author.Display()+" "+gl.Sep+" "+mr.SourceBranch+m.g.T(" → ")+mr.TargetBranch, w, m.g.Ell)),
 		"",
 		mrStatus(gl, mr),
 	}

@@ -17,7 +17,7 @@ func item(title string) domain.WorkItem {
 	return domain.WorkItem{
 		Project:  "demo",
 		Ref:      ref,
-		Issue:    forge.Issue{Ref: ref, Title: title, Description: "Do the thing.", Labels: []string{"type::story", "app::api"}, Assignees: []forge.User{{Username: "paul"}}},
+		Issue:    forge.Issue{Ref: ref, Title: title, Description: "Do the thing.", Labels: []string{"type::story", "app::api"}, Assignees: []forge.User{{Username: "paul", Name: "Paul Dev"}}},
 		Children: []forge.Issue{{Ref: forge.Ref{Project: "ade-demo-env/api", IID: 2}}},
 		MRs:      []forge.MR{{Ref: forge.Ref{Project: "ade-demo-env/api", IID: 1, Kind: forge.KindMR}}},
 		Stage:    domain.StageReview,
@@ -30,7 +30,7 @@ func item(title string) domain.WorkItem {
 func notes(n int) []forge.Note {
 	var out []forge.Note
 	for i := 1; i <= n; i++ {
-		out = append(out, forge.Note{Author: forge.User{Username: "u"}, Body: "comment " + string(rune('A'+i-1)), CreatedAt: time.Date(2026, 11, i, 9, 0, 0, 0, time.UTC)})
+		out = append(out, forge.Note{Author: forge.User{Username: "u", Name: "Una User"}, Body: "comment " + string(rune('A'+i-1)), CreatedAt: time.Date(2026, 11, i, 9, 0, 0, 0, time.UTC)})
 	}
 	return out
 }
@@ -61,7 +61,7 @@ func TestFirstWriteLayoutAndPerms(t *testing.T) {
 	}
 	data, _ := os.ReadFile(path)
 	text := string(data)
-	for _, w := range []string{"# Add login", "Labels: type::story, app::api", "Assignees: @paul", "Do the thing.", "**@u** · 2026-11-01 09:00", "## Notes", endMarker} {
+	for _, w := range []string{"# Add login", "Labels: type::story, app::api", "Assignees: Paul Dev (paul)", "Do the thing.", "**Una User (u)** · 2026-11-01 09:00", "## Notes", endMarker} {
 		if !strings.Contains(text, w) {
 			t.Errorf("missing %q in\n%s", w, text)
 		}

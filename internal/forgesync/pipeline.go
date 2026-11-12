@@ -108,7 +108,11 @@ func (p *pipeline) work(ctx context.Context, me forge.User, sprints []domain.Spr
 	if err != nil {
 		return nil, nil, err
 	}
-	if tracker, err = p.adoptParents(ctx, me, tracker, repos); err != nil {
+	parents, err := p.parents(ctx, me, repos)
+	if err != nil {
+		return nil, nil, fmt.Errorf("issue parents: %w", err)
+	}
+	if tracker, err = p.adoptParents(ctx, me, tracker, repos, parents); err != nil {
 		return nil, nil, fmt.Errorf("parent issues: %w", err)
 	}
 	links, err := p.links(ctx, tracker)
@@ -120,7 +124,7 @@ func (p *pipeline) work(ctx context.Context, me forge.User, sprints []domain.Spr
 		return nil, nil, fmt.Errorf("child issues: %w", err)
 	}
 
-	roots := p.roots(me, tracker, links, cands, repos)
+	roots := p.roots(me, tracker, links, parents, cands, repos)
 	reviews := collectReviews(repos)
 	detail, err := p.mrDetails(ctx, roots, reviews)
 	if err != nil {
@@ -134,8 +138,8 @@ func (p *pipeline) work(ctx context.Context, me forge.User, sprints []domain.Spr
 	items := make([]domain.WorkItem, len(roots))
 	for i, r := range roots {
 		items[i] = domain.Assemble(domain.AssembleInput{
-			Project: p.m.Name, Manifest: p.m, Me: me.Username,
-			Tracker: r.issue, Links: r.links, Candidates: cands,
+			Project: p.m.Name, Manifest: p.m, Me: me.Username, MeID: me.ID,
+			Tracker: r.issue, Links: r.links, Candidates: cands, Parents: parents,
 			MRs: r.mrs, Branches: branches(r.mrs), Sprints: sprints, Now: p.now,
 		})
 	}
@@ -285,9 +289,89 @@ func mergeIssues(lists ...[]forge.Issue) []forge.Issue {
 	return out
 }
 
+// myOpenIssues lists the open code-repo issues assigned to me.
+func (p *pipeline) myOpenIssues(me forge.User, repos []repoData) []forge.Issue {
+	var out []forge.Issue
+	for _, r := range repos {
+		if r.path == p.m.Tracker.Project {
+			continue
+		}
+		for _, is := range r.issues {
+			if is.State == issueOpened && assignedTo(is, me) {
+				out = append(out, is)
+			}
+		}
+	}
+	return out
+}
+
+// inTracker keeps the refs that are issues of the tracker project.
+func (p *pipeline) inTracker(refs []forge.Ref) []forge.Ref {
+	return slices.DeleteFunc(slices.Clone(refs), func(r forge.Ref) bool { return r.Project != p.m.Tracker.Project })
+}
+
+// parents finds the tracker issue of each open code-repo issue assigned to me
+// that belongs to one, in order of trust: the forge's work item hierarchy
+// (batched; a forge or instance without one is skipped silently), the
+// "Parent:" line of the description, and a relates_to link from the issue to a
+// tracker issue. An issue whose description names a parent is not asked for
+// links. The result holds the hierarchy and link parents only; descriptions
+// are read where needed (domain.Parents).
+func (p *pipeline) parents(ctx context.Context, me forge.User, repos []repoData) (map[forge.Ref]forge.Ref, error) {
+	mine := p.myOpenIssues(me, repos)
+	out := map[forge.Ref]forge.Ref{}
+	if pr, ok := p.f.(forge.Parenter); ok && len(mine) > 0 {
+		refs := make([]forge.Ref, len(mine))
+		for i, is := range mine {
+			refs[i] = is.Ref
+		}
+		got, err := pr.Parents(ctx, refs)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if err == nil { // an error only means the hierarchy is unavailable: the other sources carry on
+			for child, parent := range got {
+				if parent.Project == p.m.Tracker.Project {
+					out[child] = parent
+				}
+			}
+		}
+	}
+	var rest []forge.Issue
+	for _, is := range mine {
+		if len(p.inTracker(domain.Parents(is, out))) == 0 {
+			rest = append(rest, is)
+		}
+	}
+	found := make([]forge.Ref, len(rest))
+	err := parallel(ctx, len(rest), func(ctx context.Context, i int) error {
+		links, err := p.f.Links(ctx, rest[i].Ref)
+		if err != nil {
+			return fmt.Errorf("%s: %w", rest[i].Ref, err)
+		}
+		for _, l := range links {
+			if domain.IsChildLink(l) && l.Ref.Project == p.m.Tracker.Project {
+				found[i] = l.Ref
+				break
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	for i, is := range rest {
+		if !found[i].IsZero() {
+			out[is.Ref] = found[i]
+		}
+	}
+	return out, nil
+}
+
 // adoptParents adds tracker issues that parent an open issue assigned to me
-// in a code repo, so that work shows under its tracker item.
-func (p *pipeline) adoptParents(ctx context.Context, me forge.User, tracker []forge.Issue, repos []repoData) ([]forge.Issue, error) {
+// in a code repo, so that work shows under its tracker item even when the
+// tracker issue is not mine and outside the sprint window.
+func (p *pipeline) adoptParents(ctx context.Context, me forge.User, tracker []forge.Issue, repos []repoData, parents map[forge.Ref]forge.Ref) ([]forge.Issue, error) {
 	have := map[forge.Ref]bool{}
 	for _, t := range tracker {
 		have[t.Ref] = true
@@ -298,8 +382,8 @@ func (p *pipeline) adoptParents(ctx context.Context, me forge.User, tracker []fo
 			if is.State != issueOpened || !assignedTo(is, me) {
 				continue
 			}
-			for _, pr := range domain.ParentRefs(is) {
-				if pr.Project == p.m.Tracker.Project && !have[pr] {
+			for _, pr := range p.inTracker(domain.Parents(is, parents)) {
+				if !have[pr] {
 					have[pr] = true
 					missing = append(missing, pr)
 				}
@@ -429,13 +513,15 @@ type root struct {
 
 // roots lists tracker items first, then open code-repo issues assigned to me
 // that no tracker item claims.
-func (p *pipeline) roots(me forge.User, tracker []forge.Issue, links [][]forge.Link, cands []forge.Issue, repos []repoData) []root {
+func (p *pipeline) roots(me forge.User, tracker []forge.Issue, links [][]forge.Link, parents map[forge.Ref]forge.Ref, cands []forge.Issue, repos []repoData) []root {
 	index := indexMRs(repos)
 	claimed := map[forge.Ref]bool{}
+	have := map[forge.Ref]bool{}
 	var out []root
 	for i, t := range tracker {
+		have[t.Ref] = true
 		refs := []forge.Ref{t.Ref}
-		for _, k := range childRefs(t, links[i], cands) {
+		for _, k := range childRefs(t, links[i], parents, cands) {
 			claimed[k] = true
 			refs = append(refs, k)
 		}
@@ -446,7 +532,10 @@ func (p *pipeline) roots(me forge.User, tracker []forge.Issue, links [][]forge.L
 			continue
 		}
 		for _, is := range r.issues {
-			if is.State == issueOpened && assignedTo(is, me) && !claimed[is.Ref] && len(domain.ParentRefs(is)) == 0 {
+			// A description that names a parent keeps the issue off the list
+			// even when the parent is gone; a hierarchy or link parent only
+			// does when it was loaded.
+			if is.State == issueOpened && assignedTo(is, me) && !claimed[is.Ref] && len(domain.ParentRefs(is)) == 0 && !have[parents[is.Ref]] {
 				claimed[is.Ref] = true
 				out = append(out, root{issue: is, mrs: mrsFor(index, []forge.Ref{is.Ref})})
 			}
@@ -455,9 +544,9 @@ func (p *pipeline) roots(me forge.User, tracker []forge.Issue, links [][]forge.L
 	return out
 }
 
-// childRefs mirrors domain's child rule: linked by a child link, or naming the
-// tracker as parent.
-func childRefs(tracker forge.Issue, links []forge.Link, cands []forge.Issue) []forge.Ref {
+// childRefs mirrors domain's child rule: linked by a child link, or having the
+// tracker as a parent.
+func childRefs(tracker forge.Issue, links []forge.Link, parents map[forge.Ref]forge.Ref, cands []forge.Issue) []forge.Ref {
 	linked := map[forge.Ref]bool{}
 	for _, l := range links {
 		if domain.IsChildLink(l) {
@@ -466,7 +555,7 @@ func childRefs(tracker forge.Issue, links []forge.Link, cands []forge.Issue) []f
 	}
 	var out []forge.Ref
 	for _, c := range cands {
-		if c.Ref != tracker.Ref && (linked[c.Ref] || slices.Contains(domain.ParentRefs(c), tracker.Ref)) {
+		if c.Ref != tracker.Ref && (linked[c.Ref] || slices.Contains(domain.Parents(c, parents), tracker.Ref)) {
 			out = append(out, c.Ref)
 		}
 	}
@@ -475,6 +564,9 @@ func childRefs(tracker forge.Issue, links []forge.Link, cands []forge.Issue) []f
 
 func assignedTo(is forge.Issue, me forge.User) bool {
 	return slices.ContainsFunc(is.Assignees, func(u forge.User) bool {
+		if u.ID != 0 && me.ID != 0 {
+			return u.ID == me.ID
+		}
 		return strings.EqualFold(u.Username, me.Username)
 	})
 }

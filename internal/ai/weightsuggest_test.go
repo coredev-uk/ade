@@ -27,28 +27,98 @@ func newIssue(title string, labels ...string) forge.Issue {
 	return forge.Issue{Ref: forge.Ref{Project: "g/tracker", IID: 50, Kind: forge.KindIssue}, Title: title, Labels: labels}
 }
 
-func TestSuggestWeightIsTheLowerMedianOfSimilarClosedIssues(t *testing.T) {
+func TestSuggestWeightIsTheMedianOfSimilarClosedIssues(t *testing.T) {
 	samples := []WeightSample{
 		sample(1, "Export timestamps ignore tenant timezone", "bug", 3, "api"),
-		sample(2, "Export worker crashes on empty file", "bug", 2, "api"),
-		sample(3, "Export preview truncates headers", "bug", 5, "api"),
-		sample(4, "Export preview shows stale totals", "bug", 1, "web"), // other app
-		sample(5, "Export dashboard dark mode", "story", 8, "api"),      // other type
-		sample(6, "Rotate credentials quarterly", "bug", 13, "api"),     // no shared word
-		sample(7, "Export timezone offsets again", "bug", 0, "api"),     // unweighted never counts
+		sample(2, "Export timezone offsets drift", "bug", 2, "api"),
+		sample(3, "Tenant timezone export header", "bug", 5, "api"),
+		sample(4, "Export preview shows stale tenant timezone", "bug", 1, "web"), // other app
+		sample(5, "Export tenant timezone dark mode", "story", 8, "api"),         // other type
+		sample(6, "Rotate credentials quarterly", "bug", 13, "api"),              // no shared word
+		sample(7, "Export tenant timezone offsets again", "bug", 0, "api"),       // unweighted never counts
 	}
 	issue := newIssue("Exports break for tenants in a non-UTC timezone", "type::bug", "app::api")
 	w, why := SuggestWeight(issue, weightLabels, config.WeightSource{Source: "label"}, Suggestion{}, samples)
 	if w == nil || *w != 3 {
-		t.Fatalf("weight = %v (%s), want the lower median 3 of weights 2, 3 and 5", w, why)
+		t.Fatalf("weight = %v (%s), want 3 from weights 3, 2 and 5", w, why)
 	}
-	if !strings.Contains(why, "median of 3") || !strings.Contains(why, "g/tracker#1") || strings.Contains(why, "#5") {
+	if !strings.HasPrefix(why, "weighted median of 3 similar closed issues: g/tracker#1 (3)") || strings.Contains(why, "#5") {
 		t.Errorf("reason = %q", why)
 	}
 	// Deterministic: same input, same answer, whatever the order.
 	slicesReverse(samples)
 	if w2, why2 := SuggestWeight(issue, weightLabels, config.WeightSource{Source: "label"}, Suggestion{}, samples); *w2 != *w || why2 != why {
 		t.Errorf("not order independent: %d %q vs %d %q", *w2, why2, *w, why)
+	}
+}
+
+// "Adds" and "fixes" are the stop words "add" and "fix" in another form.
+func TestTitleTokensDropInflectedStopWords(t *testing.T) {
+	got := titleTokens("Adds retries; fixes the Pages for updates to Exports, new bugs")
+	want := map[string]bool{"retry": true, "export": true}
+	if len(got) != len(want) || !got["retry"] || !got["export"] {
+		t.Errorf("tokens = %v, want %v", got, want)
+	}
+}
+
+// One word every sample shares says little; two rare ones say a lot.
+func TestSuggestWeightRanksBySharedRareWords(t *testing.T) {
+	src := config.WeightSource{Source: "label"}
+	samples := []WeightSample{
+		sample(1, "Export invoice pdf generation", "bug", 8, "api"),
+		sample(2, "Export users csv", "bug", 1, "api"),
+		sample(3, "Export audit log csv", "bug", 1, "api"),
+		sample(4, "Export orders csv", "bug", 1, "api"),
+		sample(5, "Export refunds csv", "bug", 1, "api"),
+	}
+	issue := newIssue("Invoice pdf generation fails on export", "type::bug", "app::api")
+	w, why := SuggestWeight(issue, weightLabels, src, Suggestion{}, samples)
+	if w == nil || *w != 8 {
+		t.Fatalf("weight = %v (%s), want 8 from the one near-duplicate, not the generic export matches", w, why)
+	}
+	if !strings.HasPrefix(why, "only one similar issue: g/tracker#1 (8)") {
+		t.Errorf("reason = %q", why)
+	}
+}
+
+func TestSuggestWeightPicksTheSideNearerTheWeightedMeanOnEvenSplits(t *testing.T) {
+	src := config.WeightSource{Source: "label"}
+	issue := newIssue("Tenant timezone export", "type::bug", "app::api")
+	same := "Tenant timezone export"
+	tests := []struct {
+		name    string
+		samples []WeightSample
+		want    int
+	}{
+		{"equal scores, tie goes to the best match's side", []WeightSample{sample(1, same, "bug", 2, "api"), sample(2, same, "bug", 8, "api")}, 2},
+		{"a closer match outweighs a looser one", []WeightSample{sample(1, "Tenant export", "bug", 2, "api"), sample(2, same, "bug", 8, "api")}, 8},
+		{"four samples, mean nearer the upper middle", []WeightSample{
+			sample(1, same, "bug", 1, "api"), sample(2, same, "bug", 5, "api"), sample(3, same, "bug", 8, "api"), sample(4, same, "bug", 13, "api"),
+		}, 8},
+		{"four samples, mean nearer the lower middle", []WeightSample{
+			sample(1, same, "bug", 1, "api"), sample(2, same, "bug", 2, "api"), sample(3, same, "bug", 5, "api"), sample(4, same, "bug", 5, "api"),
+		}, 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w, why := SuggestWeight(issue, weightLabels, src, Suggestion{}, tt.samples)
+			if w == nil || *w != tt.want {
+				t.Errorf("weight = %v (%s), want %d", w, why, tt.want)
+			}
+		})
+	}
+}
+
+func TestSuggestWeightKeepsTheNearestFiveAndListsThree(t *testing.T) {
+	src := config.WeightSource{Source: "label"}
+	var samples []WeightSample
+	for i := 1; i <= 7; i++ {
+		samples = append(samples, sample(i, "Tenant timezone export", "bug", 3, "api"))
+	}
+	w, why := SuggestWeight(newIssue("Tenant timezone export", "type::bug", "app::api"), weightLabels, src, Suggestion{}, samples)
+	want := "weighted median of the 5 nearest of 7 similar closed issues: g/tracker#1 (3), g/tracker#2 (3), g/tracker#3 (3)"
+	if w == nil || *w != 3 || why != want {
+		t.Errorf("got %v %q, want 3 %q", w, why, want)
 	}
 }
 
@@ -81,6 +151,10 @@ func TestSuggestWeightEdgeCases(t *testing.T) {
 	self := sample(50, "Export timezone", "bug", 8, "api")
 	if w, _ := SuggestWeight(newIssue("Export timezone", "type::bug", "app::api"), weightLabels, src, Suggestion{}, []WeightSample{self}); w != nil {
 		t.Error("compared the issue with itself")
+	}
+	// A single shared generic word is not similar enough.
+	if w, _ := SuggestWeight(newIssue("Export billing", "type::bug", "app::api"), weightLabels, src, Suggestion{}, []WeightSample{sample(1, "Export timezone", "bug", 3, "api"), sample(2, "Export users", "bug", 2, "api")}); w != nil {
+		t.Errorf("suggested %d from a common word alone", *w)
 	}
 	// No comparable issue: no weight, with a reason.
 	if w, why := SuggestWeight(newIssue("Billing rounding", "type::bug", "app::api"), weightLabels, src, Suggestion{}, samples); w != nil || why == "" {
@@ -168,5 +242,32 @@ func TestClosedSamplesReadTheForgeHistoryAndKeepWeightedOnly(t *testing.T) {
 	dup := WeightSample{Ref: got[0].Ref, Weight: 99}
 	if m := MergeSamples([]WeightSample{dup}, got); len(m) != 1 || m[0].Weight != 99 {
 		t.Errorf("merge = %+v", m)
+	}
+}
+
+type issueLister struct {
+	forge.Forge
+	issues []forge.Issue
+}
+
+func (l issueLister) ListIssues(context.Context, forge.IssueQuery) ([]forge.Issue, error) {
+	return l.issues, nil
+}
+
+// The window runs on the closed date: an issue touched recently but closed
+// long ago is history too old to size work by.
+func TestClosedSamplesUseTheClosedDateForTheWindow(t *testing.T) {
+	now := time.Date(2026, 11, 11, 9, 0, 0, 0, time.UTC)
+	old, recent := now.Add(-SampleWindow-24*time.Hour), now.Add(-30*24*time.Hour)
+	issue := func(iid int, closed *time.Time) forge.Issue {
+		return forge.Issue{Ref: forge.Ref{Project: "g/tracker", IID: iid}, Labels: []string{"weight::3"}, ClosedAt: closed}
+	}
+	f := issueLister{issues: []forge.Issue{issue(1, &old), issue(2, &recent), issue(3, nil)}}
+	got, err := ClosedSamples(context.Background(), f, "g/tracker", weightLabels, config.WeightSource{Source: "label", Pattern: "weight::{value}"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Ref.IID != 2 || got[1].Ref.IID != 3 {
+		t.Errorf("samples = %+v, want #2 (closed recently) and #3 (no closed date: the forge's update filter stands)", got)
 	}
 }

@@ -1,4 +1,5 @@
  acme/tracker#15  Rate-limit the export endpoint
+ by Sam Smith (sam)
 
  ●━━●━━●━━●━━●━━◉──○  review
  as st br dr ci rv mg
@@ -19,6 +20,5 @@
  Exports hammer the API during the nightly batch.
 
  Plan
-
- … 17 more
+ … 18 more
  synced 4m ago   j/k scroll   r reload   q quit

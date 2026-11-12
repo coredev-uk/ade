@@ -72,7 +72,26 @@ type LayoutSpec struct {
 	// command and waits for Enter; Ctrl-C stops it and Enter starts it again.
 	Services []Pane
 	Tasks    []Pane
+	// BackgroundServices moves Up and Services out of the strip into a tab of
+	// their own (BuildServicesLayout) that starts them, after Install, when the
+	// workspace opens. Tasks stay in the strip, waiting for Enter.
+	BackgroundServices bool
+	// Install is `ade ws install` for the workspace's worktrees: the first pane
+	// of the services tab. Empty when no repo declares install commands.
+	Install Pane
 }
+
+// ServicesTabSuffix follows the workspace tab's name in the name of its services tab.
+const ServicesTabSuffix = " · services"
+
+// HasServicesTab reports whether the services run in a tab of their own: it is
+// wanted and there is an install step or a service to put in it.
+func (s LayoutSpec) HasServicesTab() bool {
+	return s.BackgroundServices && (len(s.Install.Args) > 0 || len(s.Services) > 0)
+}
+
+// ServicesTab is the name of the services tab.
+func (s LayoutSpec) ServicesTab() string { return s.Tab + ServicesTabSuffix }
 
 // Pane sizes, in percent: the main pane's share of the top row, the overview's
 // share of the right-hand column (the stack below takes the rest), and the strip's share of the tab.
@@ -80,6 +99,7 @@ const (
 	mainPct     = 60
 	overviewPct = 40
 	stripPct    = 30
+	installPct  = 25 // the install pane's share of the services tab
 )
 
 // BuildLayout renders the zellij KDL for one workspace tab. Every string comes
@@ -99,7 +119,15 @@ func BuildLayout(s LayoutSpec) (string, error) {
 	b.line(0, "layout {")
 	b.WriteString(zellij.TabTemplate)
 	b.line(1, "tab name=%s cwd=%s focus=true {", zellij.Quote(s.Tab), zellij.Quote(s.Dir))
-	hasStrip := len(s.Services)+len(s.Tasks) > 0
+	// With a services tab the strip keeps only the workspace's own tasks.
+	var up Pane
+	services := s.Services
+	if s.HasServicesTab() {
+		services = nil
+	} else {
+		up = s.Up
+	}
+	hasStrip := len(services)+len(s.Tasks) > 0 || len(up.Args) > 0
 
 	topAttr := ""
 	if hasStrip {
@@ -125,15 +153,56 @@ func BuildLayout(s LayoutSpec) (string, error) {
 	b.line(2, "}")
 	if hasStrip {
 		b.line(2, `pane size="%d%%" split_direction="vertical" {`, stripPct)
-		if len(s.Up.Args) > 0 {
-			c := s.adeCmd(s.Up)
+		if len(up.Args) > 0 {
+			c := s.adeCmd(up)
 			c.suspended = true
-			b.pane(3, fmt.Sprintf("name=%s", zellij.Quote(s.Up.Name)), c)
+			b.pane(3, fmt.Sprintf("name=%s", zellij.Quote(up.Name)), c)
 		}
-		for _, p := range append(append([]Pane(nil), s.Services...), s.Tasks...) {
+		for _, p := range append(append([]Pane(nil), services...), s.Tasks...) {
 			c := s.adeCmd(p)
 			c.suspended = true
 			b.pane(3, fmt.Sprintf("name=%s", zellij.Quote(p.Name)), c)
+		}
+		b.line(2, "}")
+	}
+	b.line(1, "}")
+	b.line(0, "}")
+	return b.String(), nil
+}
+
+// BuildServicesLayout renders the zellij KDL of the services tab: the install
+// step on top, then one pane per service side by side in start order. Nothing
+// is suspended: the panes run when the tab opens and each waits on its own for
+// the install and for what it requires (`ade task run --after-install
+// --wait-requires`). The tab is not focused, so creating it first and the
+// workspace tab second leaves the user on the workspace tab.
+func BuildServicesLayout(s LayoutSpec) (string, error) {
+	if s.Tab == "" || s.Dir == "" {
+		return "", fmt.Errorf("layout needs a tab name and a directory")
+	}
+	if !s.HasServicesTab() {
+		return "", fmt.Errorf("workspace %s has no services tab", s.Tab)
+	}
+	var b kdl
+	b.line(0, "layout {")
+	b.WriteString(zellij.TabTemplate)
+	b.line(1, "tab name=%s cwd=%s {", zellij.Quote(s.ServicesTab()), zellij.Quote(s.Dir))
+	hasInstall := len(s.Install.Args) > 0
+	if hasInstall {
+		attr := fmt.Sprintf("name=%s", zellij.Quote(s.Install.Name))
+		if len(s.Services) > 0 {
+			attr += fmt.Sprintf(` size="%d%%"`, installPct)
+		}
+		b.pane(2, attr, s.adeCmd(s.Install))
+	}
+	switch len(s.Services) {
+	case 0:
+	case 1:
+		b.pane(2, fmt.Sprintf("name=%s", zellij.Quote(s.Services[0].Name)), s.adeCmd(s.Services[0]))
+	default:
+		b.line(2, `pane split_direction="vertical" {`)
+		for _, p := range s.Services {
+			b.pane(3, fmt.Sprintf("name=%s", zellij.Quote(p.Name)), s.adeCmd(p))
 		}
 		b.line(2, "}")
 	}

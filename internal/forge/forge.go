@@ -6,6 +6,7 @@ package forge
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -78,6 +79,30 @@ type User struct {
 	ID       int64  `json:"id"`
 	Username string `json:"username"`
 	Name     string `json:"name,omitempty"`
+}
+
+// Display is how a person reads on screen: "Name (username)", or the username
+// alone when the forge gave no name or the name is just the username.
+func (u User) Display() string {
+	switch {
+	case u.Username == "":
+		return u.Name
+	case u.Name == "" || u.Name == u.Username:
+		return u.Username
+	}
+	return u.Name + " (" + u.Username + ")"
+}
+
+// UnmarshalJSON also reads a bare string as the username, the shape that
+// ThreadState.Authors had in sync data cached before it kept names.
+func (u *User) UnmarshalJSON(b []byte) error {
+	var username string
+	if json.Unmarshal(b, &username) == nil {
+		*u = User{Username: username}
+		return nil
+	}
+	type plain User
+	return json.Unmarshal(b, (*plain)(u))
 }
 
 // Date is a calendar date (no time zone), as GitLab reports start/due dates.
@@ -195,8 +220,8 @@ type Approvals struct {
 // human note, oldest first. Comparing two syncs shows new threads and replies,
 // and who wrote them, without keeping the text.
 type ThreadState struct {
-	ID      string   `json:"id"`
-	Authors []string `json:"authors"`
+	ID      string `json:"id"`
+	Authors []User `json:"authors"`
 }
 
 // ThreadStates summarises discussions for MR.Threads. Discussions made only
@@ -208,7 +233,7 @@ func ThreadStates(ds []Discussion) []ThreadState {
 		t := ThreadState{ID: d.ID}
 		for _, n := range d.Notes {
 			if !n.System {
-				t.Authors = append(t.Authors, n.Author.Username)
+				t.Authors = append(t.Authors, n.Author)
 			}
 		}
 		if len(t.Authors) > 0 {

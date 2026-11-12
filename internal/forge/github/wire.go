@@ -322,6 +322,7 @@ type gqlThreadComment struct {
 	CreatedAt  time.Time `json:"createdAt"`
 	Author     *struct {
 		Login string `json:"login"`
+		Name  string `json:"name"` // only users have one; bots and organisations lack it
 	} `json:"author"` // null once the account is deleted
 	Review *struct {
 		State string `json:"state"`
@@ -333,7 +334,7 @@ func (c gqlThreadComment) pending() bool { return c.Review != nil && c.Review.St
 func (c gqlThreadComment) note() forge.Note {
 	n := forge.Note{ID: c.DatabaseID, Body: c.Body, CreatedAt: c.CreatedAt}
 	if c.Author != nil {
-		n.Author = forge.User{Username: c.Author.Login}
+		n.Author = forge.User{Username: c.Author.Login, Name: c.Author.Name}
 	} else {
 		n.Author = forge.User{Username: "ghost"}
 	}

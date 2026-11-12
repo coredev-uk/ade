@@ -158,7 +158,7 @@ ade doctor --probe        # also read-only checks of the API shapes ADE depends 
 ade                       # attach to (or create) the zellij session "ade" with the dashboard
 ```
 
-Already inside zellij, `ade` runs the dashboard in your current pane. `ade dash` always runs it in the current terminal.
+`ade` always lands on the dashboard (the `home` tab) of the session `ade`: when the session already runs, ADE focuses `home` first (creating it again if you closed it), then attaches. An exited session is resurrected and opens on the tab it had. Typed inside the `ade` session, `ade` focuses `home` and exits. Typed inside another zellij session, it opens (or focuses) a `home` tab running `ade dash` there, since zellij cannot nest sessions. `host.mode = "plain"` or `"vscode"` keeps the dashboard in the current terminal, as does `ade dash`.
 
 ### The daily loop
 

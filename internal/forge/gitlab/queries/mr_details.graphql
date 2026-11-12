@@ -47,6 +47,7 @@ query MRDetails($path: ID!, $iids: [String!], $first: Int!) {
                 author {
                   id
                   username
+                  name
                 }
               }
             }

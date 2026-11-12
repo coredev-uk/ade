@@ -202,7 +202,7 @@ func (e *swEnvT) wantNot(s ...string) {
 func (e *swEnvT) writes() int {
 	n := 0
 	for _, r := range e.srv.Requests() {
-		if r.Method != "GET" {
+		if r.Method != "GET" && r.Operation != "query" {
 			n++
 		}
 	}

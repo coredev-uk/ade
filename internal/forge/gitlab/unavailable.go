@@ -39,6 +39,12 @@ func (s *unavailableSet) add(f Feature) {
 	s.m[f] = true
 }
 
+func (s *unavailableSet) has(f Feature) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.m[f]
+}
+
 func (s *unavailableSet) list() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -165,6 +165,14 @@
           "hooks": {
             "additionalProperties": false,
             "properties": {
+              "install": {
+                "description": "Shell commands that set a worktree up (npm ci). Run in each worktree of this repo a workspace uses, inside the repo's dev shell, when the workspace first opens and on ade ws install; re-run only when the commands change.",
+                "items": {
+                  "description": "Shell commands that set a worktree up (npm ci). Run in each worktree of this repo a workspace uses, inside the repo's dev shell, when the workspace first opens and on ade ws install; re-run only when the commands change.",
+                  "type": "string"
+                },
+                "type": "array"
+              },
               "post_clone": {
                 "items": {
                   "type": "string"
@@ -430,6 +438,15 @@
             "type": "string"
           },
           "run": {
+            "type": "string"
+          },
+          "services": {
+            "default": "background",
+            "description": "background (default) starts the run group's services in a tab of their own, after the install hooks, when the workspace first opens; manual keeps them in the workspace tab's strip, each waiting for Enter.",
+            "enum": [
+              "background",
+              "manual"
+            ],
             "type": "string"
           }
         },

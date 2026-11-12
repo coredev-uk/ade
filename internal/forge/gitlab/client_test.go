@@ -424,7 +424,7 @@ func TestMRReviewerVerdictsThreadsAndMerger(t *testing.T) {
 		if m.Threads == nil || len(m.Threads) != 3 {
 			t.Fatalf("threads = %+v, want 3 conversations (the system note is skipped)", m.Threads)
 		}
-		if a := m.Threads[0].Authors; len(a) != 2 || a[0] != "reviewer-rae" || a[1] != "sandbox-dev" {
+		if a := m.Threads[0].Authors; len(a) != 2 || a[0].Username != "reviewer-rae" || a[1].Username != "sandbox-dev" {
 			t.Errorf("first thread authors = %v", a)
 		}
 

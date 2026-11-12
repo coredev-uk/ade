@@ -712,3 +712,87 @@ func TestResolveRefusesClosedAndUnknownIssues(t *testing.T) {
 		t.Error("unknown issue was accepted")
 	}
 }
+
+func TestStartPlacesTheChildUnderTheTrackerInTheHierarchy(t *testing.T) {
+	h := newHarness(t, fake.Free)
+	_, res, err := h.start(3, draftApi())
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := target(t, res, "api")
+	if got, ok := h.srv.Parent(*api.Child); !ok || got != issueRef(tracker, 3) {
+		t.Errorf("hierarchy parent of %v = %v, %v; want %s#3", api.Child, got, ok, tracker)
+	}
+	if !slices.Contains(h.auditActions(), "forge.issue.parent") {
+		t.Errorf("the parent write is not audited: %v", h.auditActions())
+	}
+	for _, n := range res.Notes {
+		if strings.Contains(n, "hierarchy") {
+			t.Errorf("unexpected note %q", n)
+		}
+	}
+}
+
+// GitLab nests only some pairs of types: a refusal is a note, the link and
+// Parent: line stand, and the next start does not ask again.
+func TestStartKeepsTheLinkWhenTheHierarchyRefusesAndDoesNotAskAgain(t *testing.T) {
+	h := newHarness(t, fake.Free, fake.WithRefusedParents())
+	_, res, err := h.start(3, draftApi())
+	if err != nil {
+		t.Fatalf("a refused parent must not fail the start: %v", err)
+	}
+	if countOutcome(res, "failed") != 0 {
+		t.Errorf("steps = %+v", res.Steps)
+	}
+	api := target(t, res, "api")
+	links, _ := h.forge.Links(context.Background(), issueRef(tracker, 3))
+	if !slices.ContainsFunc(links, func(l forge.Link) bool { return l.Ref == *api.Child }) {
+		t.Errorf("relates_to link missing: %+v", links)
+	}
+	if !slices.ContainsFunc(res.Notes, func(n string) bool { return strings.Contains(n, "hierarchy") && strings.Contains(n, "does not allow") }) {
+		t.Errorf("no warning about the refused hierarchy: %v", res.Notes)
+	}
+	if h.mutations() != 1 {
+		t.Fatalf("%d mutations, want the one refused attempt", h.mutations())
+	}
+
+	_, res2, err := h.start(4, draftApi())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.mutations() != 1 {
+		t.Errorf("the second start asked again (%d mutations)", h.mutations())
+	}
+	if !slices.ContainsFunc(res2.Notes, func(n string) bool { return strings.Contains(n, "refused earlier") }) {
+		t.Errorf("the remembered refusal is not mentioned: %v", res2.Notes)
+	}
+}
+
+func TestStartWithoutAHierarchyIsQuiet(t *testing.T) {
+	h := newHarness(t, fake.Free, fake.WithoutHierarchy())
+	_, res, err := h.start(3, draftApi())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range res.Notes {
+		if strings.Contains(n, "hierarchy") {
+			t.Errorf("an instance without a hierarchy got a warning: %q", n)
+		}
+	}
+}
+
+// A child that is only under the tracker in the hierarchy (no link, no
+// Parent: line) is found rather than created again.
+func TestExistingChildIsFoundThroughTheHierarchy(t *testing.T) {
+	h := newHarness(t, fake.Free)
+	pair := h.srv.SeedHierarchyCases().HierarchyOnly
+	ch := startwork.Choices{Repos: []string{"web"}, Mode: startwork.ModeBranch, Child: startwork.ChildAuto}
+	_, res, err := h.start(pair.Tracker.IID, ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	web := target(t, res, "web")
+	if web.Child == nil || *web.Child != pair.Child {
+		t.Fatalf("web child = %v, want %s", web.Child, pair.Child)
+	}
+}

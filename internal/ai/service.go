@@ -149,7 +149,14 @@ type Result struct {
 	Preflight Preflight
 	// SavedUSD is what a cache hit did not cost: the original call's price.
 	SavedUSD float64
+	// Truncated is true when the model hit its output cap, even on the
+	// retry with the cap doubled. Text ends in TruncatedNote and the answer
+	// is not cached.
+	Truncated bool
 }
+
+// TruncatedNote ends the text of an answer the model did not finish.
+const TruncatedNote = "\n… (cut short: the model reached its output limit)"
 
 // resolve picks the profile, driver and model for a job.
 func (s *Service) resolve(ctx context.Context, j Job) (name string, p config.AIProfile, d Driver, model string, err error) {
@@ -286,6 +293,12 @@ func (s *Service) hit(j Job, profile string, p config.AIProfile, model, item str
 func (s *Service) finish(j Job, name string, p config.AIProfile, model, item, hash string, resp Response, pf Preflight) (Result, error) {
 	now := s.Now()
 	id := ulid.Make().String()
+	if resp.Truncated {
+		// Kept in the record like any paid output, but with no input hash:
+		// neither Cache.Put nor Reindex will serve it for the same prompt.
+		hash = ""
+		resp.Text = strings.TrimRight(resp.Text, "\n ") + TruncatedNote
+	}
 	art := records.Artifact{
 		Feature: j.Feature, Profile: name, Model: firstNonEmpty(resp.Model, model), PromptVersion: j.PromptVersion,
 		InputHash: hash, TokensIn: resp.Usage.In, TokensOut: resp.Usage.Out, CostUSD: resp.CostUSD,
@@ -299,6 +312,9 @@ func (s *Service) finish(j Job, name string, p config.AIProfile, model, item, ha
 	}
 	if j.Schema != nil {
 		params["structured"] = resp.Structured
+	}
+	if resp.Truncated {
+		params["truncated"] = true
 	}
 	if resp.Gateway != nil {
 		if resp.Gateway.KeySpend != nil {
@@ -324,15 +340,17 @@ func (s *Service) finish(j Job, name string, p config.AIProfile, model, item, ha
 	if werr != nil {
 		return Result{Text: resp.Text, CostUSD: resp.CostUSD}, werr
 	}
-	if err := s.Cache.Put(hash, path, j.Feature, art.Model, now); err != nil {
-		return Result{Text: resp.Text, CostUSD: resp.CostUSD, Artifact: path}, err
+	if !resp.Truncated {
+		if err := s.Cache.Put(hash, path, j.Feature, art.Model, now); err != nil {
+			return Result{Text: resp.Text, CostUSD: resp.CostUSD, Artifact: path}, err
+		}
 	}
 	if aerr != nil {
-		return Result{Text: resp.Text, CostUSD: resp.CostUSD, Artifact: path}, fmt.Errorf("audit: %w", aerr)
+		return Result{Text: resp.Text, CostUSD: resp.CostUSD, Artifact: path, Truncated: resp.Truncated}, fmt.Errorf("audit: %w", aerr)
 	}
 	return Result{
 		Text: resp.Text, Artifact: path, AuditID: id, Profile: name, Model: art.Model,
-		CostUSD: resp.CostUSD, Preflight: pf,
+		CostUSD: resp.CostUSD, Preflight: pf, Truncated: resp.Truncated,
 	}, nil
 }
 

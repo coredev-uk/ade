@@ -9,7 +9,7 @@ import (
 	"github.com/coredev-uk/ade/internal/review"
 )
 
-const threadSummaryVersion = "thread-summary-v1"
+const threadSummaryVersion = "thread-summary-v2"
 
 //go:embed prompts/thread.md
 var threadSummarySystem string
@@ -51,7 +51,7 @@ func ThreadSummaryJob(forgeName string, mr forge.MR, disc forge.Discussion, d fo
 		Feature: "summarize-thread", Role: RoleExplain, PromptVersion: threadSummaryVersion,
 		System: threadSummarySystem, Prompt: b.String(),
 		Forge: forgeName, Ref: mr.Ref, Name: "thread-mr" + fmt.Sprint(mr.Ref.IID) + "-" + slug(disc.ID),
-		MaxTokens: 250,
+		MaxTokens: 700,
 		Params:    map[string]any{"discussion": disc.ID},
 	}
 }

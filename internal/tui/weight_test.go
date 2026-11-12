@@ -107,14 +107,14 @@ func TestWeightDialogRefusesNonsenseAndWritesNothing(t *testing.T) {
 
 func TestWeightDialogPrefillsTheSuggestionAndKeepsItOptional(t *testing.T) {
 	e := newWeightEnv(t, "type::bug", "app::api")
-	e.closedSample(20, 3, "Exports timezone fix", "bug", "api")
-	e.closedSample(21, 5, "Exports worker crash", "bug", "api")
+	e.closedSample(20, 3, "Exports stale totals fix", "bug", "api")
+	e.closedSample(21, 5, "Exports totals mismatch", "bug", "api")
 	e.closedSample(22, 13, "Exports dashboard dark mode", "story", "api")
 	// The suggested type and app are the issue's own labels here.
 	e.m.rebuildHome("")
 	e.selectRow(trk(11).String())
 	e.open(model.openWeight)
-	e.want("[ 3_ ]", "suggested 3 · median of 2 similar closed issues", "s suggested")
+	e.want("[ 3_ ]", "suggested 3 · weighted median of 2 similar closed issues", "s suggested")
 	e.press("backspace", "8")
 	e.want("[ 8_ ]")
 	e.press("s")
@@ -127,14 +127,14 @@ func TestWeightDialogPrefillsTheSuggestionAndKeepsItOptional(t *testing.T) {
 
 func TestWeightFromClassifyHandsOverTheSuggestion(t *testing.T) {
 	e := newWeightEnv(t, "type::bug", "app::api")
-	e.closedSample(20, 2, "Exports page totals fix", "bug", "api")
+	e.closedSample(20, 2, "Exports stale totals fix", "bug", "api")
 	e.m.rebuildHome("")
 	e.selectRow(trk(11).String())
 	e.press("c")
 	if e.m.cl == nil || e.m.cl.stage != clSuggest {
 		t.Fatalf("classify = %+v", e.m.cl)
 	}
-	e.want("Suggested weight", "2w", "median of 1 similar closed issues", "= sets it", "set weight")
+	e.want("Suggested weight", "2w", "only one similar issue", "= sets it", "set weight")
 	e.wantNot("Suggested labels") // every facet is there already
 	e.press("=")
 	if e.m.cl != nil || e.m.wt == nil || e.m.wt.input != "2" {
@@ -146,7 +146,7 @@ func TestWeightFromClassifyHandsOverTheSuggestion(t *testing.T) {
 func TestWeightDialogShowsAReasonNotAGuessWhenNothingIsComparable(t *testing.T) {
 	e := newWeightEnv(t, "type::bug", "app::api")
 	e.open(model.openWeight)
-	e.want("no weight suggested: no closed issue of the same type and app shares a title word", "[ _ ]")
+	e.want("no weight suggested: no closed issue of the same type and app is similar enough", "[ _ ]")
 	e.press("s")
 	e.want("nothing to suggest")
 }
@@ -226,12 +226,12 @@ func TestWeightSuggestionUsesClosedIssuesFromTheCache(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			e.want("suggested 2 · median of 1 similar closed issues (" + trk(10).String() + ")")
+			e.want("suggested 2 · only one similar issue: " + trk(10).String() + " (2)")
 			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	e.want("[ 2_ ]", "suggested 2 · median of 1 similar closed issues ("+trk(10).String()+")")
+	e.want("[ 2_ ]", "suggested 2 · only one similar issue: "+trk(10).String()+" (2)")
 }
 
 // `=` in the Classify dialog hands the value it just showed to the Weight

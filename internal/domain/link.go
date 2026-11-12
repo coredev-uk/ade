@@ -33,6 +33,22 @@ func ParentRefs(child forge.Issue) []forge.Ref {
 	return out
 }
 
+// Parents returns the tracker issues child belongs to: the parent a forge
+// found for it (extra: the hierarchy parent, or a relates_to link to the
+// tracker), then those its description names. Each appears once.
+func Parents(child forge.Issue, extra map[forge.Ref]forge.Ref) []forge.Ref {
+	var out []forge.Ref
+	if p, ok := extra[child.Ref]; ok {
+		out = append(out, p)
+	}
+	for _, p := range ParentRefs(child) {
+		if !containsRef(out, p) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // IsChildLink reports whether a tracker's link points at a child issue: the
 // sandbox pattern links children with relates_to; sub_issue is the native
 // hierarchy. blocks/is_blocked_by/parent never denote children.
@@ -50,9 +66,9 @@ func containsRef(refs []forge.Ref, r forge.Ref) bool {
 }
 
 // children selects the candidates that belong to tracker: linked by a child
-// link from it, or naming it as Parent. Each is returned once, in candidate
-// order; the tracker itself never counts.
-func children(tracker forge.Issue, links []forge.Link, candidates []forge.Issue) []forge.Issue {
+// link from it, or having it as a parent (see Parents). Each is returned once,
+// in candidate order; the tracker itself never counts.
+func children(tracker forge.Issue, links []forge.Link, parents map[forge.Ref]forge.Ref, candidates []forge.Issue) []forge.Issue {
 	linked := make([]forge.Ref, 0, len(links))
 	for _, l := range links {
 		if IsChildLink(l) {
@@ -65,7 +81,7 @@ func children(tracker forge.Issue, links []forge.Link, candidates []forge.Issue)
 		if c.Ref == tracker.Ref || containsRef(seen, c.Ref) {
 			continue
 		}
-		if containsRef(linked, c.Ref) || containsRef(ParentRefs(c), tracker.Ref) {
+		if containsRef(linked, c.Ref) || containsRef(Parents(c, parents), tracker.Ref) {
 			out = append(out, c)
 			seen = append(seen, c.Ref)
 		}

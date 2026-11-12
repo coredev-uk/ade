@@ -28,6 +28,9 @@ type openAI struct {
 	// noSchema is set once the endpoint refused a response_format: later
 	// structured calls go out as plain text without the failed round trip.
 	noSchema atomic.Bool
+	// completionTokens is set once the endpoint refused max_tokens (OpenAI's
+	// reasoning models take max_completion_tokens instead).
+	completionTokens atomic.Bool
 }
 
 func newOpenAI(p config.AIProfile, key string, hc *http.Client) *openAI {
@@ -47,15 +50,35 @@ func (d *openAI) host() string {
 // structured call (an old gateway, or a model without JSON-schema support).
 var errSchemaRejected = errors.New("response_format not supported")
 
-// Complete sends the call. A call with a Schema asks for response_format
-// json_schema; when the gateway or its model rejects that, the call is
-// repeated once without it and the answer is parsed from text.
+// errTokenParamRejected means the endpoint refused max_tokens and wants
+// max_completion_tokens.
+var errTokenParamRejected = errors.New("max_tokens not supported")
+
+// Complete sends the call; an answer cut off by the output cap is asked again
+// once with the cap doubled (see retryTruncated).
 func (d *openAI) Complete(ctx context.Context, c Call) (Response, error) {
+	return retryTruncated(ctx, c, d.attempt)
+}
+
+// attempt sends one call. A call with a Schema asks for response_format
+// json_schema; when the gateway or its model rejects that, the call is
+// repeated without it and the answer is parsed from text. Likewise a refused
+// max_tokens is repeated as max_completion_tokens.
+func (d *openAI) attempt(ctx context.Context, c Call) (Response, error) {
 	structured := c.Schema != nil && !d.noSchema.Load()
-	r, err := d.complete(ctx, c, structured)
-	if structured && errors.Is(err, errSchemaRejected) {
-		d.noSchema.Store(true)
-		return d.complete(ctx, c, false)
+	var r Response
+	var err error
+	for range 3 {
+		r, err = d.complete(ctx, c, structured)
+		switch {
+		case structured && errors.Is(err, errSchemaRejected):
+			d.noSchema.Store(true)
+			structured = false
+		case errors.Is(err, errTokenParamRejected):
+			d.completionTokens.Store(true)
+		default:
+			return r, err
+		}
 	}
 	return r, err
 }
@@ -69,7 +92,7 @@ func (d *openAI) complete(ctx context.Context, c Call, structured bool) (Respons
 		},
 	}
 	if c.MaxTokens > 0 {
-		body["max_tokens"] = c.MaxTokens
+		body[d.tokenParam()] = c.MaxTokens
 	}
 	if structured {
 		body["response_format"] = map[string]any{
@@ -103,6 +126,9 @@ func (d *openAI) complete(ctx context.Context, c Call, structured bool) (Respons
 		if structured && rejectsSchema(resp.StatusCode, data) {
 			return Response{}, errSchemaRejected
 		}
+		if c.MaxTokens > 0 && !d.completionTokens.Load() && rejectsMaxTokens(resp.StatusCode, data) {
+			return Response{}, errTokenParamRejected
+		}
 		return Response{}, fmt.Errorf("openai-compat: HTTP %d: %s", resp.StatusCode, oneLine(string(data)))
 	}
 	var out struct {
@@ -111,6 +137,7 @@ func (d *openAI) complete(ctx context.Context, c Call, structured bool) (Respons
 			Message struct {
 				Content string `json:"content"`
 			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
 		Usage struct {
 			Prompt  int `json:"prompt_tokens"`
@@ -134,6 +161,7 @@ func (d *openAI) complete(ctx context.Context, c Call, structured bool) (Respons
 		Bytes:    len(raw),
 
 		Structured: structured,
+		Truncated:  out.Choices[0].FinishReason == "length",
 	}
 	if g := gatewayInfo(resp.Header); g != nil {
 		r.Gateway = g
@@ -148,6 +176,22 @@ func (d *openAI) complete(ctx context.Context, c Call, structured bool) (Respons
 	}
 	r.CostSource = CostUnknown
 	return r, nil
+}
+
+func (d *openAI) tokenParam() string {
+	if d.completionTokens.Load() {
+		return "max_completion_tokens"
+	}
+	return "max_tokens"
+}
+
+// rejectsMaxTokens reports whether an error response says max_tokens is not
+// accepted and max_completion_tokens is what to send.
+func rejectsMaxTokens(status int, body []byte) bool {
+	if status != http.StatusBadRequest && status != http.StatusUnprocessableEntity {
+		return false
+	}
+	return strings.Contains(strings.ToLower(string(body)), "max_completion_tokens")
 }
 
 // rejectsSchema reports whether an error response says the request's

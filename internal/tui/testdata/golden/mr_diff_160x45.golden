@@ -11,7 +11,7 @@
                                              │          4 +type Bucket struct {
                                              │          5 +    Rate  int // tokens per minute
                                              │          6 +    Burst int
-                                             │            ┃ ✓ resolved reviewer-rae: Nit: rename Bucket.Rate to PerMinute for clarity.
+                                             │            ┃ ✓ resolved Rae Reviewer (reviewer-rae): Nit: rename Bucket.Rate to PerMinute for clarity.
                                              │          7 +}
                                              │
                                              │

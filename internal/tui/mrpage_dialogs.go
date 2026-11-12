@@ -252,7 +252,7 @@ func (m model) mrOverlay(w, h int) string {
 		title = m.g.T("Reply · ") + p.data.ref.String()
 		for _, t := range p.data.threadList() {
 			if t.d.ID == md.thread {
-				l = append(l, stFaint.Render(m.g.Vertical)+" "+stFaint.Render(ansi.Truncate(t.where()+m.g.T(" · ")+t.first().Author.Username+`: "`+oneLine(t.first().Body)+`"`, inner-3, m.g.Ell)), "")
+				l = append(l, stFaint.Render(m.g.Vertical)+" "+stFaint.Render(ansi.Truncate(t.where()+m.g.T(" · ")+t.first().Author.Display()+`: "`+oneLine(t.first().Body)+`"`, inner-3, m.g.Ell)), "")
 				break
 			}
 		}

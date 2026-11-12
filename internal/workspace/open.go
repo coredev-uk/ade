@@ -14,6 +14,7 @@ import (
 	"github.com/coredev-uk/ade/internal/app"
 	"github.com/coredev-uk/ade/internal/audit"
 	"github.com/coredev-uk/ade/internal/commitprefix"
+	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/devshell"
 	"github.com/coredev-uk/ade/internal/editor"
 	"github.com/coredev-uk/ade/internal/host"
@@ -155,6 +156,22 @@ func RenderLayout(ctx context.Context, a *app.App, project, repo, worktree strin
 	return BuildLayout(spec)
 }
 
+// RenderServicesLayout returns the zellij KDL of the worktree's services tab;
+// ok is false when the workspace would open none (services = "manual", or
+// nothing to install or start).
+func RenderServicesLayout(ctx context.Context, a *app.App, project, repo, worktree string, opts ...OpenOption) (kdl string, ok bool, err error) {
+	p, err := prepare(ctx, a, project, repo, worktree, opts)
+	if err != nil {
+		return "", false, err
+	}
+	spec := layoutSpec(ctx, p)
+	if !spec.HasServicesTab() {
+		return "", false, nil
+	}
+	kdl, err = BuildServicesLayout(spec)
+	return kdl, err == nil, err
+}
+
 // prepared is everything Open and RenderLayout derive before touching a host.
 type prepared struct {
 	loc     Location
@@ -166,6 +183,9 @@ type prepared struct {
 	runArgs []string      // extra arguments of every generated `ade task run`
 	item    *ItemRef      // the work item owning the worktree's branch, when there is one
 	agent   *agentFiles   // the omp skill; set only for the agent layout of an item
+	// background says the run group's services start in a tab of their own;
+	// install that the workspace's repos declare install commands to run first.
+	background, install bool
 }
 
 // agentFiles is the skill and overlay the agent layout's omp loads.
@@ -221,6 +241,8 @@ func prepare(ctx context.Context, a *app.App, project, repo, worktree string, op
 		if p.plan, err = mgr.Plan(ctx, loc, PlanOptions{Workspace: ws, Trees: cfg.trees}); err != nil {
 			return nil, err
 		}
+		p.background = wsDef.ServicesMode() == config.ServicesBackground
+		p.install = len(mgr.InstallTargets(loc, p.plan, true)) > 0
 	}
 	title := cfg.title
 	if title == "" {
@@ -340,7 +362,8 @@ func openZellij(ctx context.Context, a *app.App, p *prepared, res *OpenResult) e
 			return fmt.Errorf("write the omp skill: %w", err)
 		}
 	}
-	kdl, err := BuildLayout(layoutSpec(ctx, p))
+	spec := layoutSpec(ctx, p)
+	kdl, err := BuildLayout(spec)
 	if err != nil {
 		return err
 	}
@@ -353,8 +376,22 @@ func openZellij(ctx context.Context, a *app.App, p *prepared, res *OpenResult) e
 		return err
 	}
 	res.LayoutFile = file
-	created, err := openTab(ctx, runZellij, session, res.Tab, file)
+	var services tabLayout
+	if spec.HasServicesTab() {
+		svc, err := BuildServicesLayout(spec)
+		if err != nil {
+			return err
+		}
+		services = tabLayout{name: spec.ServicesTab(), file: filepath.Join(dir, slugOf(p.loc.Tree+"#"+spec.ServicesTab())+".kdl")}
+		if err := os.WriteFile(services.file, []byte(svc), 0o600); err != nil {
+			return err
+		}
+	}
+	created, servicesErr, err := openTab(ctx, runZellij, session, res.Tab, file, services)
 	res.Created = created
+	if servicesErr != nil {
+		res.Warnings = append(res.Warnings, "services tab: "+servicesErr.Error())
+	}
 	return err
 }
 
@@ -370,24 +407,43 @@ func currentSession(getenv func(string) string) string {
 	return host.SessionName
 }
 
+// FocusTab focuses the tab of a running zellij session or creates it from
+// layoutFile (zellij focuses a new tab). created says which happened.
+func FocusTab(ctx context.Context, session, tab, layoutFile string) (created bool, err error) {
+	created, _, err = openTab(ctx, runZellij, session, tab, layoutFile, tabLayout{})
+	return created, err
+}
+
+// tabLayout is a tab to create from a layout file; the zero value is none.
+type tabLayout struct{ name, file string }
+
 // openTab focuses the tab when it exists, otherwise creates it from layoutFile.
-func openTab(ctx context.Context, run zellijRunner, session, tab, layoutFile string) (created bool, err error) {
+// A new tab also gets the background tab created before it (unless that one
+// exists): zellij focuses every tab it creates, so the tab the user asked for
+// goes last and ends up focused. A failure of the background tab is returned as
+// backgroundErr and does not stop the main tab.
+func openTab(ctx context.Context, run zellijRunner, session, tab, layoutFile string, background tabLayout) (created bool, backgroundErr, err error) {
 	listing, _ := run(ctx, "list-sessions", "--no-formatting") // no server yet: no sessions
 	if zellij.SessionState(listing, session) != zellij.Live {
-		return false, fmt.Errorf("%w: %q (start it with `ade`)", ErrNoSession, session)
+		return false, nil, fmt.Errorf("%w: %q (start it with `ade`)", ErrNoSession, session)
 	}
 	names, err := run(ctx, "--session", session, "action", "query-tab-names")
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
+	have := map[string]bool{}
 	for name := range strings.SplitSeq(names, "\n") {
-		if name == tab {
-			_, err := run(ctx, "--session", session, "action", "go-to-tab-name", tab)
-			return false, err
-		}
+		have[name] = true
+	}
+	if have[tab] {
+		_, err := run(ctx, "--session", session, "action", "go-to-tab-name", tab)
+		return false, nil, err
+	}
+	if background.name != "" && !have[background.name] {
+		_, backgroundErr = run(ctx, "--session", session, "action", "new-tab", "--layout", background.file, "--name", background.name)
 	}
 	_, err = run(ctx, "--session", session, "action", "new-tab", "--layout", layoutFile, "--name", tab)
-	return err == nil, err
+	return err == nil, backgroundErr, err
 }
 
 // layoutSpec assembles the layout input: tools found on PATH, a pane per
@@ -419,11 +475,22 @@ func layoutSpec(ctx context.Context, p *prepared) LayoutSpec {
 			continue // runs as part of its dependents' `task run`
 		}
 		pane := Pane{Name: in.Node.ID, Args: append([]string{"task", "run", in.Node.ID, "--worktree", p.loc.Tree}, p.runArgs...)}
+		if p.background {
+			// Waits for the install; a service of the background tab also waits for what it requires.
+			pane.Args = append(pane.Args, "--after-install")
+		}
 		if in.Node.Repo == "" || in.Tree.Path != p.loc.Tree {
+			if p.background {
+				pane.Args = append(pane.Args, "--wait-requires")
+			}
 			spec.Services = append(spec.Services, pane)
 		} else {
 			spec.Tasks = append(spec.Tasks, pane)
 		}
+	}
+	spec.BackgroundServices = p.background
+	if p.background && p.install {
+		spec.Install = Pane{Name: "install", Args: append([]string{"ws", "install", p.loc.Tree, "--workspace", p.plan.Workspace}, p.runArgs...)}
 	}
 	if len(spec.Services)+len(spec.Tasks) > 0 {
 		spec.Up = Pane{Name: "services", Args: append([]string{"ws", "up", p.loc.Tree, "--no-zellij"}, p.runArgs...)}

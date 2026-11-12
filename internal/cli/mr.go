@@ -181,7 +181,7 @@ func printMR(w io.Writer, mr forge.MR, threads []forge.Discussion) {
 		state += " · draft"
 	}
 	fmt.Fprintf(w, "%s · %s\n", mr.Ref, mr.Title)
-	fmt.Fprintf(w, "  %s · %s → %s · by %s\n", state, mr.SourceBranch, mr.TargetBranch, mr.Author.Username)
+	fmt.Fprintf(w, "  %s · %s → %s · by %s\n", state, mr.SourceBranch, mr.TargetBranch, mr.Author.Display())
 	if mr.DetailedStatus != "" {
 		fmt.Fprintf(w, "  merge status: %s\n", mr.DetailedStatus)
 	}
@@ -192,7 +192,7 @@ func printMR(w io.Writer, mr forge.MR, threads []forge.Discussion) {
 	}
 	names := make([]string, len(mr.Approvals.ApprovedBy))
 	for i, u := range mr.Approvals.ApprovedBy {
-		names[i] = u.Username
+		names[i] = u.Display()
 	}
 	appr := "none"
 	if len(names) > 0 {
@@ -222,7 +222,7 @@ func printMR(w io.Writer, mr forge.MR, threads []forge.Discussion) {
 		if p := d.Position; p != nil {
 			where = fmt.Sprintf("%s:%d", p.Path, max(p.NewLine, p.OldLine))
 		}
-		fmt.Fprintf(tw, "  %s\t%s\t@%s: %s\n", d.ID, where, d.Notes[0].Author.Username, oneLine(d.Notes[0].Body, 70))
+		fmt.Fprintf(tw, "  %s\t%s\t%s: %s\n", d.ID, where, d.Notes[0].Author.Display(), oneLine(d.Notes[0].Body, 70))
 	}
 	tw.Flush()
 }

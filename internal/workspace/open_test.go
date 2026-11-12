@@ -104,22 +104,64 @@ func TestOpenWithoutWorkspaceStillLayoutsTheTab(t *testing.T) {
 	}
 }
 
-func TestRenderLayoutGivesEveryServiceItsOwnPane(t *testing.T) {
+func TestRenderLayoutPutsServicesInTheBackgroundTab(t *testing.T) {
 	f := newFixture(t, appManifest, "api/main", "web/main")
 	a := newApp(t, f, "plain")
-	kdl, err := RenderLayout(context.Background(), a, "demo", "web", filepath.Join(f.root, "demo", "web", "main"))
+	tree := filepath.Join(f.root, "demo", "web", "main")
+	kdl, err := RenderLayout(context.Background(), a, "demo", "web", tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The main tab keeps the workspace's own task, suspended, and no services or Up pane.
+	if !strings.Contains(kdl, `name="web.dev" start_suspended=true`) || strings.Contains(kdl, `"api.dev"`) || strings.Contains(kdl, `"ws" "up"`) {
+		t.Fatalf("main tab:\n%s", kdl)
+	}
+	svc, ok, err := RenderServicesLayout(context.Background(), a, "demo", "web", tree)
+	if err != nil || !ok {
+		t.Fatalf("services tab: ok=%v err=%v", ok, err)
+	}
+	if !strings.Contains(svc, `tab name="web/main · services"`) || strings.Contains(svc, "focus=true") ||
+		!strings.Contains(svc, `name="api.dev"`) || !strings.Contains(svc, `"task" "run" "api.dev" "--worktree" "`+tree+`" "--after-install" "--wait-requires"`) {
+		t.Fatalf("services tab:\n%s", svc)
+	}
+	if strings.Contains(svc, "start_suspended") || strings.Contains(svc, `"api.build"`) || strings.Contains(svc, `"web.dev"`) {
+		t.Fatalf("services tab holds only the services, none suspended, oneshots run with their dependents:\n%s", svc)
+	}
+}
+
+func TestRenderLayoutManualServicesKeepTheSuspendedStrip(t *testing.T) {
+	m := strings.Replace(appManifest, `default = { layout = "code", run = "dev" }`, `default = { layout = "code", run = "dev", services = "manual" }`, 1)
+	f := newFixture(t, m, "api/main", "web/main")
+	a := newApp(t, f, "plain")
+	tree := filepath.Join(f.root, "demo", "web", "main")
+	kdl, err := RenderLayout(context.Background(), a, "demo", "web", tree)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, strip, ok := strings.Cut(kdl, `size="30%" split_direction="vertical"`)
-	if !ok || !strings.Contains(strip, `name="api.dev"`) || !strings.Contains(strip, `"task" "run" "api.dev"`) {
-		t.Fatalf("api.dev belongs in the services strip:\n%s", kdl)
+	if !ok || !strings.Contains(strip, `name="api.dev" start_suspended=true`) || !strings.Contains(strip, `"ws" "up"`) {
+		t.Fatalf("manual keeps today's strip:\n%s", kdl)
 	}
-	if strings.Index(kdl, `"task" "run" "web.dev"`) < strings.Index(kdl, `"task" "run" "api.dev"`) {
-		t.Fatalf("web.dev is the workspace's own task, listed after the services:\n%s", kdl)
+	if strings.Contains(kdl, "--after-install") || strings.Contains(kdl, "--wait-requires") {
+		t.Fatalf("manual panes start by hand with no waits:\n%s", kdl)
 	}
-	if strings.Contains(kdl, `"api.build"`) {
-		t.Fatalf("oneshots run as part of their dependents, no pane:\n%s", kdl)
+	if _, ok, err := RenderServicesLayout(context.Background(), a, "demo", "web", tree); err != nil || ok {
+		t.Fatalf("manual opens no services tab: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestRenderServicesLayoutRunsTheInstallFirst(t *testing.T) {
+	m := strings.Replace(appManifest, "[repos.web.tasks.dev]", "[repos.web.hooks]\ninstall = [\"npm ci\"]\n[repos.web.tasks.dev]", 1)
+	f := newFixture(t, m, "api/main", "web/main")
+	a := newApp(t, f, "plain")
+	tree := filepath.Join(f.root, "demo", "web", "main")
+	svc, ok, err := RenderServicesLayout(context.Background(), a, "demo", "web", tree)
+	if err != nil || !ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+	install := strings.Index(svc, `name="install"`)
+	if install < 0 || install > strings.Index(svc, `name="api.dev"`) || !strings.Contains(svc, `"ws" "install" "`+tree+`" "--workspace" "default"`) {
+		t.Fatalf("install pane first:\n%s", svc)
 	}
 }
 

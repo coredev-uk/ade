@@ -76,6 +76,76 @@ func (m *Manager) Up(ctx context.Context, p *Plan, o UpOptions) ([]Result, error
 	return m.start(ctx, p, o)
 }
 
+// WaitOptions tunes UpWaiting.
+type WaitOptions struct {
+	// Poll is how often a requirement is looked at (default half a second).
+	Poll time.Duration
+	// Waiting is called once per requirement that is not ready yet.
+	Waiting func(node string)
+}
+
+// UpWaiting brings up the plan's last instance without starting the services
+// it requires: each of them must be started elsewhere (its own pane, another
+// workspace), and UpWaiting blocks until it is running and passes its probe.
+// Oneshots still run as part of this call. It is how the services tab orders
+// its panes: every pane waits for what it needs instead of starting it.
+func (m *Manager) UpWaiting(ctx context.Context, p *Plan, o UpOptions, w WaitOptions) ([]Result, error) {
+	if o.Holder == "" {
+		return nil, errors.New("workspace: UpWaiting needs a holder")
+	}
+	if _, err := m.Reap(ctx); err != nil {
+		return nil, err
+	}
+	if len(p.Instances) == 0 {
+		return nil, errors.New("workspace: nothing to start")
+	}
+	if w.Poll <= 0 {
+		w.Poll = 500 * time.Millisecond
+	}
+	o.preset = map[string]Result{}
+	for _, in := range p.Instances[:len(p.Instances)-1] {
+		if in.Node.Oneshot() {
+			continue
+		}
+		res, err := m.waitReady(ctx, in, w)
+		if err != nil {
+			return nil, err
+		}
+		o.preset[in.ID] = res
+		if o.Progress != nil {
+			o.Progress(res)
+		}
+	}
+	return m.start(ctx, p, o)
+}
+
+// waitReady polls until a service started by someone else is running and ready.
+func (m *Manager) waitReady(ctx context.Context, in *Instance, w WaitOptions) (Result, error) {
+	announced := false
+	for {
+		row, err := m.get(in.ID)
+		if err != nil {
+			return Result{}, err
+		}
+		if row != nil && m.reusable(ctx, in, row) {
+			res := Result{ID: in.ID, Node: in.Node.ID, Kind: kindOf(in.Node), Tree: in.Dir, Port: in.Port, PID: row.PID, Outcome: OutcomeReady, Shared: true, Log: in.Log}
+			if in.Ready != nil {
+				res.Ready = in.Ready.String()
+			}
+			return res, nil
+		}
+		if !announced && w.Waiting != nil {
+			announced = true
+			w.Waiting(in.Node.ID)
+		}
+		select {
+		case <-ctx.Done():
+			return Result{}, ctx.Err()
+		case <-time.After(w.Poll):
+		}
+	}
+}
+
 // start brings the planned instances up in dependency order.
 func (m *Manager) start(ctx context.Context, p *Plan, o UpOptions) ([]Result, error) {
 	results := make([]Result, len(p.Instances))

@@ -89,6 +89,11 @@ func headerLines(it *domain.WorkItem, g glyphs, cw int) []string {
 		}
 		out = append(out, " "+stBold.Render(l))
 	}
+	if a := it.Issue.Author.Display(); a != "" {
+		for _, l := range wrap("by "+a, cw) {
+			out = append(out, " "+stFaint.Render(l))
+		}
+	}
 
 	gap := 1
 	if cw >= minWidth {
@@ -268,7 +273,7 @@ func factLines(s Snapshot, g glyphs, cw int) []string {
 	} else {
 		names := make([]string, len(it.Issue.Assignees))
 		for i, a := range it.Issue.Assignees {
-			names[i] = a.Username
+			names[i] = a.Display()
 		}
 		row("assignees", strings.Join(names, ", "))
 	}

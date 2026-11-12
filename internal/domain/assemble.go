@@ -15,13 +15,18 @@ type AssembleInput struct {
 	Project    string // ADE project (manifest name)
 	Manifest   *config.Manifest
 	Me         string // current forge username
+	MeID       int64  // current forge user id; 0 when unknown
 	Tracker    forge.Issue
 	Links      []forge.Link  // the tracker's links
 	Candidates []forge.Issue // issues that may be children; unrelated ones are ignored
-	MRs        []forge.MR    // MRs of the tracker and its children
-	Branches   []string      // branches known for the item's work (no MR yet)
-	Sprints    []Sprint      // for resolving the item's sprint
-	Now        time.Time     // evaluation time; stage/court do not depend on it today
+	// Parents maps a candidate to the tracker issue the forge placed it under
+	// (hierarchy or relates_to link); a Parent: line in its description counts
+	// without an entry.
+	Parents  map[forge.Ref]forge.Ref
+	MRs      []forge.MR // MRs of the tracker and its children
+	Branches []string   // branches known for the item's work (no MR yet)
+	Sprints  []Sprint   // for resolving the item's sprint
+	Now      time.Time  // evaluation time; stage/court do not depend on it today
 }
 
 // Assemble derives a work item from forge facts.
@@ -31,7 +36,7 @@ func Assemble(in AssembleInput) WorkItem {
 		m = &config.Manifest{}
 	}
 	f := FacetsOf(in.Tracker.Labels, m.Labels)
-	kids := children(in.Tracker, in.Links, in.Candidates)
+	kids := children(in.Tracker, in.Links, in.Parents, in.Candidates)
 
 	item := WorkItem{
 		Project:  in.Project,
@@ -45,7 +50,7 @@ func Assemble(in AssembleInput) WorkItem {
 		Workflow: f.Workflow,
 		Weight:   ResolveWeight(in.Tracker, m.Tracker.Weight),
 		Sprint:   SprintOf(in.Tracker, m.Tracker.Iterations, in.Sprints),
-		Assigned: assignedTo(in.Tracker, in.Me),
+		Assigned: assignedTo(in.Tracker, in.Me, in.MeID),
 	}
 	item.Stage = deriveStage(in.Tracker, kids, in.MRs, in.Branches)
 	// The team's done label finishes an open tracker, unless an MR is still
@@ -68,12 +73,14 @@ func Assemble(in AssembleInput) WorkItem {
 	return item
 }
 
-func assignedTo(issue forge.Issue, me string) bool {
-	if me == "" {
-		return false
-	}
+// assignedTo reports whether me is among the issue's assignees: by user id
+// when both sides know one (a renamed account keeps its id), else by handle.
+func assignedTo(issue forge.Issue, me string, meID int64) bool {
 	return slices.ContainsFunc(issue.Assignees, func(u forge.User) bool {
-		return strings.EqualFold(u.Username, me)
+		if u.ID != 0 && meID != 0 {
+			return u.ID == meID
+		}
+		return me != "" && strings.EqualFold(u.Username, me)
 	})
 }
 

@@ -119,6 +119,10 @@ type Repo struct {
 type Hooks struct {
 	PostClone    []string `toml:"post_clone"`
 	PostWorktree []string `toml:"post_worktree"`
+	// Install are shell commands that set a worktree up for running (`npm ci`).
+	// ADE runs them in every worktree of the repo a workspace uses, inside the
+	// repo's dev shell, when the workspace first opens and on `ade ws install`.
+	Install []string `toml:"install"`
 }
 
 // Task is a node in the run graph: a repo task or a service.
@@ -188,6 +192,24 @@ func (c MRConv) DraftMR() bool { return c.Draft == nil || *c.Draft }
 type Workspace struct {
 	Layout string `toml:"layout"`
 	Run    string `toml:"run"` // group name
+	// Services says where the run group's services start: background (default)
+	// in a tab of their own opened with the workspace, or manual in the strip
+	// of the workspace tab, each waiting for Enter.
+	Services string `toml:"services"`
+}
+
+// Workspace service modes.
+const (
+	ServicesBackground = "background"
+	ServicesManual     = "manual"
+)
+
+// ServicesMode is Services with the default applied.
+func (w Workspace) ServicesMode() string {
+	if w.Services == "" {
+		return ServicesBackground
+	}
+	return w.Services
 }
 
 // ParseManifest decodes manifest TOML. It does not validate cross-references;

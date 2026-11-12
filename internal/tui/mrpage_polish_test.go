@@ -264,7 +264,7 @@ func TestReplyDialogQuotesTheThread(t *testing.T) {
 	e := newMREnv(t, fake.Free)
 	e.open(mrRef("api", 1).String())
 	e.press("2", "r")
-	e.want("Reply · ", `general · reviewer-rae: "Is a burst of 50 too high`)
+	e.want("Reply · ", `general · Rae Reviewer (reviewer-rae): "Is a burst of 50 too high`)
 }
 
 // A narrow draft head never cuts the severity or `long`: the triage keys take

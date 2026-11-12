@@ -6,8 +6,8 @@
  [1m▸[m [2m#1 [m  [1mRate-limit the export …[m  [m●━●━●━●━●━[1m◉[22;2m─○[m  5w   [1myou[22;2m · [m2 unresolved threads          [2m │ [m [m●[m  assigned  [2m–[m                      [2m │ [m [1mServices[m [2m───────[m [2m0 running[m
    [2m#3 [m  Retry failed webhook d…  [1m◉[22;2m─○─○─○─○─○─○[m  5w   [1myou[22;2m · [mstart work                    [2m │ [m [m┃[m                                   [2m │ [m [2mNone running.[m
    [2m#5 [m  Export timestamps igno…  [m●━[1m◉[22;2m─○─○─○─○─○[m  [2m–[m    [1m▲ blocked[22;2m · label workflow::blocked[m [2m │ [m [m●[m  started                          [2m │ [m
-   Sprint · open [2m─────────────────────────────────────────────────[m [2m1 not assigned to you[m [2m │ [m [m┃[m                                   [2m │ [m
-   [2m#6 [m  Billing export times o…  [1m◉[22;2m─○─○─○─○─○─○[m  [2m–[m    [2mnobody · unassigned[m                 [2m │ [m [m●[m  branch                           [2m │ [m
+   Sprint · open [2m───────────────────────────────────────────[m [2m1 unassigned in the tracker[m [2m │ [m [m┃[m                                   [2m │ [m
+   [2m#6 [m  Billing export times o…  [1m◉[22;2m─○─○─○─○─○─○[m  [2m–[m    [2mnobody · by Sam Smith (sam)[m         [2m │ [m [m●[m  branch                           [2m │ [m
                                                                                          [2m │ [m [m┃[m                                   [2m │ [m
                                                                                          [2m │ [m [m●[m  draft                            [2m │ [m
                                                                                          [2m │ [m [m┃[m                                   [2m │ [m

@@ -1,0 +1,19 @@
+# The issues placed under one work item in the hierarchy.
+query WorkItemChildren($path: ID!, $iids: [String!], $first: Int!) {
+  group(fullPath: $path) {
+    workItems(iids: $iids, includeDescendants: true, first: $first) {
+      nodes {
+        reference(full: true)
+        widgets(onlyTypes: [HIERARCHY]) {
+          ... on WorkItemWidgetHierarchy {
+            children(first: 100) {
+              nodes {
+                reference(full: true)
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

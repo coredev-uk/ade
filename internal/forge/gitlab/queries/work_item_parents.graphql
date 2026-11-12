@@ -1,0 +1,20 @@
+# The work item id and hierarchy parent of up to 25 issues of one group's
+# projects in one request. iids repeat across projects, so the caller matches
+# the full reference ("group/project#12") of each node.
+query WorkItemParents($path: ID!, $iids: [String!], $first: Int!) {
+  group(fullPath: $path) {
+    workItems(iids: $iids, includeDescendants: true, first: $first) {
+      nodes {
+        id
+        reference(full: true)
+        widgets(onlyTypes: [HIERARCHY]) {
+          ... on WorkItemWidgetHierarchy {
+            parent {
+              reference(full: true)
+            }
+          }
+        }
+      }
+    }
+  }
+}

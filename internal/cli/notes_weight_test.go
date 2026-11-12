@@ -314,7 +314,7 @@ func TestClassifyJSONCarriesTheWeightSuggestion(t *testing.T) {
 	if err := json.Unmarshal([]byte(e.mustAI("classify", tracker)), &out); err != nil {
 		t.Fatal(err)
 	}
-	if out.Suggestion.Weight == nil || *out.Suggestion.Weight != 3 || !strings.Contains(out.Suggestion.WeightReason, "median of 1") || len(out.Suggestion.Labels) != 0 {
+	if out.Suggestion.Weight == nil || *out.Suggestion.Weight != 3 || !strings.Contains(out.Suggestion.WeightReason, "only one similar issue") || len(out.Suggestion.Labels) != 0 {
 		t.Fatalf("suggestion = %+v", out.Suggestion)
 	}
 	jsonOut = false

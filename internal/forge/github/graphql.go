@@ -36,7 +36,7 @@ const (
               databaseId
               body
               createdAt
-              author { login }
+              author { login ... on User { name } }
               pullRequestReview { state }
             }
           }

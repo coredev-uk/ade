@@ -101,7 +101,7 @@ func TestEventChangesRequested(t *testing.T) {
 	g.must(g.srv.SetReviewState(ref(apiMR1), rae, "requested_changes"))
 	got := g.next()
 	wantOnly(t, got, EvMRChangesAsked)
-	if e := got[EvMRChangesAsked][0]; e.Severity != events.Warn || e.Title != "changes requested on api!1 by "+rae || e.Subject != "ade-demo-env/tracker#1" {
+	if e := got[EvMRChangesAsked][0]; e.Severity != events.Warn || e.Title != "changes requested on api!1 by Rae Reviewer ("+rae+")" || e.Subject != "ade-demo-env/tracker#1" {
 		t.Errorf("mr.changes_requested = %+v", e)
 	}
 	wantOnly(t, g.next())
@@ -191,7 +191,7 @@ func TestEventApprovals(t *testing.T) {
 	g.must(g.srv.ApproveAs(ref(apiMR1), rae))
 	got := g.next()
 	wantOnly(t, got, EvMRApproved)
-	if e := got[EvMRApproved][0]; e.Title != "api!1 approved by "+rae || e.Severity != events.Success {
+	if e := got[EvMRApproved][0]; e.Title != "api!1 approved by Rae Reviewer ("+rae+")" || e.Severity != events.Success {
 		t.Errorf("mr.approved = %+v", e)
 	}
 }

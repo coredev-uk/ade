@@ -82,6 +82,35 @@ type Response struct {
 	Structured bool
 	// Gateway carries LiteLLM's per-request key figures when present.
 	Gateway *GatewayInfo
+	// Truncated is true when the model stopped at its output cap: Text is a
+	// fragment, not an answer.
+	Truncated bool
+}
+
+// retryTruncated asks again, once, with double the output cap when the first
+// answer stopped at the cap. Both attempts were paid for, so their usage and
+// cost add up. A call with no cap set is not retried: there is nothing to
+// double. If the retry fails the first fragment is still returned, marked
+// truncated; only a budget stop is passed on.
+func retryTruncated(ctx context.Context, c Call, once func(context.Context, Call) (Response, error)) (Response, error) {
+	first, err := once(ctx, c)
+	if err != nil || !first.Truncated || c.MaxTokens <= 0 {
+		return first, err
+	}
+	c.MaxTokens *= 2
+	second, err := once(ctx, c)
+	second.Usage.In += first.Usage.In
+	second.Usage.Out += first.Usage.Out
+	second.Usage.Cache += first.Usage.Cache
+	second.CostUSD += first.CostUSD
+	if err != nil {
+		if _, stop := AsStop(err); stop {
+			return second, err
+		}
+		first.Usage, first.CostUSD = second.Usage, second.CostUSD
+		return first, nil
+	}
+	return second, nil
 }
 
 // GatewayInfo is what LiteLLM's response headers say about the key after the

@@ -7,14 +7,14 @@ mrs: []
 stage: assigned
 court: you
 iteration: Sprint 42
-synced: 2026-11-12T01:43:33Z
+synced: 2026-11-12T12:59:10Z
 ---
 
 <!-- ade:snapshot:begin (ADE rewrites everything between the markers; write below) -->
 # Remove the legacy CSV export path
 
 Labels: type::story, app::api
-Assignees: @sandbox-dev
+Assignees: Sandbox Dev (sandbox-dev)
 
 The v1 CSV path is unused since the new exporter shipped. Remove it and its feature flag.
 

@@ -143,6 +143,8 @@ func deriveCourt(item *WorkItem, m *config.Manifest, me, blocked string) (court 
 		return CourtYou, "set " + WorkflowLabel(m.Labels.Workflow.Done, m.Labels), nil
 	case item.Stage == StageMerged:
 		return CourtYou, "close tracker", nil
+	case !item.Assigned && len(item.Issue.Assignees) > 0:
+		return CourtNobody, "assigned to " + assigneeNames(item.Issue.Assignees), nil
 	case !item.Assigned:
 		return CourtNobody, "unassigned", nil
 	case item.Stage == StageBranch:
@@ -151,4 +153,12 @@ func deriveCourt(item *WorkItem, m *config.Manifest, me, blocked string) (court 
 		return CourtYou, "no MR yet", nil
 	}
 	return CourtYou, "start work", nil
+}
+
+func assigneeNames(us []forge.User) string {
+	names := make([]string, len(us))
+	for i, u := range us {
+		names[i] = u.Display()
+	}
+	return strings.Join(names, ", ")
 }
