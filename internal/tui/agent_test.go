@@ -403,3 +403,102 @@ func TestAgentHomeKeyNeedsAnItem(t *testing.T) {
 	}
 	_ = domain.WorkItem{}
 }
+
+// pressSync is press for a key whose single command runs git: it waits for
+// the command however long a loaded machine takes, instead of settle's short
+// timeout.
+func (e *agEnv) pressSync(key string) {
+	e.t.Helper()
+	next, cmd := e.m.Update(keyPress(key))
+	e.m = next.(model)
+	if cmd == nil {
+		return
+	}
+	next, c2 := e.m.Update(cmd())
+	e.m = next.(model)
+	e.settle(c2)
+}
+
+// seedSandbox is a run in review whose changes sit in a -ai worktree, as
+// `ade agent run --ai-branch` leaves it.
+func (e *agEnv) seedSandbox(id string) agent.Run {
+	e.t.Helper()
+	r := e.seed(id, agent.StateReview, 0.04)
+	r.BaseSHA = agGit(e.t, e.wt, "rev-parse", "HEAD")
+	r.AIBranch, r.AIWorktree = "1-rate-limit-ai", filepath.Join(e.tmp, "1-rate-limit-ai")
+	agGit(e.t, e.wt, "worktree", "add", "-q", "-b", r.AIBranch, r.AIWorktree, r.BaseSHA)
+	if err := os.WriteFile(filepath.Join(r.AIWorktree, "limiter.go"), []byte("package api\n\nfunc Limit() {}\n"), 0o644); err != nil {
+		e.t.Fatal(err)
+	}
+	if err := e.mgr.Store.Save(r); err != nil {
+		e.t.Fatal(err)
+	}
+	return r
+}
+
+func TestAgentIsolatedRunIsAcceptedFromTheDialog(t *testing.T) {
+	e := newAgEnv(t, unicodeGlyphs, 120)
+	r := e.seedSandbox("20261111-100000-aaa")
+	lazy := ""
+	old := agLazygit
+	agLazygit = func(wt string) tea.Cmd { lazy = wt; return nil }
+	t.Cleanup(func() { agLazygit = old })
+
+	e.press("a")
+	e.press("enter")
+	out := e.view()
+	for _, want := range []string{"1-rate-limit-ai", "limiter.go", "a accept", "D discard"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("isolated run page lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "P push") {
+		t.Errorf("an isolated run cannot be pushed before accept:\n%s", out)
+	}
+	e.press("l")
+	if lazy != r.AIWorktree {
+		t.Errorf("lazygit must open the -ai worktree, got %q", lazy)
+	}
+	base := r.BaseSHA
+	e.pressSync("a")
+	got, _ := e.mgr.Store.Get(r.ID)
+	if got.Isolated() || got.AcceptedAt.IsZero() || got.State != agent.StateReview || len(got.Commits) != 1 {
+		t.Fatalf("after a: %+v", got)
+	}
+	if head := agGit(t, e.wt, "rev-parse", "HEAD"); head != got.Commits[0] || agGit(t, e.wt, "rev-parse", "HEAD^") != base {
+		t.Errorf("the item's branch must be fast-forwarded to the accepted commit, at %s", head)
+	}
+	if _, err := os.Stat(r.AIWorktree); err == nil {
+		t.Error("the -ai worktree must be gone")
+	}
+	if out := e.view(); !strings.Contains(out, "P push") || strings.Contains(out, "a accept") {
+		t.Errorf("an accepted run is pushed next:\n%s", out)
+	}
+}
+
+func TestAgentIsolatedRunIsDiscardedAfterConfirm(t *testing.T) {
+	e := newAgEnv(t, unicodeGlyphs, 120)
+	r := e.seedSandbox("20261111-100000-aaa")
+	e.press("a")
+	e.press("enter")
+	e.press("D")
+	if out := e.view(); !strings.Contains(out, "Discard") || !strings.Contains(out, "1-rate-limit-ai") {
+		t.Fatalf("discard must be confirmed first:\n%s", out)
+	}
+	e.press("n")
+	if got, _ := e.mgr.Store.Get(r.ID); !got.Isolated() {
+		t.Fatal("n backs out: nothing may be removed")
+	}
+	e.press("D")
+	e.pressSync("y")
+	got, _ := e.mgr.Store.Get(r.ID)
+	if got.Isolated() || got.State != agent.StateCancelled {
+		t.Fatalf("after y: %+v", got)
+	}
+	if _, err := os.Stat(r.AIWorktree); err == nil {
+		t.Error("the -ai worktree must be removed")
+	}
+	if b := agGit(t, e.wt, "branch", "--list", "1-rate-limit-ai"); b != "" {
+		t.Errorf("the -ai branch must be removed: %q", b)
+	}
+}

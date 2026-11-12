@@ -231,4 +231,68 @@ func LazygitCmd(worktree string, inZellij bool) *exec.Cmd {
 	return cmd
 }
 
+// AIBranchSuffix names the separate branch an isolated implementation run
+// works on: <work branch>-ai.
+const AIBranchSuffix = git.AIBranchSuffix
+
+// ErrNotFastForward is returned by Accept when the work branch has commits
+// the -ai branch does not contain: taking the run's changes would need a
+// merge or a rebase, which ADE never does for you.
+var ErrNotFastForward = errors.New("not a fast-forward")
+
+// branchExists reports whether refs/heads/<name> exists in the repository dir
+// belongs to.
+func branchExists(ctx context.Context, dir, name string) bool {
+	_, err := gitIn(ctx, dir, nil, "rev-parse", "--verify", "--quiet", "refs/heads/"+name)
+	return err == nil
+}
+
+// addSandbox creates the -ai branch at base and its worktree at path, from
+// the repository the work tree belongs to. The branch has no upstream, so
+// ADE's own pull and a plain `git push` never see it.
+func addSandbox(ctx context.Context, workTree, path, aiBranch, base string) error {
+	_, err := gitIn(ctx, workTree, nil, "worktree", "add", "-q", "-b", aiBranch, path, base)
+	return err
+}
+
+// removeSandbox deletes the -ai worktree (with whatever the agent left in it)
+// and the branch. force deletes a branch that was never fast-forwarded into
+// the work branch (discard); a merged one needs no force.
+func removeSandbox(ctx context.Context, workTree, path, aiBranch string, force bool) error {
+	var errs []error
+	if path != "" {
+		if _, err := os.Stat(path); err == nil {
+			if _, err := gitIn(ctx, workTree, nil, "worktree", "remove", "--force", path); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		if _, err := gitIn(ctx, workTree, nil, "worktree", "prune"); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if aiBranch != "" && branchExists(ctx, workTree, aiBranch) {
+		flag := "-d"
+		if force {
+			flag = "-D"
+		}
+		if _, err := gitIn(ctx, workTree, nil, "branch", flag, aiBranch); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// isAncestor reports whether ancestor is contained in descendant.
+func isAncestor(ctx context.Context, dir, ancestor, descendant string) bool {
+	_, err := gitIn(ctx, dir, nil, "merge-base", "--is-ancestor", ancestor, descendant)
+	return err == nil
+}
+
+// fastForward moves the work tree's branch to rev, refusing anything that is
+// not a fast-forward.
+func fastForward(ctx context.Context, workTree, rev string) error {
+	_, err := gitIn(ctx, workTree, nil, "merge", "--ff-only", "--quiet", rev)
+	return err
+}
+
 var errNoChanges = errors.New("the agent made no changes")

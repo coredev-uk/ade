@@ -107,6 +107,7 @@ func (f *treeFinder) worktrees(ctx context.Context, m *config.Manifest, repo str
 	trees, ok := f.listed[key]
 	if !ok {
 		trees, _ = git.Client{}.Worktrees(ctx, filepath.Join(f.root, m.Name, repo, ".bare")) // not cloned: none
+		trees = git.WithoutSandboxes(trees)                                                  // an agent's -ai sandbox is not the item's tree
 		f.listed[key] = trees
 	}
 	return trees
