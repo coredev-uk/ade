@@ -179,6 +179,11 @@ func repoStatus(ctx context.Context, dir, name string, inManifest bool) RepoStat
 	return rs
 }
 
+// StatusOf is the disk state of one worktree, as `ade project status` reports it.
+func StatusOf(ctx context.Context, t git.Worktree) TreeStatus {
+	return treeStatus(ctx, git.Client{}, t)
+}
+
 func treeStatus(ctx context.Context, c git.Client, t git.Worktree) TreeStatus {
 	ts := TreeStatus{Name: filepath.Base(t.Path), Path: t.Path, Branch: t.Branch}
 	if clean, err := c.IsClean(ctx, t.Path); err != nil {

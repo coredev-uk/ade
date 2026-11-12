@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -10,7 +11,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/coredev-uk/ade/internal/app"
 	"github.com/coredev-uk/ade/internal/forge"
+	"github.com/coredev-uk/ade/internal/forgesync"
 	"github.com/coredev-uk/ade/internal/project"
 	"github.com/coredev-uk/ade/internal/records"
 	"github.com/coredev-uk/ade/internal/review"
@@ -74,7 +77,7 @@ func newItemCmd() *cobra.Command {
 					return err
 				}
 			}
-			return printItem(cmd.OutOrStdout(), ref, name, rec)
+			return printItem(cmd.OutOrStdout(), ref, name, rec, itemTrees(cmd.Context(), a, ref))
 		},
 	}
 	cmd.Flags().BoolVar(&edit, "edit", false, "open the record in your editor at the notes")
@@ -105,6 +108,20 @@ func itemRef(cmd *cobra.Command, arg string) (forge.Ref, error) {
 	return forge.Ref{Project: m.Tracker.Project, IID: n, Kind: forge.KindIssue}, nil
 }
 
+// itemTrees lists the worktrees of the cached work item that owns ref. A cache
+// that cannot be read, or has no such item, gives none.
+func itemTrees(ctx context.Context, a *app.App, ref forge.Ref) []itemWorktree {
+	st, err := a.Cache()
+	if err != nil {
+		return []itemWorktree{}
+	}
+	results, err := forgesync.Load(st)
+	if err != nil {
+		return []itemWorktree{}
+	}
+	return worktreesOfRef(ctx, a.Root, results, ref)
+}
+
 // itemOut is the JSON shape of `ade item`.
 type itemOut struct {
 	Ref         string         `json:"ref"`
@@ -113,9 +130,10 @@ type itemOut struct {
 	Frontmatter map[string]any `json:"frontmatter"`
 	Snapshot    string         `json:"snapshot"`
 	Notes       string         `json:"notes"`
+	Worktrees   []itemWorktree `json:"worktrees"` // [] when the item has none or is not cached
 }
 
-func printItem(w io.Writer, ref forge.Ref, forgeName string, rec records.Record) error {
+func printItem(w io.Writer, ref forge.Ref, forgeName string, rec records.Record, trees []itemWorktree) error {
 	if jsonOut {
 		fm := map[string]any{}
 		for k, v := range rec.Frontmatter.Scalars {
@@ -124,7 +142,7 @@ func printItem(w io.Writer, ref forge.Ref, forgeName string, rec records.Record)
 		for k, v := range rec.Frontmatter.Lists {
 			fm[k] = v
 		}
-		return printJSON(w, itemOut{Ref: ref.String(), Forge: forgeName, Path: rec.Path, Frontmatter: fm, Snapshot: rec.Snapshot, Notes: rec.Notes})
+		return printJSON(w, itemOut{Ref: ref.String(), Forge: forgeName, Path: rec.Path, Frontmatter: fm, Snapshot: rec.Snapshot, Notes: rec.Notes, Worktrees: trees})
 	}
 	sc := rec.Frontmatter.Scalars
 	head := []string{ref.String()}
@@ -140,7 +158,9 @@ func printItem(w io.Writer, ref forge.Ref, forgeName string, rec records.Record)
 		head = append(head, "synced "+v)
 	}
 	fmt.Fprintln(w, strings.Join(head, " · "))
-	fmt.Fprintf(w, "record: %s\n\n", rec.Path)
+	fmt.Fprintf(w, "record: %s\n", rec.Path)
+	printItemWorktrees(w, trees)
+	fmt.Fprintln(w)
 	if rec.Snapshot != "" {
 		fmt.Fprintln(w, rec.Snapshot)
 		fmt.Fprintln(w)

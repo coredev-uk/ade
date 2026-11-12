@@ -34,7 +34,12 @@ func newItemsCmd() *cobra.Command {
 				return err
 			}
 			if jsonOut {
-				return printJSON(cmd.OutOrStdout(), items)
+				finder := newTreeFinder(appFrom(cmd).Root)
+				out := make([]itemWithTrees, len(items))
+				for i, it := range items {
+					out[i] = itemWithTrees{WorkItem: it, Worktrees: finder.of(cmd.Context(), it)}
+				}
+				return printJSON(cmd.OutOrStdout(), out)
 			}
 			printItems(cmd.OutOrStdout(), items)
 			return nil

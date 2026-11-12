@@ -169,6 +169,17 @@ Already inside zellij, `ade` runs the dashboard in your current pane. `ade dash`
 5. **Enter** on an MR opens the MR page: threads, diff, CI; reply, resolve, approve, mark ready, merge. `ade review <group/project!N>` opens someone else's MR in a review tab; collected line comments go out as one review batch.
 6. **Clean up** with `ade gc`, which removes worktrees of merged or closed MRs when they are clean and pushed.
 
+### Moving work from another tool
+
+A branch you started elsewhere (another clone, a worktree made by hand) can join ADE's layout with `ade adopt`. It writes nothing to the forge.
+
+```sh
+ade adopt acme api 15-export-limit --from ~/src/api --item acme/tracker#15
+ade adopt acme api 15-export-limit --from ~/src/api --dry-run   # only print the steps
+```
+
+`--from` carries commits you have not pushed into ADE's clone. Without it the branch is taken from `origin`. ADE then records the item and commit prefix in the worktree. The dashboard shows the worktree under the item once a merge request from the branch exists, or when the branch name starts with a child issue's iid and a dash.
+
 ### AI and budgets (optional)
 
 AI goes through a profile in the user config. Two common shapes: `omp` (uses your existing subscription) and an OpenAI-compatible **gateway** such as LiteLLM (a team key with a budget, models chosen by alias).
