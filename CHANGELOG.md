@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## v0.2.0
+
+The team's usage feedback: personal-namespace GitLab trackers, a safer workflow-label default, `ade gc` and `ade adopt`, project-wide services and install hooks, read and write tokens, project setup keys, new issue and MR commands, more AI helpers (research, MR descriptions, CI triage, comment digests, stand-in descriptions, `-ai` agent branches), an external notification command and a shell prompt segment. **Breaking:** an unset `labels.workflow.sync` now means `ask`, not `auto`; set `sync = "auto"` in the manifest to keep the old behaviour (see "Breaking default" below).
 
 - **`ade issue child <tracker-ref>`** creates just the child issue of a tracker issue in a code repo (copied type, assignee, milestone and iteration, `relates_to` link, hierarchy parent), and **`ade issue assign <ref>`** assigns an issue to you, keeping the others (`--replace` for only you). Both are audited, take `--dry-run` and `--json`.
 - **`ade mr checkout <ref>`** checks an MR's head out as a detached `mr-<iid>` worktree without a review tab; `--json` gives the path.

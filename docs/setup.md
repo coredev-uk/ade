@@ -48,7 +48,7 @@ go run ./cmd/ade --help
 **Release binaries.** Each [GitHub release](https://github.com/coredev-uk/ade/releases) has static `ade_<version>_<os>_<arch>.tar.gz` archives (linux and darwin, amd64 and arm64) and `checksums.txt`. Without Nix:
 
 ```sh
-v=0.1.0; os=linux; arch=amd64   # or darwin / arm64
+v=0.2.0; os=linux; arch=amd64   # or darwin / arm64
 curl -LO https://github.com/coredev-uk/ade/releases/download/v$v/ade_${v}_${os}_${arch}.tar.gz
 tar xzf ade_${v}_${os}_${arch}.tar.gz && install -m 0755 ade ~/.local/bin/ade
 ade version
