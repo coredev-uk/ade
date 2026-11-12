@@ -58,6 +58,18 @@ func (g *Graph) Node(id string) (*Node, bool) {
 	return n, ok
 }
 
+// Required lists the nodes some node of the manifest requires, whether or not
+// that node is part of the plan at hand.
+func (g *Graph) Required() map[string]bool {
+	out := map[string]bool{}
+	for _, n := range g.nodes {
+		for _, req := range n.Requires {
+			out[req] = true
+		}
+	}
+	return out
+}
+
 // IDs lists every node id in sorted order.
 func (g *Graph) IDs() []string { return g.ids }
 

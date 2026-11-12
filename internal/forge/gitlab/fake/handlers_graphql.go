@@ -6,6 +6,10 @@ import (
 	"strings"
 )
 
+// operationHeader carries the GraphQL operation kind from the handler to the
+// request log (set on the incoming request, never sent on the wire).
+const operationHeader = "X-Fake-Graphql-Operation"
+
 func (s *Server) graphqlRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/graphql", s.graphql)
 }
@@ -25,10 +29,23 @@ func (s *Server) graphql(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, object{"errors": []object{{"message": "bad request"}}})
 		return
 	}
+	op := "query"
+	if strings.HasPrefix(strings.TrimSpace(req.Query), "mutation") {
+		op = "mutation"
+	}
+	r.Header.Set(operationHeader, op)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if strings.Contains(req.Query, "query MRDetails") {
 		s.mrDetails(w, req.Variables)
+		return
+	}
+	if strings.Contains(req.Query, "query WorkItemParents") || strings.Contains(req.Query, "query WorkItemChildren") {
+		s.workItems(w, req.Query, req.Variables)
+		return
+	}
+	if strings.Contains(req.Query, "workItemUpdate") {
+		s.setParentMutation(w, req.Variables)
 		return
 	}
 	if strings.Contains(req.Query, "issueSetIteration") {

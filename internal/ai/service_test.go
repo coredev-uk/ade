@@ -3,6 +3,8 @@ package ai
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -199,7 +201,7 @@ func TestArtifactCarriesFrontmatterAndLivesInTheItemRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"feature: summarize", "profile: p", "model: haiku-test", "prompt_version: summarize-v1", "input_hash: ", "audit_id: " + res.AuditID, "cost_usd: 0.002"} {
+	for _, key := range []string{"feature: summarize", "profile: p", "model: haiku-test", "prompt_version: summarize-v2", "input_hash: ", "audit_id: " + res.AuditID, "cost_usd: 0.002"} {
 		if !strings.Contains(string(raw), key) {
 			t.Errorf("artifact frontmatter lacks %q:\n%s", key, raw)
 		}
@@ -265,8 +267,27 @@ func TestCallCapReachesTheDriverAsMaxCostAndRefusesBigEstimates(t *testing.T) {
 	}
 }
 
+// A stop on the retry follows a first call that was paid for: the ledger
+// counts cost from ai.* entries, so that call is booked next to the stop.
+func TestBudgetStopAfterAPaidCallLedgersTheCost(t *testing.T) {
+	e := newEnv(t)
+	e.drv.resp = Response{CostUSD: 0.25, Usage: Usage{In: 100, Out: 50}}
+	e.drv.err = &StopError{Source: "gateway", Message: "Budget has been exceeded!"}
+	if _, err := e.svc.Run(context.Background(), summarizeJob("abc")); err == nil {
+		t.Fatal("want the stop")
+	}
+	if n := len(e.entries(ledger.StopAction)); n != 1 {
+		t.Errorf("%d budget.stop entries, want 1", n)
+	}
+	es := e.entries("ai.summarize")
+	if len(es) != 1 || es[0].AI == nil || es[0].AI.CostUSD != 0.25 || es[0].AI.TokensOut != 50 {
+		t.Fatalf("the paid first call is not booked: %+v", es)
+	}
+}
+
 func TestProviderBudgetStopIsClassifiedAndAudited(t *testing.T) {
 	e := newEnv(t)
+	e.drv.resp = Response{} // nothing was spent before the stop
 	e.drv.err = &StopError{Source: "gateway", Message: "Budget has been exceeded! Key=k Current cost: 0.01, Max budget: 0.01"}
 	_, err := e.svc.Run(context.Background(), summarizeJob("abc"))
 	if stop, ok := AsStop(err); !ok || stop.Source != "gateway" {
@@ -432,5 +453,36 @@ func TestSoftWeeklyCapAsksButNeverRefuses(t *testing.T) {
 	check(&pf, config.Budget{}, 10, true)
 	if pf.Refuse != "" || len(pf.Confirm) != 1 || !strings.Contains(pf.Confirm[0], "soft cap") {
 		t.Fatalf("%+v", pf)
+	}
+}
+
+// A driver that asks again when the answer is cut short can spend the input
+// twice and 1x + 2x the output cap: the estimate is that worst case.
+func TestPreflightCoversTheRetryOfDriversThatRetry(t *testing.T) {
+	e := newEnv(t)
+	e.conf.AI.Profiles["h"] = config.AIProfile{
+		Driver: "openai-compat", Models: map[string]string{"explain": "haiku-test"},
+		Prices: map[string]config.Price{"haiku-test": {Input: 1, Output: 5}},
+	}
+	ctx := context.Background()
+	omp, _, err := e.svc.Preview(ctx, summarizeJob("abc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	j := summarizeJob("abc")
+	j.Profile = "h"
+	retrying, _, err := e.svc.Preview(ctx, j)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if omp.Retry || !retrying.Retry {
+		t.Fatalf("Retry: omp %v, retrying %v", omp.Retry, retrying.Retry)
+	}
+	want := (2*float64(retrying.InTokens)*1 + 3*float64(retrying.OutTokens)*5) / 1e6
+	if math.Abs(retrying.EstimateUSD-want) > 1e-12 || retrying.EstimateUSD <= 2*omp.EstimateUSD {
+		t.Errorf("estimate %v, want %v (one call: %v)", retrying.EstimateUSD, want, omp.EstimateUSD)
+	}
+	if !strings.Contains(retrying.Describe(), fmt.Sprintf("≤%d out in all", 3*retrying.OutTokens)) || strings.Contains(omp.Describe(), "asks again") {
+		t.Errorf("describe: %q / %q", retrying.Describe(), omp.Describe())
 	}
 }

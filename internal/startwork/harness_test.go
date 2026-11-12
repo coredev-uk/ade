@@ -14,6 +14,7 @@ import (
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/forge/gitlab"
 	"github.com/coredev-uk/ade/internal/forge/gitlab/fake"
+	"github.com/coredev-uk/ade/internal/paths"
 	"github.com/coredev-uk/ade/internal/startwork"
 	"github.com/coredev-uk/ade/internal/startwork/swtest"
 )
@@ -77,11 +78,11 @@ type harness struct {
 	remote map[string]*swtest.Remote // by repo name
 }
 
-func newHarness(t *testing.T, tier fake.Tier) *harness {
+func newHarness(t *testing.T, tier fake.Tier, opts ...fake.Option) *harness {
 	t.Helper()
 	swtest.GitEnv(t)
 	dir := t.TempDir()
-	srv := fake.New(tier)
+	srv := fake.New(tier, opts...)
 	t.Cleanup(srv.Close)
 	client := gitlab.New(srv.URL, fake.Token)
 
@@ -94,7 +95,8 @@ func newHarness(t *testing.T, tier fake.Tier) *harness {
 		t.Fatal(err)
 	}
 	cfg := config.Defaults()
-	a := &app.App{Config: &cfg, Root: filepath.Join(dir, "root"), Audit: al, Bus: events.NewBus()}
+	a := &app.App{Config: &cfg, Root: filepath.Join(dir, "root"), Audit: al, Bus: events.NewBus(), Paths: paths.Paths{CacheDir: filepath.Join(dir, "cache")}}
+	t.Cleanup(func() { a.Close() })
 	ch, cancel := a.Bus.Subscribe(256)
 	t.Cleanup(cancel)
 
@@ -129,7 +131,7 @@ func (h *harness) start(iid int, ch startwork.Choices) (startwork.Plan, startwor
 func (h *harness) writes() int {
 	n := 0
 	for _, r := range h.srv.Requests() {
-		if r.Method != "GET" {
+		if r.Method != "GET" && r.Operation != "query" { // GraphQL reads are POSTs
 			n++
 		}
 	}
@@ -187,3 +189,14 @@ func countOutcome(res startwork.Result, outcome string) int {
 }
 
 var errBoom = errors.New("boom")
+
+// mutations counts the GraphQL mutations the fake has served.
+func (h *harness) mutations() int {
+	n := 0
+	for _, r := range h.srv.Requests() {
+		if r.Operation == "mutation" {
+			n++
+		}
+	}
+	return n
+}

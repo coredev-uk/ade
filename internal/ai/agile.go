@@ -9,9 +9,9 @@ import (
 )
 
 const (
-	standupVersion = "standup-v1"
-	sprintVersion  = "sprint-review-v1"
-	parentVersion  = "sprint-parent-v1"
+	standupVersion = "standup-v2"
+	sprintVersion  = "sprint-review-v2"
+	parentVersion  = "sprint-parent-v2"
 
 	// StandupForge and SprintForge are the item-record roots of the agile
 	// artifacts: items/_standup/<project>/<yyyymmdd>/ai/ and items/_sprint/....
@@ -66,7 +66,7 @@ func SprintParentJob(project, sprint string, parent forge.Ref, facts string) Job
 		Feature: "sprint-parent", Role: RoleExplain, PromptVersion: parentVersion,
 		System: sprintParentSystem, Prompt: facts,
 		Forge: SprintForge, Ref: forge.Ref{Project: project, IID: parent.IID},
-		Name: fmt.Sprintf("parent-%d", parent.IID), MaxTokens: 200,
+		Name: fmt.Sprintf("parent-%d", parent.IID), MaxTokens: 600,
 		Params: map[string]any{"sprint": sprint, "parent": parent.String()},
 	}
 }

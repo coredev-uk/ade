@@ -67,19 +67,36 @@ func (s *Service) RefreshItem(ctx context.Context, m *config.Manifest, f forge.F
 		}
 	}
 
-	// Children: linked as one, or already known as one (an issue that only
-	// names the tracker as its parent is not in the links).
+	// Children: linked as one, placed under the item in the forge's hierarchy,
+	// or already known as one (an issue that only names the tracker as its
+	// parent is not in the links). Those not found through links or a
+	// description are claimed through parents, so the edge survives the
+	// refresh.
 	var kidRefs []forge.Ref
+	parents := map[forge.Ref]forge.Ref{}
+	addKid := func(k forge.Ref) {
+		if k != ref && p.knownProject(k.Project) && !slices.Contains(kidRefs, k) {
+			kidRefs = append(kidRefs, k)
+			parents[k] = ref
+		}
+	}
 	for _, l := range links {
-		if domain.IsChildLink(l) && l.Ref != ref && p.knownProject(l.Ref.Project) && !slices.Contains(kidRefs, l.Ref) {
-			kidRefs = append(kidRefs, l.Ref)
+		if domain.IsChildLink(l) {
+			addKid(l.Ref)
+		}
+	}
+	if pr, ok := f.(forge.Parenter); ok {
+		if hier, err := pr.Children(ctx, ref); err == nil {
+			for _, k := range hier {
+				addKid(k)
+			}
+		} else if ctx.Err() != nil {
+			return domain.WorkItem{}, ctx.Err()
 		}
 	}
 	if old != nil {
 		for _, k := range old.Children {
-			if k.Ref != ref && !slices.Contains(kidRefs, k.Ref) {
-				kidRefs = append(kidRefs, k.Ref)
-			}
+			addKid(k.Ref)
 		}
 	}
 	kids, err := p.fetchIssues(ctx, kidRefs)
@@ -112,8 +129,8 @@ func (s *Service) RefreshItem(ctx context.Context, m *config.Manifest, f forge.F
 	applyDetail(mrs, detail)
 
 	item := domain.Assemble(domain.AssembleInput{
-		Project: m.Name, Manifest: m, Me: me.Username,
-		Tracker: tracker, Links: links, Candidates: kids,
+		Project: m.Name, Manifest: m, Me: me.Username, MeID: me.ID,
+		Tracker: tracker, Links: links, Candidates: kids, Parents: parents,
 		MRs: mrs, Branches: branches(mrs), Sprints: prev.Sprints, Now: p.now,
 	})
 	if err := saveItem(st, item); err != nil {

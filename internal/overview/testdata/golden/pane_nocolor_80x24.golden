@@ -1,4 +1,5 @@
  [1macme/tracker#15[m[1m  Rate-limit the export endpoint[m
+ [2mby Sam Smith (sam)[m
 
  [m●[m[m━━[m[m●[m[m━━[m[m●[m[m━━[m[m●[m[m━━[m[m●[m[m━━[m[1m◉[m[2m──[m[2m○[m  [1mreview[m
  [2mas st br dr ci rv mg[m
@@ -19,6 +20,5 @@
  Exports hammer the API during the nightly batch.
 
  [1mPlan[m
-
- [2m… 17 more[m
+ [2m… 18 more[m
  [2msynced 4m ago   j/k scroll   r reload   q quit[m

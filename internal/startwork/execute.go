@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/coredev-uk/ade/internal/audit"
 	"github.com/coredev-uk/ade/internal/commitprefix"
@@ -16,6 +17,7 @@ import (
 	"github.com/coredev-uk/ade/internal/events"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/git"
+	"github.com/coredev-uk/ade/internal/store"
 )
 
 // Outcomes of a step.
@@ -129,6 +131,11 @@ func (e *Env) DryRun(p Plan) Result {
 		res.Targets = append(res.Targets, tr)
 	}
 	for _, tp := range p.Targets {
+		if tp.Pinned {
+			res.Notes = append(res.Notes, tp.PinnedNote())
+		}
+	}
+	for _, tp := range p.Targets {
 		if st := stepOf(p, StepMR, tp.Target.Name); st != nil && !st.Done {
 			var child forge.Ref
 			if tp.Found.Child != nil {
@@ -185,7 +192,7 @@ func (e *Env) Execute(ctx context.Context, p Plan) (Result, error) {
 			rt.child = tp.Found.Child.Ref
 			rt.result.Child, rt.result.ChildURL = &tp.Found.Child.Ref, tp.Found.Child.WebURL
 		}
-		if rt.branch == "" && (!tp.UseChild || !rt.child.IsZero()) {
+		if rt.branch == "" && (!tp.UseChild || !rt.child.IsZero() || tp.Pinned) {
 			rt.branch = tp.Branch
 		}
 		rt.result.Branch = tp.Found.Branch
@@ -228,7 +235,7 @@ func (e *Env) run(ctx context.Context, p Plan, m *config.Manifest, rt *runtime, 
 	case StepWorkflow:
 		err = e.moveWorkflow(ctx, p, sr)
 	case StepLink:
-		err = e.link(ctx, p, rt)
+		err = e.link(ctx, p, rt, res)
 	case StepIteration:
 		err = e.copyIteration(ctx, p, rt, sr, res)
 	case StepBranch:
@@ -287,13 +294,68 @@ func (e *Env) moveWorkflow(ctx context.Context, p Plan, sr *StepResult) error {
 	return err
 }
 
-func (e *Env) link(ctx context.Context, p Plan, rt *runtime) error {
+func (e *Env) link(ctx context.Context, p Plan, rt *runtime, res *Result) error {
 	if rt.child.IsZero() {
 		return errors.New("no child issue to link")
 	}
 	err := e.Forge.LinkIssues(ctx, p.Item, rt.child, "relates_to")
 	e.audit(p, "forge.issue.link", p.Item.String(), map[string]any{"to": rt.child.String(), "type": "relates_to"}, "", err)
-	return err
+	if err != nil {
+		return err
+	}
+	e.setParent(ctx, p, rt.child, res)
+	return nil
+}
+
+// parentRefusedTTL is how long a forge's refusal to nest one project's issues
+// under another's is remembered: types do not change between starts, and a
+// retry on every start would only repeat the refusal.
+const parentRefusedTTL = 7 * 24 * time.Hour
+
+// ParentRefusedKey is the kv key of a remembered refusal to place issues of
+// childProject under issues of trackerProject.
+func ParentRefusedKey(forgeName, trackerProject, childProject string) string {
+	return "startwork:parent-refused:" + forgeName + ":" + trackerProject + ":" + childProject
+}
+
+// setParent also places the child under the tracker issue in the forge's
+// hierarchy, where it has one. It is best effort: the relates_to link and the
+// Parent: line already tie the two together, so a refusal (the forge only
+// nests some pairs of types, such as an issue under an epic) or an unreachable
+// hierarchy is a note, not a failed step, and a refusal of the pair of types is
+// remembered (a success forgets it).
+func (e *Env) setParent(ctx context.Context, p Plan, child forge.Ref, res *Result) {
+	pr, ok := e.Forge.(forge.Parenter)
+	if !ok {
+		return
+	}
+	st, serr := e.App.Cache()
+	key := ParentRefusedKey(p.in.Manifest.Forge, p.Item.Project, child.Project)
+	now := time.Now()
+	if serr == nil {
+		if refused, ok := store.Peek[bool](st, key, parentRefusedTTL, now); ok && refused {
+			res.Notes = append(res.Notes, fmt.Sprintf("%s not placed under %s in the hierarchy: refused earlier (the relates_to link and Parent: line stand)", child, p.Item))
+			return
+		}
+	}
+	err := pr.SetParent(ctx, child, p.Item)
+	if errors.Is(err, forge.ErrUnavailable) {
+		return // an instance without a hierarchy has nothing to warn about
+	}
+	e.audit(p, "forge.issue.parent", child.String(), map[string]any{"parent": p.Item.String()}, "", err)
+	switch {
+	case err == nil:
+		if serr == nil {
+			store.Put(st, key, now, false) // a pair that nests after all is not refused
+		}
+	case errors.Is(err, forge.ErrParentRefused):
+		if serr == nil {
+			store.Put(st, key, now, true)
+		}
+		res.Notes = append(res.Notes, fmt.Sprintf("%s not placed under %s in the hierarchy: the forge does not allow that pair of types (the relates_to link and Parent: line stand)", child, p.Item))
+	default:
+		res.Notes = append(res.Notes, fmt.Sprintf("%s not placed under %s in the hierarchy: %v (the relates_to link and Parent: line stand)", child, p.Item, err))
+	}
 }
 
 func (e *Env) copyIteration(ctx context.Context, p Plan, rt *runtime, sr *StepResult, res *Result) error {

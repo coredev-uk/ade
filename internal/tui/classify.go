@@ -414,6 +414,9 @@ func (m model) classifySuggestView(d *classifyDialog, inner int) []string {
 			} else {
 				how += g.sep() + fmt.Sprintf("$%.4f", r.CostUSD)
 			}
+			if note := r.CutShort(); note != "" {
+				how += g.sep() + note
+			}
 		}
 	}
 	miss := d.in.Missing()

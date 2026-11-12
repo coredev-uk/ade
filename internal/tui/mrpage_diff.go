@@ -329,7 +329,7 @@ func (m model) inlineThread(th forge.Discussion, indent string, w int) []string 
 	if th.Resolved {
 		state = stFaint.Render(g.OK + " resolved")
 	}
-	line := state + " " + stFaint.Render(n.Author.Username+": ") + stFaint.Render(oneLine(n.Body))
+	line := state + " " + stFaint.Render(n.Author.Display()+": ") + stFaint.Render(oneLine(n.Body))
 	return []string{indent + stRule.Render(g.Vertical) + " " + ansi.Truncate(line, w-2, m.g.Ell)}
 }
 

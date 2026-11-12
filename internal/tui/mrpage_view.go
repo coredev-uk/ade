@@ -189,7 +189,7 @@ func (m model) mrRule(w int) string {
 	if d != nil {
 		switch p.tab {
 		case tabOverview:
-			guide = d.mr.Author.Username + " " + m.g.Sep + " " + d.mr.SourceBranch + m.g.T(" → ") + d.mr.TargetBranch
+			guide = d.mr.Author.Display() + " " + m.g.Sep + " " + d.mr.SourceBranch + m.g.T(" → ") + d.mr.TargetBranch
 		case tabThreads:
 			if d.threadsL.st == loadOK || len(d.threads) > 0 { // not "0 unresolved" while loading or failed
 				guide = fmt.Sprintf("%d unresolved %s %d resolved", len(d.byGroup(groupOpen)), m.g.Sep, len(d.byGroup(groupDone)))
@@ -284,11 +284,11 @@ func (m model) mrOverview(w, h int) string {
 		}
 	}
 	kv("state", mr.State+map[bool]string{true: " " + g.Sep + " draft", false: ""}[mr.Draft])
-	kv("author", mr.Author.Username)
+	kv("author", mr.Author.Display())
 	kv("branch", mr.SourceBranch+m.g.T(" → ")+mr.TargetBranch)
 	var rev []string
 	for _, u := range mr.Reviewers {
-		rev = append(rev, u.Username)
+		rev = append(rev, u.Display())
 	}
 	kv("reviewers", strings.Join(rev, ", "))
 	kv("approvals", approvalsText(mr))
@@ -504,7 +504,7 @@ func (m model) threadRow(t thread, selected bool, w int) string {
 		state = stFaint.Render(pad(m.g, "note", 9))
 	}
 	n := t.first()
-	who := stFaint.Render(n.Author.Username)
+	who := stFaint.Render(n.Author.Display())
 	if len(t.d.Notes) > 1 {
 		who += stFaint.Render(fmt.Sprintf(" +%d", len(t.d.Notes)-1))
 	}
@@ -555,7 +555,7 @@ func (m model) threadDetail(t thread, w, h int) string {
 			body = append(body, stFaint.Render(oneLine(n.Body)))
 			continue
 		}
-		body = append(body, stBold.Render(n.Author.Username)+stFaint.Render(" "+g.Sep+" "+ago(n.CreatedAt)))
+		body = append(body, stBold.Render(n.Author.Display())+stFaint.Render(" "+g.Sep+" "+ago(n.CreatedAt)))
 		body = append(body, strings.Split(lipgloss.Wrap(n.Body, w-1, " "), "\n")...)
 		body = append(body, "")
 	}

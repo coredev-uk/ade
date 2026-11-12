@@ -106,6 +106,11 @@ func (m *model) editing() *editor {
 // paste puts bracketed-paste text into the open editor; the Deny reason is a
 // one-liner, so its newlines become spaces.
 func (m *model) paste(msg tea.PasteMsg) {
+	if m.sw != nil && m.sw.branchIn != nil {
+		in, _ := m.sw.branchIn.Update(tea.PasteMsg{Content: strings.Join(strings.Fields(msg.Content), "")})
+		m.sw.branchIn = &in
+		return
+	}
 	e := m.editing()
 	if e == nil {
 		return

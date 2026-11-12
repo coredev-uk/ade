@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"github.com/coredev-uk/ade/internal/host/zellij"
 	"github.com/coredev-uk/ade/internal/paths"
 	"github.com/coredev-uk/ade/internal/tui"
+	"github.com/coredev-uk/ade/internal/workspace"
 )
 
 func init() {
@@ -42,8 +44,9 @@ func init() {
 	})
 }
 
-// launch resolves the host environment and either runs the dashboard here or
-// replaces this process with zellij so it owns the TTY.
+// launch resolves the host environment and either runs the dashboard here,
+// moves a running zellij session to its dashboard tab, or replaces this
+// process with zellij so it owns the TTY.
 func launch(cmd *cobra.Command, dry bool) error {
 	a := appFrom(cmd)
 	env, err := hostEnv(cmd.Context(), a)
@@ -68,6 +71,9 @@ func launch(cmd *cobra.Command, dry bool) error {
 	}
 	layout := zellij.Layout(ade)
 	layoutFile := filepath.Join(a.Paths.CacheDir, "layout.kdl")
+	if action == host.FocusHome || action == host.OpenHome {
+		return showHomeTab(cmd, action, env.CurrentSession, layout, layoutFile, dry)
+	}
 	var zellijConfig string
 	if env.UsesUnlockFirst(os.Getenv) {
 		// A zellij started inside VS Code runs ADE's unlock-first preset (PLAN 6.7).
@@ -88,13 +94,14 @@ func launch(cmd *cobra.Command, dry bool) error {
 			return fmt.Errorf("write zellij config: %w", err)
 		}
 	}
-	if action == host.Create {
-		if err := paths.EnsureDir(a.Paths.CacheDir); err != nil {
+	focusFirst := host.FocusesHomeFirst(action, env.Session)
+	if action == host.Create || focusFirst {
+		if err := writeHomeLayout(a.Paths.CacheDir, layoutFile, layout); err != nil {
 			return err
 		}
-		if err := os.WriteFile(layoutFile, []byte(layout), 0o600); err != nil {
-			return fmt.Errorf("write layout: %w", err)
-		}
+	}
+	if focusFirst {
+		focusHomeBeforeAttach(cmd.Context(), os.Stderr, layoutFile)
 	}
 	bin, err := exec.LookPath("zellij")
 	if err != nil {
@@ -109,9 +116,50 @@ func launch(cmd *cobra.Command, dry bool) error {
 	return syscall.Exec(bin, argv, os.Environ())
 }
 
+// focusHomeBeforeAttach moves the live `ade` session to its home tab: it would
+// otherwise open on the tab focused last, often an agent tab. A failure only
+// warns, because attaching still works.
+func focusHomeBeforeAttach(ctx context.Context, warn io.Writer, layoutFile string) {
+	if _, err := workspace.FocusTab(ctx, host.SessionName, zellij.HomeTab, layoutFile); err != nil {
+		fmt.Fprintln(warn, "ade: could not focus the home tab:", err)
+	}
+}
+
+func writeHomeLayout(cacheDir, layoutFile, layout string) error {
+	if err := paths.EnsureDir(cacheDir); err != nil {
+		return err
+	}
+	if err := os.WriteFile(layoutFile, []byte(layout), 0o600); err != nil {
+		return fmt.Errorf("write layout: %w", err)
+	}
+	return nil
+}
+
+// showHomeTab runs inside zellij: it focuses the `home` tab of the current
+// session, creating it (running `ade dash`) when it is gone or its dashboard
+// has exited, so the dashboard never runs a second time in the pane that typed `ade`.
+func showHomeTab(cmd *cobra.Command, action host.Action, session, layout, layoutFile string, dry bool) error {
+	out := cmd.OutOrStdout()
+	if action == host.OpenHome {
+		fmt.Fprintf(out, "zellij cannot nest sessions: opening the dashboard in the %q tab of session %q\n", zellij.HomeTab, session)
+	}
+	if dry {
+		fmt.Fprintf(out, "# layout file: %s\n%s", layoutFile, layout)
+		fmt.Fprintf(out, "# focus tab %q of session %q, or create it from the layout\n", zellij.HomeTab, session)
+		return nil
+	}
+	if err := writeHomeLayout(filepath.Dir(layoutFile), layoutFile, layout); err != nil {
+		return err
+	}
+	if _, err := workspace.FocusTab(cmd.Context(), session, zellij.HomeTab, layoutFile); err != nil {
+		return fmt.Errorf("open the home tab: %w", err)
+	}
+	return nil
+}
+
 func hostEnv(ctx context.Context, a *app.App) (host.Env, error) {
 	env := host.Env{
-		Mode: a.Config.Host.Mode, InsideZellij: os.Getenv("ZELLIJ") != "",
+		Mode: a.Config.Host.Mode, InsideZellij: os.Getenv("ZELLIJ") != "", CurrentSession: os.Getenv("ZELLIJ_SESSION_NAME"),
 		InsideVSCode: os.Getenv("TERM_PROGRAM") == "vscode" || os.Getenv("VSCODE_IPC_HOOK_CLI") != "",
 		WebTTY:       host.WebTTY(os.Getenv),
 	}

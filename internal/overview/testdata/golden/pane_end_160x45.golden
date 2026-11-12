@@ -1,4 +1,5 @@
  acme/tracker#15  Rate-limit the export endpoint
+ by Sam Smith (sam)
 
  ●━━●━━●━━●━━●━━◉──○  review
  as st br dr ci rv mg
@@ -38,7 +39,6 @@
 
  1. check the tenant list
  2. then `ade sync`
-
 
 
 

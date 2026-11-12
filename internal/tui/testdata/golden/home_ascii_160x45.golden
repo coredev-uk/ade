@@ -6,8 +6,8 @@
  > #1   Rate-limit the expor...  *=*=*=*=*=@-o  5w   you - 2 unresolved threads           |  *  assigned  -                       |  Services ------- 0 running
    #3   Retry failed webhook...  @-o-o-o-o-o-o  5w   you - start work                     |  |                                    |  None running.
    #5   Export timestamps ig...  *=@-o-o-o-o-o  -    ! blocked - label workflow::blocked  |  *  started                           |
-   Sprint - open ------------------------------------------------- 1 not assigned to you  |  |                                    |
-   #6   Billing export times...  @-o-o-o-o-o-o  -    nobody - unassigned                  |  *  branch                            |
+   Sprint - open ------------------------------------------- 1 unassigned in the tracker  |  |                                    |
+   #6   Billing export times...  @-o-o-o-o-o-o  -    nobody - by Sam Smith (sam)          |  *  branch                            |
                                                                                           |  |                                    |
                                                                                           |  *  draft                             |
                                                                                           |  |                                    |

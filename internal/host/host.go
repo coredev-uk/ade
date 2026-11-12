@@ -27,12 +27,20 @@ const (
 	Attach
 	// Create execs zellij to create the session from the generated layout.
 	Create
+	// FocusHome runs inside the `ade` session: focus (or recreate) its home
+	// tab, which already shows the dashboard, and exit.
+	FocusHome
+	// OpenHome runs inside another zellij session, which cannot be nested:
+	// open (or focus) a home tab running `ade dash` in that session and exit.
+	OpenHome
 )
 
 // Env is the environment the decision depends on.
 type Env struct {
-	Mode            string
-	InsideZellij    bool // $ZELLIJ is set
+	Mode         string
+	InsideZellij bool // $ZELLIJ is set
+	// CurrentSession is $ZELLIJ_SESSION_NAME, the session ade runs inside.
+	CurrentSession  string
 	ZellijAvailable bool // zellij is on PATH
 	// InsideVSCode is true in a terminal VS Code started (also the case for a
 	// new zellij session created from it); such a session runs with ADE's
@@ -55,7 +63,13 @@ func Decide(e Env) (a Action, ok bool) {
 		return RunHere, true
 	}
 	if e.InsideZellij {
-		return RunHere, true
+		switch e.CurrentSession {
+		case "":
+			return RunHere, true // cannot tell which session this is: leave the pane alone
+		case SessionName:
+			return FocusHome, true
+		}
+		return OpenHome, true
 	}
 	if !e.ZellijAvailable {
 		return RunHere, e.Mode != ModeZellij
@@ -64,6 +78,14 @@ func Decide(e Env) (a Action, ok bool) {
 		return Create, true
 	}
 	return Attach, true
+}
+
+// FocusesHomeFirst says whether the launcher moves the session to its home
+// tab before attaching: a live session otherwise opens on whatever tab was
+// focused last, often a workspace tab. An exited session is resurrected by
+// attaching and cannot be addressed until then.
+func FocusesHomeFirst(a Action, state zellij.State) bool {
+	return a == Attach && state == zellij.Live
 }
 
 // PresetEnv is the environment variable that forces zellij's keybinding

@@ -2,6 +2,7 @@ package startwork_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -710,5 +711,265 @@ func TestResolveRefusesClosedAndUnknownIssues(t *testing.T) {
 	}
 	if _, err := startwork.ResolveWith(ctx, h.forge, h.m, issueRef(tracker, 999)); err == nil {
 		t.Error("unknown issue was accepted")
+	}
+}
+
+func TestStartPlacesTheChildUnderTheTrackerInTheHierarchy(t *testing.T) {
+	h := newHarness(t, fake.Free)
+	_, res, err := h.start(3, draftApi())
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := target(t, res, "api")
+	if got, ok := h.srv.Parent(*api.Child); !ok || got != issueRef(tracker, 3) {
+		t.Errorf("hierarchy parent of %v = %v, %v; want %s#3", api.Child, got, ok, tracker)
+	}
+	if !slices.Contains(h.auditActions(), "forge.issue.parent") {
+		t.Errorf("the parent write is not audited: %v", h.auditActions())
+	}
+	for _, n := range res.Notes {
+		if strings.Contains(n, "hierarchy") {
+			t.Errorf("unexpected note %q", n)
+		}
+	}
+}
+
+// GitLab nests only some pairs of types: a refusal is a note, the link and
+// Parent: line stand, and the next start does not ask again.
+func TestStartKeepsTheLinkWhenTheHierarchyRefusesAndDoesNotAskAgain(t *testing.T) {
+	h := newHarness(t, fake.Free, fake.WithRefusedParents())
+	_, res, err := h.start(3, draftApi())
+	if err != nil {
+		t.Fatalf("a refused parent must not fail the start: %v", err)
+	}
+	if countOutcome(res, "failed") != 0 {
+		t.Errorf("steps = %+v", res.Steps)
+	}
+	api := target(t, res, "api")
+	links, _ := h.forge.Links(context.Background(), issueRef(tracker, 3))
+	if !slices.ContainsFunc(links, func(l forge.Link) bool { return l.Ref == *api.Child }) {
+		t.Errorf("relates_to link missing: %+v", links)
+	}
+	if !slices.ContainsFunc(res.Notes, func(n string) bool { return strings.Contains(n, "hierarchy") && strings.Contains(n, "does not allow") }) {
+		t.Errorf("no warning about the refused hierarchy: %v", res.Notes)
+	}
+	if h.mutations() != 1 {
+		t.Fatalf("%d mutations, want the one refused attempt", h.mutations())
+	}
+
+	_, res2, err := h.start(4, draftApi())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.mutations() != 1 {
+		t.Errorf("the second start asked again (%d mutations)", h.mutations())
+	}
+	if !slices.ContainsFunc(res2.Notes, func(n string) bool { return strings.Contains(n, "refused earlier") }) {
+		t.Errorf("the remembered refusal is not mentioned: %v", res2.Notes)
+	}
+}
+
+// An error that is not about the types (permission, a locked issue) is a note
+// for this start only: the next one asks again.
+func TestStartDoesNotRememberAParentErrorThatIsNotATypeRefusal(t *testing.T) {
+	h := newHarness(t, fake.Free, fake.WithParentError("You do not have permission to update this work item"))
+	for i, iid := range []int{3, 4} {
+		_, res, err := h.start(iid, draftApi())
+		if err != nil {
+			t.Fatalf("start %d: a parent error must not fail the start: %v", i+1, err)
+		}
+		if !slices.ContainsFunc(res.Notes, func(n string) bool {
+			return strings.Contains(n, "not placed under") && strings.Contains(n, "permission")
+		}) {
+			t.Errorf("start %d: no note about the parent: %v", i+1, res.Notes)
+		}
+		if slices.ContainsFunc(res.Notes, func(n string) bool { return strings.Contains(n, "refused earlier") }) {
+			t.Errorf("start %d: an ordinary error was remembered as a refusal: %v", i+1, res.Notes)
+		}
+	}
+	if h.mutations() != 2 {
+		t.Errorf("%d mutations, want one attempt per start", h.mutations())
+	}
+}
+
+func TestStartWithoutAHierarchyIsQuiet(t *testing.T) {
+	h := newHarness(t, fake.Free, fake.WithoutHierarchy())
+	_, res, err := h.start(3, draftApi())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range res.Notes {
+		if strings.Contains(n, "hierarchy") {
+			t.Errorf("an instance without a hierarchy got a warning: %q", n)
+		}
+	}
+}
+
+// A child that is only under the tracker in the hierarchy (no link, no
+// Parent: line) is found rather than created again.
+func TestExistingChildIsFoundThroughTheHierarchy(t *testing.T) {
+	h := newHarness(t, fake.Free)
+	pair := h.srv.SeedHierarchyCases().HierarchyOnly
+	ch := startwork.Choices{Repos: []string{"web"}, Mode: startwork.ModeBranch, Child: startwork.ChildAuto}
+	_, res, err := h.start(pair.Tracker.IID, ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	web := target(t, res, "web")
+	if web.Child == nil || *web.Child != pair.Child {
+		t.Fatalf("web child = %v, want %s", web.Child, pair.Child)
+	}
+}
+
+func pinned(repo, branch string) startwork.Choices {
+	ch := draftApi()
+	ch.Repos = []string{repo}
+	ch.Branches = map[string]string{repo: branch}
+	return ch
+}
+
+// mrSources lists the source branches of the MRs on branches ade made, apart
+// from the ones the fake seeds.
+func mrSources(t *testing.T, h *harness, project string, branches ...string) []string {
+	t.Helper()
+	mrs, err := h.forge.ListMRs(context.Background(), forge.MRQuery{Project: project, State: "all"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, mr := range mrs {
+		if slices.Contains(branches, mr.SourceBranch) {
+			out = append(out, mr.SourceBranch)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+func TestPinnedNewBranchGetsItsOwnBranchMRAndWorktree(t *testing.T) {
+	h := newHarness(t, fake.Free)
+	if _, _, err := h.start(3, draftApi()); err != nil { // the default set of changes
+		t.Fatal(err)
+	}
+	plan, res, err := h.start(3, pinned("api", "hotfix/retry-cache"))
+	if err != nil {
+		t.Fatalf("start: %v\n%+v", err, res.Steps)
+	}
+	api := target(t, res, "api")
+	if want := filepath.Join(h.app.Root, "demo-gl", "api", "hotfix-retry-cache"); api.Worktree != want || api.Branch != "hotfix/retry-cache" {
+		t.Errorf("target = %+v, want branch hotfix/retry-cache in %s", api, want)
+	}
+	if !plan.Targets[0].Pinned || plan.Targets[0].Found.Branch != "" {
+		t.Errorf("target plan = %+v, want a pinned branch that does not exist yet", plan.Targets[0])
+	}
+	if got := countOutcome(res, startwork.OutcomeCreated); got != 3 { // branch, MR, worktree; the child is reused
+		t.Errorf("%d steps created, want 3: %+v", got, res.Steps)
+	}
+	if got := mrSources(t, h, apiProj, "3-retry-failed-webhook-deliveries", "hotfix/retry-cache"); len(got) != 2 {
+		t.Errorf("MR source branches = %v: want one MR per branch", got)
+	}
+
+	// Again: the pinned branch is now found, with its MR and worktree.
+	before := h.writes()
+	plan, _, err = h.start(3, pinned("api", "hotfix/retry-cache"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.writes() != before || plan.Pending() != 0 {
+		t.Errorf("re-run: %d writes, %d pending steps, want none", h.writes()-before, plan.Pending())
+	}
+}
+
+func TestPinnedExistingBranchIsReusedWithoutCreatingIt(t *testing.T) {
+	h := newHarness(t, fake.Free)
+	ctx := context.Background()
+	if _, err := h.forge.CreateBranch(ctx, apiProj, "second-set", "main"); err != nil {
+		t.Fatal(err)
+	}
+	h.forge.FailNext("CreateBranch", errBoom) // any CreateBranch from here on fails the test
+	plan, res, err := h.start(3, pinned("api", "second-set"))
+	if err != nil {
+		t.Fatalf("start: %v\n%+v", err, res.Steps)
+	}
+	tp := plan.Targets[0]
+	if !tp.Pinned || tp.Found.Branch != "second-set" || tp.Branch != "second-set" {
+		t.Fatalf("target plan = %+v, want the existing second-set", tp)
+	}
+	api := target(t, res, "api")
+	if api.MR == nil || api.Worktree != filepath.Join(h.app.Root, "demo-gl", "api", "second-set") {
+		t.Fatalf("target = %+v: want a new MR and the worktree of second-set", api)
+	}
+	if got := mrSources(t, h, apiProj, "second-set"); len(got) != 1 {
+		t.Errorf("MRs from second-set = %v, want one", got)
+	}
+
+	// The worktree of the branch is reused, not added again.
+	plan, _, err = h.start(3, pinned("api", "second-set"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Pending() != 0 {
+		t.Errorf("re-run has %d pending steps: %+v", plan.Pending(), plan.Steps)
+	}
+	for _, s := range plan.Steps {
+		if s.Kind == startwork.StepWorktree && !s.Done {
+			t.Errorf("worktree step = %+v, want the existing tree reused", s)
+		}
+	}
+}
+
+func TestPinnedBranchWithItsMROpensNoNewMR(t *testing.T) {
+	h := newHarness(t, fake.Free)
+	_, res, err := h.start(3, draftApi())
+	if err != nil {
+		t.Fatal(err)
+	}
+	def := target(t, res, "api")
+	before := h.writes()
+	plan, _, err := h.start(3, pinned("api", def.Branch))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.writes() != before || plan.Pending() != 0 || plan.Targets[0].Found.MR == nil {
+		t.Errorf("pinning the existing branch: %d writes, %d pending, MR %v", h.writes()-before, plan.Pending(), plan.Targets[0].Found.MR)
+	}
+}
+
+func TestPinnedBranchOnlyAffectsItsRepo(t *testing.T) {
+	h := newHarness(t, fake.Free)
+	ch := startwork.Choices{
+		Repos: []string{"api", "web"}, Mode: startwork.ModeDraft, Child: startwork.ChildAuto,
+		Branches: map[string]string{"web": "second-set"},
+	}
+	_, res, err := h.start(8, ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	api, web := target(t, res, "api"), target(t, res, "web")
+	if web.Branch != "second-set" || !strings.HasPrefix(api.Branch, fmt.Sprint(api.Child.IID, "-")) {
+		t.Errorf("branches: api %q, web %q: want api derived and web pinned", api.Branch, web.Branch)
+	}
+	if web.Child == nil {
+		t.Error("the pinned repo got no child issue: pinning changes only the branch")
+	}
+}
+
+func TestDryRunNamesThePinnedBranchAsNewOrExisting(t *testing.T) {
+	h := newHarness(t, fake.Free)
+	if _, err := h.forge.CreateBranch(context.Background(), apiProj, "second-set", "main"); err != nil {
+		t.Fatal(err)
+	}
+	for branch, want := range map[string]string{
+		"second-set": "branch for api: second-set (existing)",
+		"fresh-one":  "branch for api: fresh-one (new, from main)",
+	} {
+		before := h.writes()
+		_, res, err := h.env.Start(context.Background(), h.resolve(3), pinned("api", branch), true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if h.writes() != before || !slices.Contains(res.Notes, want) {
+			t.Errorf("%s: writes %d→%d, notes %q, want %q", branch, before, h.writes(), res.Notes, want)
+		}
 	}
 }

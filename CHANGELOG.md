@@ -10,6 +10,16 @@
 - **`ade items --json` and `ade item`** list each item's worktrees: path, branch, dirty, ahead and behind.
 - **Agents** run with `ADE_AGENT_RUN=1`, in `ade agent` runs and in the zellij agent pane, so a global `pre-push` hook can stop an agent's own push (sample in docs/manifest.md). Agent prompts carry the expanded commit prefix.
 - **Baseline folder:** the docs and the remaining code paths use the folder named after the default branch (`develop/`, not always `main/`).
+- **Names:** people show as `Name (username)` in the dashboard, MR page, overview, item records, notifications and `ade mr`.
+- **Sprint list:** it holds only sprint tickets whose tracker issue has no assignee, and shows each ticket's author. A ticket assigned to someone else reads `assigned to <name>`, not `unassigned`. Assignment matches by user ID first.
+- **My work:** a code-repo issue appears under its tracker item when they are tied by GitLab's work-item hierarchy, a `Parent:` line or a `relates_to` link, even when the tracker item is not yours or is outside the sprint window. `ade start` also sets the hierarchy parent when GitLab allows that pairing, and warns without failing when it does not.
+- **AI answers** cut at the output limit are retried once with a larger limit. If still cut, they show a note and are not cached. Classify, sprint-parent and thread summaries have larger limits, and their old cached answers are renewed.
+- **Weight suggestion** ranks closed issues by the shared title words that matter (inflected stop words no longer match), takes the score-weighted median of the five nearest, says when only one issue matched, and lists the matches with their weights.
+- **Bare `ade`** lands on the dashboard: it focuses (or recreates) the `home` tab of the `ade` session, also when run inside zellij.
+- **Install hooks:** `[repos.<r>.hooks] install` runs once per worktree (again when the commands change, or with `ade ws install --force`), inside the repo's dev shell.
+- **`ade start --branch <repo>=<branch>`** (and `b` in the start dialog) pins a sibling repo to a named branch: an existing branch and its MR are reused, a new name is created. The dry run notes the branch per repo.
+- **AI answers cut short** show a note beside the text, never inside it, so a draft reply or a parsed answer never contains it. The same prompt is not re-bought for 30 minutes unless you refresh, and the pre-flight shows the retry's worst case. Summaries, draft replies, standups and sprint reviews are renewed once.
+- **Background services:** opening a workspace for the first time also opens an unfocused `<tab> · services` tab. It runs the install hooks first, then each service in dependency order, with no "waiting to run" panes. A required service with a port and no `ready` check counts as ready when its port accepts connections. `[workspaces.<w>] services = "manual"` keeps the old on-demand strip. A waiting pane reports every 30 seconds and stops with the reason when its dependency or the install failed, or after `--wait-timeout` (10 minutes by default). A lockfile change at the worktree root reruns the install.
 
 ## v0.1.0
 

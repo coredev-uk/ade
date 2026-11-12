@@ -44,6 +44,9 @@ type Request struct {
 	Path   string // escaped path, e.g. /api/v4/projects/a%2Fb/issues
 	Query  string
 	Status int
+	// Operation is "query" or "mutation" for a GraphQL request, so a test can
+	// tell its reads from its writes.
+	Operation string
 }
 
 // Server is a running fake GitLab. The embedded httptest.Server provides URL
@@ -83,6 +86,11 @@ type options struct {
 	gitRoot  string
 
 	noMRDetails   bool
+	noHierarchy   bool
+	refuseParents bool
+	parentError   string // workItemUpdate answers this payload error
+	forbidParents bool   // workItemUpdate answers 403, as a read-only token gets
+	workItemPage  int    // caps workItems page size below the requested one; 0 = no cap
 	userNamespace bool
 	rateLimit     int
 	rateWindow    time.Duration
@@ -235,7 +243,7 @@ func (s *Server) end(r *http.Request, status int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.inflight--
-	s.log = append(s.log, Request{Method: r.Method, Path: r.URL.EscapedPath(), Query: r.URL.RawQuery, Status: status})
+	s.log = append(s.log, Request{Method: r.Method, Path: r.URL.EscapedPath(), Query: r.URL.RawQuery, Status: status, Operation: r.Header.Get(operationHeader)})
 }
 
 // rateLimited counts the request against the WithRateLimit window.

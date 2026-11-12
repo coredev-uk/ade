@@ -25,6 +25,8 @@ func sampleResult() forgesync.Result {
 			Stage: st, Court: c, Reason: reason, Weight: w, Sprint: sprint, Assigned: assigned, Repos: []string{"api"},
 		}
 	}
+	billing := item(6, "Billing export times out", domain.StageAssigned, domain.CourtNobody, "unassigned", nil, false)
+	billing.Issue.Author = forge.User{Username: "sam", Name: "Sam Smith"}
 	return forgesync.Result{
 		Project: "demo", Tracker: "g/tracker",
 		Window: domain.Window{Current: sprint, DaysLeft: 3},
@@ -32,7 +34,7 @@ func sampleResult() forgesync.Result {
 			item(3, "Retry failed webhook deliveries", domain.StageAssigned, domain.CourtYou, "start work", new(5), true),
 			item(1, "Rate-limit the export endpoint", domain.StageReview, domain.CourtYou, "2 unresolved threads", new(5), true),
 			item(5, "Export timestamps ignore tenant timezone", domain.StageStarted, domain.CourtBlocked, "label workflow::blocked", nil, true),
-			item(6, "Billing export times out", domain.StageAssigned, domain.CourtNobody, "unassigned", nil, false),
+			billing,
 			item(10, "Upgrade dependencies", domain.StageDone, domain.CourtNobody, "closed", new(2), true),
 		},
 	}
@@ -56,6 +58,48 @@ func TestHomeRowsAndLoad(t *testing.T) {
 	}
 	if rows := buildHomeRows([]forgesync.Result{res}, hfBlocked); len(rows) != 1 || rows[0].ref() != "g/tracker#5" {
 		t.Errorf("blocked filter = %+v", rows)
+	}
+}
+
+// The sprint-open section is judged on the tracker issue: a ticket assigned to
+// anyone leaves it (search still finds it), and the rows say who raised it.
+func TestSprintOpenListsOnlyTrackerUnassignedTickets(t *testing.T) {
+	res := sampleResult()
+	taken := res.Items[3]
+	taken.Ref.IID = 7
+	taken.Issue.Ref = taken.Ref
+	taken.Issue.Title = "Billing invoices overflow"
+	taken.Issue.Assignees = []forge.User{{Username: "kim", Name: "Kim Lee"}}
+	taken.Reason = "assigned to Kim Lee (kim)"
+	res.Items = append(res.Items, taken)
+
+	refs := func(q homeQuery) string {
+		var got []string
+		for _, r := range buildRows([]forgesync.Result{res}, q) {
+			if r.section == secSprintOpen {
+				got = append(got, r.ref())
+			}
+		}
+		return strings.Join(got, " ")
+	}
+	if got := refs(homeQuery{}); got != "g/tracker#6" {
+		t.Errorf("sprint open = %q, want only the unassigned #6", got)
+	}
+	if got := refs(homeQuery{text: "invoices"}); got != "g/tracker#7" {
+		t.Errorf("search for the assigned ticket = %q, want #7", got)
+	}
+
+	it := &res.Items[3]
+	r := homeRow{section: secSprintOpen, item: it}
+	if got := withAuthor(r).Reason; got != "by Sam Smith (sam)" {
+		t.Errorf("sprint row reason = %q", got)
+	}
+	if got := withAuthor(homeRow{section: secMine, item: it}).Reason; got != "unassigned" {
+		t.Errorf("my-work row reason = %q, want it untouched", got)
+	}
+	m := model{g: unicodeGlyphs, w: 120, h: 40}
+	if got := ansi.Strip(m.itemDetail(it, 80)); !strings.Contains(got, "by Sam Smith (sam)") {
+		t.Errorf("detail lacks the author:\n%s", got)
 	}
 }
 

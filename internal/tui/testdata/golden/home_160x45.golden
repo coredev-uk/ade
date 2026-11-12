@@ -6,8 +6,8 @@
  ▸ #1   Rate-limit the export …  ●━●━●━●━●━◉─○  5w   you · 2 unresolved threads           │  ●  assigned  –                       │  Services ─────── 0 running
    #3   Retry failed webhook d…  ◉─○─○─○─○─○─○  5w   you · start work                     │  ┃                                    │  None running.
    #5   Export timestamps igno…  ●━◉─○─○─○─○─○  –    ▲ blocked · label workflow::blocked  │  ●  started                           │
-   Sprint · open ───────────────────────────────────────────────── 1 not assigned to you  │  ┃                                    │
-   #6   Billing export times o…  ◉─○─○─○─○─○─○  –    nobody · unassigned                  │  ●  branch                            │
+   Sprint · open ─────────────────────────────────────────── 1 unassigned in the tracker  │  ┃                                    │
+   #6   Billing export times o…  ◉─○─○─○─○─○─○  –    nobody · by Sam Smith (sam)          │  ●  branch                            │
                                                                                           │  ┃                                    │
                                                                                           │  ●  draft                             │
                                                                                           │  ┃                                    │

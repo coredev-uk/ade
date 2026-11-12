@@ -58,9 +58,11 @@ type issue struct {
 	Iteration *iteration // Premium only
 	Weight    *int       // Premium only
 	Epic      string     // Premium only
-	Created   time.Time
-	Updated   time.Time
-	Closed    *time.Time
+	// Parent is the work item hierarchy parent (GraphQL only, never in REST).
+	Parent  *issue
+	Created time.Time
+	Updated time.Time
+	Closed  *time.Time
 }
 
 // link relates two issues. Type is from A's side; B sees the inverse.

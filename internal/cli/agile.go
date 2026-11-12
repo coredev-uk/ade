@@ -139,7 +139,7 @@ func narrateReport(cmd *cobra.Command, n *agile.AINarrator, feature string, err 
 		return []string{"AI narrative skipped: " + err.Error()}
 	}
 	r := n.Last
-	printFooter(w, aiOut{Feature: feature, Text: r.Text, CacheHit: r.CacheHit, CostUSD: r.CostUSD, SavedUSD: r.SavedUSD, Profile: r.Profile, Model: r.Model, Artifact: r.Artifact})
+	printFooter(w, aiOut{Feature: feature, Text: r.Text, CacheHit: r.CacheHit, CostUSD: r.CostUSD, SavedUSD: r.SavedUSD, Profile: r.Profile, Model: r.Model, Artifact: r.Artifact, Truncated: r.Truncated})
 	return nil
 }
 

@@ -40,14 +40,19 @@ func (d *anthropic) headers(req *http.Request) {
 	req.Header.Set("Content-Type", "application/json")
 }
 
+// Complete sends the call; an answer cut off by max_tokens is asked again
+// once with the cap doubled (see retryTruncated).
 func (d *anthropic) Complete(ctx context.Context, c Call) (Response, error) {
-	max := c.MaxTokens
-	if max <= 0 {
-		max = 1024
+	if c.MaxTokens <= 0 {
+		c.MaxTokens = 1024 // the API requires a cap
 	}
+	return retryTruncated(ctx, c, d.attempt)
+}
+
+func (d *anthropic) attempt(ctx context.Context, c Call) (Response, error) {
 	raw, err := json.Marshal(map[string]any{
 		"model":      c.Model,
-		"max_tokens": max,
+		"max_tokens": c.MaxTokens,
 		"system":     c.System,
 		"messages":   []map[string]string{{"role": "user", "content": c.Prompt}},
 	})
@@ -75,8 +80,9 @@ func (d *anthropic) Complete(ctx context.Context, c Call) (Response, error) {
 		return Response{}, fmt.Errorf("anthropic: HTTP %d: %s", resp.StatusCode, oneLine(string(data)))
 	}
 	var out struct {
-		Model   string `json:"model"`
-		Content []struct {
+		Model      string `json:"model"`
+		StopReason string `json:"stop_reason"`
+		Content    []struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
 		} `json:"content"`
@@ -102,6 +108,8 @@ func (d *anthropic) Complete(ctx context.Context, c Call) (Response, error) {
 		Usage:    Usage{In: out.Usage.In + out.Usage.CacheWrite, Out: out.Usage.Out, Cache: out.Usage.CacheRead},
 		DestHost: hostOf(d.base),
 		Bytes:    len(raw),
+
+		Truncated: out.StopReason == "max_tokens",
 	}
 	if price, ok := d.p.Prices[c.Model]; ok {
 		r.CostUSD = (float64(out.Usage.In)*price.Input + float64(out.Usage.Out)*price.Output +

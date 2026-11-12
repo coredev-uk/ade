@@ -176,6 +176,21 @@ mr          = { create = "ask", template = "Default", draft = true, closes = "ch
   when the issue already lives in the code repo. `always` / `never` force it. The child is linked back to the
   tracker issue (`relates_to` link on GitLab, native sub-issue on GitHub) and carries a `Parent:` reference in
   its description. Reading accepts any of these, so older data still resolves.
+  - On GitLab, `ade start` also places the child under the tracker issue in GitLab's work item hierarchy
+    (GraphQL `workItemUpdate`), where the instance has one. GitLab nests only some pairs of types (an issue
+    under an epic, a task under an issue), so it may refuse an issue under an issue. A refusal is a warning,
+    not a failure: the `relates_to` link and the `Parent:` line stay, and ADE remembers a refusal of the pair
+    of types for a week so later starts do not ask again. Any other error (a permission problem, say) is a
+    warning for that start only and is not remembered.
+  - To decide which tracker issue a code-repo issue belongs to, ADE asks in this order: the hierarchy parent
+    (GraphQL, skipped silently where the instance or forge has none), the `Parent:` line, then a `relates_to`
+    link from the child to a tracker issue. The hierarchy is read for every code-repo issue ADE lists, so a
+    closed child or a teammate's keeps its place under the tracker issue; links are read only for your open
+    issues. If the hierarchy read fails for another reason, ADE keeps the parents of the last sync and warns.
+    The tracker issue is fetched even if it is not assigned to you and is outside the sprint window, and the
+    child shows under it as one My work entry; the entry counts as yours while an open child is. A tracker
+    issue that is closed is not listed, so its open child of yours is its own entry. A code-repo issue with no
+    parent from any of these is its own entry.
 - `mr.create`: `ask` (default), `always`, `never`. `mr.draft` opens the MR as a draft; leave it out (or set `true`) for a draft MR, `false` to open it ready for review. `mr.closes = "child"`
   puts `Closes #<child>` in the MR body; `mr.mention = "parent"` references the tracker issue.
 - `mr.template`: the template name in the repo's MR template directory (GitLab
@@ -270,6 +285,7 @@ default_branch = "develop"               # baseline tree is api/develop/; omit t
 [repos.web.hooks]
 post_clone    = ["npm ci"]               # once, in the baseline tree after `ade project add`
 post_worktree = ["npm ci"]               # every new worktree
+install       = ["npm ci"]               # every worktree a workspace uses (services tab, ade ws install)
 
 [repos.api.tasks.dev]
 cmd   = "make run"
@@ -297,11 +313,57 @@ validated together. Hooks run inside the tree and failures raise notifications. 
 `workspaces.<name>.layout` is the main pane of the tab ADE opens for a worktree: `code` (your editor), `agent` (omp
 started with an ADE-generated implement skill that carries the ticket, MR, conventions and your notes, and stops for
 review without pushing) or `manual` (a shell). Every layout also shows the item's live overview, lazygit, a shell and
-one pane per service of the `run` group (none starts on its own: a pane waits for Enter; Ctrl-C in a running pane stops it, Enter starts it again; the `services` pane starts the whole group).
+the workspace's own tasks of the `run` group (none starts on its own: a pane waits for Enter; Ctrl-C in a running pane stops it, Enter starts it again). The services it requires start in the background services tab described below.
 Each person can override the default with `host.layout` in their own config; `ade start --layout` and `W` on Home
 choose per tab. A service runs from the work item's own worktree when it has one in that repo, else from the shared
 baseline (default-branch) tree, so `{api.dev.port}` in web's `API_URL` follows the item's api when it has one. See
 [PLAN.md §6.6](PLAN.md#66-agents-and-workspaces-core-function-7).
+
+### Install hooks and background services
+
+`hooks.install` is a list of shell commands that make a worktree runnable (`npm ci`, `make deps`). ADE runs them in
+each worktree of that repo that a workspace uses (the one it opened, and the trees its required repos and services run
+from), inside the repo's dev shell, one after the other; the trees of required repos and services come first, the
+workspace's own tree last. With `services = "background"` they run when the workspace first opens, in the first pane
+of the workspace's services tab, before any service starts. With `services = "manual"` nothing runs them on open: use
+`ade ws up` or `ade ws install <tree> [--force]`. A review tab runs no install.
+
+ADE remembers a success per worktree, keyed by a hash of the commands, of the content of the lockfiles at the
+worktree's root (`package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lockb`, `go.sum`, `Cargo.lock`,
+`poetry.lock`, `uv.lock`, `flake.lock`, when present) and of the worktree's creation. The commands run again only
+when one of them changes (a pull that updates a lockfile installs again) or you pass `--force`. The dev shell is not
+part of the key. A failing command stops that worktree's commands and is reported; ADE keeps no success marker but
+records the failure, so every pane waiting for that install stops at once with the reason instead of waiting. The
+next `ade ws install` clears the record. Each command is audited as `git.hook` with `hook=install`. `post_clone` and
+`post_worktree` are unchanged.
+
+Install commands run with ADE's environment (including any forge token you exported) and inside the worktree's dev
+shell (`direnv exec`, `nix develop`), so the branch's own `.envrc` or flake runs when the workspace opens. They come
+from the project manifest and have the same trust as `post_worktree` and task `cmd`: ADE asks nothing when the
+manifest changes, and the audit log keeps the command text. Only open workspaces of projects you trust.
+
+The first time ADE opens a workspace tab it also creates an unfocused tab named `<tab> · services` (you stay on the
+workspace tab). It holds the install pane and one pane per service of the `run` group (requirements running from other
+trees and `services.*`), started in dependency order with no "Waiting to run" prompt. Each pane waits for the install of
+its worktrees and for every service it requires to be ready. A service some node requires, with a `port` and no
+`ready`, counts as ready once its TCP port accepts connections, in its own pane as well as for its dependents; an
+explicit `ready` always wins. A `services.*` instance another
+workspace already runs is reused: the pane reports `already running (pid N)`, holds it and shows its log. The
+workspace's own tasks stay in the workspace tab's strip and start on Enter.
+
+A waiting pane never hangs silently: it prints `still waiting for <node> (<probe>) <time>` every 30 seconds, stops
+with the reason when the pane that starts what it waits for failed (crashed, or its `ready` timed out), and gives up
+after `--wait-timeout` (default 10 minutes, `ade task run`) with a non-zero exit. A stopped pane shows the reason;
+press Enter to run it again.
+
+```toml
+[workspaces]
+default = { layout = "code", run = "dev", services = "background" }   # or "manual"
+```
+
+`services = "manual"` skips the services tab: services and the `services` (start all) pane stay in the strip, each
+waiting for Enter, and `ade ws up --no-zellij` still runs the install hooks first. Strip tasks wait for the install
+too (`--after-install`): run `ade ws install` or `ade ws up` first, or the pane says so and waits.
 
 ### Dev shell per repo
 

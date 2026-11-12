@@ -144,7 +144,7 @@ func resolveWith(ctx context.Context, f Forge, m *config.Manifest, ref forge.Ref
 		return nil, fmt.Errorf("links of %s: %w", ref, lnErr)
 	}
 	item := domain.Assemble(domain.AssembleInput{
-		Project: m.Name, Manifest: m, Me: me.Username, Tracker: is, Links: links, Now: time.Now(),
+		Project: m.Name, Manifest: m, Me: me.Username, MeID: me.ID, Tracker: is, Links: links, Now: time.Now(),
 	})
 	return &Resolved{Project: m.Name, Manifest: m, Forge: f, Item: item, Me: me}, nil
 }

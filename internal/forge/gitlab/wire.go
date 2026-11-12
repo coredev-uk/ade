@@ -255,14 +255,14 @@ func (w wireMR) mr(project string) forge.MR {
 	}
 }
 
-func (w wireMR) mergedBy() string {
+func (w wireMR) mergedBy() forge.User {
 	switch {
 	case w.MergeUser != nil:
-		return w.MergeUser.Username
+		return w.MergeUser.user()
 	case w.MergedBy != nil:
-		return w.MergedBy.Username
+		return w.MergedBy.user()
 	}
-	return ""
+	return forge.User{}
 }
 
 // wireReviewer is one entry of GET .../reviewers: the reviewer and their

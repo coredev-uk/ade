@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/domain"
@@ -101,6 +102,26 @@ type Choices struct {
 	// with the ADE skill, or a shell as the main pane). Empty: the default of
 	// host.layout, the manifest's workspace, then code.
 	Layout string `json:"layout,omitempty"`
+	// Branches names the branch to work on in a repo, instead of the one
+	// conventions.branch derives (a second set of changes in a sibling repo).
+	// An existing branch and its MR are reused; otherwise the name is created.
+	// Entries for repos not in Repos, and Browse, ignore it.
+	Branches map[string]string `json:"branches,omitempty"`
+}
+
+// ValidBranchName rejects a name git would refuse; the forge has the last word
+// on the rest.
+func ValidBranchName(name string) error {
+	bad := name == "" || strings.HasPrefix(name, "-") || strings.HasPrefix(name, "/") || strings.HasSuffix(name, "/") ||
+		strings.HasSuffix(name, ".") || strings.HasSuffix(name, ".lock") ||
+		strings.Contains(name, "..") || strings.Contains(name, "//") || strings.Contains(name, "@{") ||
+		strings.ContainsFunc(name, func(r rune) bool {
+			return unicode.IsSpace(r) || unicode.IsControl(r) || strings.ContainsRune(`~^:?*[\`, r)
+		})
+	if bad {
+		return fmt.Errorf("%q is not a valid branch name", name)
+	}
+	return nil
 }
 
 // DefaultChoices preselects what the manifest and the issue say: the repos the
@@ -252,11 +273,22 @@ type TargetPlan struct {
 	UseChild bool `json:"use_child"`
 	// Branch is the branch name; with a child still to be created its number
 	// is unknown and shows as ChildIIDPlaceholder.
-	Branch string    `json:"branch,omitempty"`
+	Branch string `json:"branch,omitempty"`
+	// Pinned says Choices.Branches named the branch.
+	Pinned bool      `json:"pinned,omitempty"`
 	Base   string    `json:"base,omitempty"` // branch cut from
 	Child  ChildSpec `json:"child"`
 	MR     MRSpec    `json:"mr"`
 	Found  Found     `json:"found"`
+}
+
+// PinnedNote words the branch Choices.Branches chose for this repo, existing
+// or to be created.
+func (t TargetPlan) PinnedNote() string {
+	if t.Found.Branch != "" {
+		return fmt.Sprintf("branch for %s: %s (existing)", t.Target.Name, t.Branch)
+	}
+	return fmt.Sprintf("branch for %s: %s (new, from %s)", t.Target.Name, t.Branch, t.Base)
 }
 
 // MRBody renders the MR description for this target. child is the child issue
@@ -434,9 +466,16 @@ func planTarget(in PlanInput, t Target) TargetPlan {
 			workIID = f.Child.Ref.IID
 		}
 	}
+	pin := ch.Branches[t.Name]
+	if ch.Mode == ModeBrowse {
+		pin = "" // Browse stays on the default branch
+	}
 	switch {
 	case f.Branch != "":
 		tp.Branch = f.Branch
+		tp.Pinned = pin != ""
+	case pin != "":
+		tp.Branch, tp.Pinned = pin, true
 	default:
 		tp.Branch = BranchName(m, tp.Child.Title, item, workIID)
 	}

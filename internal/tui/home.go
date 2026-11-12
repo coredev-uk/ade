@@ -149,7 +149,11 @@ func buildRows(results []forgesync.Result, q homeQuery) []homeRow {
 			case it.Assigned:
 				mine = append(mine, it)
 			case inSprint(it, res.Window.Current):
-				open = append(open, it)
+				// The tracker issue decides: a ticket assigned to anyone is taken
+				// off the list, but stays findable by search.
+				if len(it.Issue.Assignees) == 0 || q.text != "" {
+					open = append(open, it)
+				}
 			case inSprint(it, res.Window.Next):
 				next = append(next, it)
 			case inSprint(it, res.Window.Previous):

@@ -403,3 +403,65 @@ func TestUpstream(t *testing.T) {
 		})
 	}
 }
+
+func TestCourtNamesTheAssigneeOfSomeoneElsesTicket(t *testing.T) {
+	is := tracker(1, "x", false, "opened", "type::story", "app::api")
+	is.Assignees = []forge.User{{ID: 7, Username: "sam", Name: "Sam Smith"}, {Username: "kim"}}
+	got := Assemble(AssembleInput{Manifest: sandboxManifest(), Me: me, Tracker: is})
+	if got.Assigned || got.Court != CourtNobody || got.Reason != "assigned to Sam Smith (sam), kim" {
+		t.Errorf("assigned/court/reason = %v/%v/%q", got.Assigned, got.Court, got.Reason)
+	}
+}
+
+func TestAssignedToMatchesByIDThenHandle(t *testing.T) {
+	is := forge.Issue{Assignees: []forge.User{{ID: 5, Username: "paul-new"}}}
+	tests := []struct {
+		name string
+		me   string
+		meID int64
+		want bool
+	}{
+		{"same id, renamed handle", "paul", 5, true},
+		{"other id, same handle", "paul-new", 6, false},
+		{"id unknown, handle cased differently", "Paul-New", 0, true},
+		{"id unknown, other handle", "paul", 0, false},
+		{"nobody", "", 0, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := assignedTo(is, tt.me, tt.meID); got != tt.want {
+				t.Errorf("assignedTo = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// Work is mine when I hold an open child of the tracker issue, whoever holds
+// the tracker issue itself; a closed child does not make it mine.
+func TestAssembleIsAssignedThroughAnOpenChildOfMine(t *testing.T) {
+	mine := func(state string) forge.Issue {
+		c := child("web", 3, 1)
+		c.State = state
+		c.Assignees = []forge.User{{Username: me}}
+		return c
+	}
+	tests := []struct {
+		name string
+		kid  forge.Issue
+		want bool
+	}{
+		{"open child of mine", mine("opened"), true},
+		{"closed child of mine", mine("closed"), false},
+		{"open child nobody holds", child("web", 3, 1), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tr := tracker(1, "x", false, "opened", "type::story", "app::web")
+			tr.Assignees = []forge.User{{Username: "sam"}}
+			got := Assemble(AssembleInput{Manifest: sandboxManifest(), Me: me, Tracker: tr, Links: []forge.Link{link(tt.kid)}, Candidates: []forge.Issue{tt.kid}})
+			if got.Assigned != tt.want {
+				t.Errorf("Assigned = %v, want %v (reason %q)", got.Assigned, tt.want, got.Reason)
+			}
+		})
+	}
+}

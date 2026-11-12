@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/coredev-uk/ade/internal/ai"
 	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/domain"
 	"github.com/coredev-uk/ade/internal/forge"
@@ -335,6 +336,25 @@ func TestDraftReplyFinishingAwayFromTheThreadWaitsForR(t *testing.T) {
 	e.want("AI draft reply ready")
 	e.press("r")
 	e.want("AI draft · ", stubReply)
+}
+
+// A draft the model did not finish carries its note in the editor, not in the
+// text that enter would post.
+func TestTruncatedDraftReplyShowsTheNoteOutsideTheText(t *testing.T) {
+	e := newMREnv(t, fake.Free)
+	e.enableAI("auto")
+	ref := mrRef("api", 2)
+	e.open(ref.String())
+	e.press("2")
+	d := e.m.mr.data
+	id := d.threadList()[0].d.ID
+	res := ai.Result{Text: "Thanks, this adds an", Truncated: true, Model: "m"}
+	st := &aiText{l: load{st: loadOK}, text: res.Text, model: res.Model, cut: res.CutShort()}
+	e.m.openReply(d, id, st)
+	e.want("Thanks, this adds an", "cut short", "finish it before posting")
+	if got := e.m.mr.modal.ed.String(); got != "Thanks, this adds an" {
+		t.Errorf("the editor holds %q: the note must not be part of what is posted", got)
+	}
 }
 
 // --- agent review pass ---------------------------------------------------------------

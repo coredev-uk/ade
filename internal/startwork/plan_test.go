@@ -344,3 +344,14 @@ func TestMRDraftFollowsTheManifestAndDefaultsToDraft(t *testing.T) {
 		})
 	}
 }
+
+func TestValidBranchName(t *testing.T) {
+	for name, ok := range map[string]bool{
+		"fix-cache": true, "feature/x_1.2": true, "3-retry": true,
+		"": false, "a b": false, "-x": false, "a..b": false, "a:b": false, "x.lock": false, "x/": false, "a//b": false, "a~1": false,
+	} {
+		if err := startwork.ValidBranchName(name); (err == nil) != ok {
+			t.Errorf("ValidBranchName(%q) = %v, want ok=%v", name, err, ok)
+		}
+	}
+}

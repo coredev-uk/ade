@@ -223,6 +223,11 @@ func (v *manifestValidator) checkRepos() {
 		if !oneOf(r.Devshell, "", "auto", "direnv", "nix", "none") {
 			v.errorf(p+".devshell", "unknown value %q: want auto, direnv, nix or none", r.Devshell)
 		}
+		for i, cmd := range r.Hooks.Install {
+			if strings.TrimSpace(cmd) == "" {
+				v.errorf(fmt.Sprintf("%s.hooks.install[%d]", p, i), "empty command")
+			}
+		}
 		for i, req := range r.Requires {
 			rp := fmt.Sprintf("%s.requires[%d]", p, i)
 			if local, ok := v.resolveRepo(rp, req); ok {
@@ -520,6 +525,9 @@ func (v *manifestValidator) checkGroups() {
 		run := v.m.Workspaces[w].Run
 		if _, ok := v.m.Groups[run]; run != "" && !ok {
 			v.errorf("workspaces."+w+".run", "unknown group %q", run)
+		}
+		if s := v.m.Workspaces[w].Services; !oneOf(s, "", ServicesBackground, ServicesManual) {
+			v.errorf("workspaces."+w+".services", "unknown value %q: want background or manual", s)
 		}
 	}
 }

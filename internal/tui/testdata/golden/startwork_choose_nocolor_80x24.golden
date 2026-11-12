@@ -19,5 +19,6 @@
 [m│[m   ○ always  [2malways a child issue[m                                             [m│[m
 [m│[m   ○ never   [2mnone: branch and MR reference the tracker issue[m                  [m│[m
 [m│[m  [2mMain pane  [m● [1meditor[m  ○ omp  ○ shell  [2ma toggles · your editor beside lazygi…[m [m│[m
-[m│[m [1mspace[m [2mselect[m   [1mm[m [2mmode[m   [1mc[m [2mchild[m   [1ma[m [2mmain pane[m   [1menter[m [2mcontinue[m   [1mesc[m [2mcancel[m  [m│[m
+[m│[m [1mspace[m [2mselect[m   [1mb[m [2mbranch[m   [1mm[m [2mmode[m   [1mc[m [2mchild[m   [1ma[m [2mmain pane[m   [1menter[m [2mcontinue[m    [m│[m
+[m│[m [1mesc[m [2mcancel[m                                                                   [m│[m
 [m╰──────────────────────────────────────────────────────────────────────────────╯[m

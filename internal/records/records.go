@@ -191,7 +191,7 @@ func snapshotBlock(wi domain.WorkItem, comments []forge.Note, maxComments int) s
 	if len(wi.Issue.Assignees) > 0 {
 		names := make([]string, len(wi.Issue.Assignees))
 		for i, u := range wi.Issue.Assignees {
-			names[i] = "@" + u.Username
+			names[i] = u.Display()
 		}
 		fmt.Fprintf(&b, "Assignees: %s\n", strings.Join(names, ", "))
 	}
@@ -201,7 +201,7 @@ func snapshotBlock(wi domain.WorkItem, comments []forge.Note, maxComments int) s
 	if kept := lastComments(comments, maxComments); len(kept) > 0 {
 		b.WriteString("\n## Comments\n")
 		for _, n := range kept {
-			fmt.Fprintf(&b, "\n**@%s** · %s\n\n%s\n", n.Author.Username, n.CreatedAt.UTC().Format("2006-01-02 15:04"), strings.TrimSpace(n.Body))
+			fmt.Fprintf(&b, "\n**%s** · %s\n\n%s\n", n.Author.Display(), n.CreatedAt.UTC().Format("2006-01-02 15:04"), strings.TrimSpace(n.Body))
 		}
 	}
 	b.WriteString("\n" + endMarker + "\n")

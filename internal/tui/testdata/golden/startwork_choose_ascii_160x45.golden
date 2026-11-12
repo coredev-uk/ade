@@ -21,7 +21,7 @@
                               |                                                                                                  |
                               |  Main pane  * editor  o omp  o shell  a toggles - your editor beside lazygit, the overview an... |
                               |                                                                                                  |
-                              | space select   m mode   c child   a main pane   enter continue   esc cancel                      |
+                              | space select   b branch   m mode   c child   a main pane   enter continue   esc cancel           |
                               +--------------------------------------------------------------------------------------------------+
 
 

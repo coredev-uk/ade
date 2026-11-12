@@ -158,13 +158,13 @@ ade doctor --probe        # also read-only checks of the API shapes ADE depends 
 ade                       # attach to (or create) the zellij session "ade" with the dashboard
 ```
 
-Already inside zellij, `ade` runs the dashboard in your current pane. `ade dash` always runs it in the current terminal.
+`ade` always lands on the dashboard (the `home` tab) of the session `ade`: when the session already runs, ADE focuses `home` first (creating it again if you closed it), then attaches. An exited session is resurrected and opens on the tab it had; resurrecting starts every pane of the session, including suspended task and service panes (`zellij attach --force-run-commands`). If you quit the dashboard, `ade` replaces the dead `home` tab with a new one. Typed inside the `ade` session, `ade` focuses `home` and exits. Typed inside another zellij session, it opens (or focuses) a `home` tab running `ade dash` there, since zellij cannot nest sessions. `host.mode = "plain"` or `"vscode"` keeps the dashboard in the current terminal, as does `ade dash`.
 
 ### The daily loop
 
 1. **Home** shows your issues and MRs by stage. Move with the arrow keys or `j`/`k`; `?` lists every key; `/` searches.
-2. **`s` start work** on an item: pick repos, branch/MR mode, child issue behaviour. ADE creates the branch, a worktree and a zellij tab.
-3. **The tab** has your main pane (editor, or an `omp` agent, depending on `host.layout`), the item's live overview, lazygit, a shell, and one pane per service. Service panes wait: press **Enter** in a pane to start that service; Ctrl-C stops it. `ade ws restart <node>` restarts one with its dependents.
+2. **`s` start work** on an item: pick repos, branch/MR mode, child issue behaviour (`b` on a repo row names its branch when a sibling repo carries a second set of changes). ADE creates the branch, a worktree and a zellij tab.
+3. **The tab** has your main pane (editor, or an `omp` agent, depending on `host.layout`), the item's live overview, lazygit, a shell, and one pane per task of the workspace itself. Task panes wait: press **Enter** in a pane to start it; Ctrl-C stops it. The first time a workspace opens, ADE also creates an unfocused `<tab> · services` tab: it installs the repos' dependencies first (`hooks.install`), then starts the services in dependency order, each waiting for what it requires (a service others require, with a `port`, counts as ready once the port accepts connections). A waiting pane reports every 30 seconds, stops with the reason if what it waits for failed, and gives up after 10 minutes. `hooks.install` commands run with ADE's environment inside the dev shell, with the trust of `post_worktree`. `services = "manual"` on the workspace skips that tab and keeps the services in the strip, waiting for Enter. `ade ws restart <node>` restarts one with its dependents.
 4. **`v`** opens a multi-root VS Code workspace for the item (all repos of the project).
 5. **Enter** on an MR opens the MR page: threads, diff, CI; reply, resolve, approve, mark ready, merge. `ade review <group/project!N>` opens someone else's MR in a review tab; collected line comments go out as one review batch.
 6. **Clean up** with `ade gc`, which removes worktrees of merged or closed MRs when they are clean and pushed.

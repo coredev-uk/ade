@@ -7,14 +7,14 @@ mrs: []
 stage: done
 court: nobody
 iteration: Sprint 42
-synced: 2026-11-12T01:43:33Z
+synced: 2026-11-12T12:59:10Z
 ---
 
 <!-- ade:snapshot:begin (ADE rewrites everything between the markers; write below) -->
 # Upgrade export worker dependencies
 
 Labels: type::story, app::api, workflow::done
-Assignees: @sandbox-dev
+Assignees: Sandbox Dev (sandbox-dev)
 
 Routine upgrade of the worker's HTTP and CSV libraries.
 

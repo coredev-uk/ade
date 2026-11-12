@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -66,5 +67,43 @@ func TestStartFlagErrors(t *testing.T) {
 	}
 	if _, err := (startFlags{mode: "yolo"}).choices(r); err == nil || !strings.Contains(err.Error(), "draft, branch or browse") {
 		t.Errorf("mode error = %v, want the valid values", err)
+	}
+}
+
+func TestStartBranchFlagPinsReposAndAddsThem(t *testing.T) {
+	r := resolvedFor(t, config.Conventions{}, "api")
+	ch, err := startFlags{branches: []string{"web=fix-cache", "api=feature/x"}}.choices(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(ch.Repos, []string{"api", "web"}) {
+		t.Errorf("repos = %v: want the routed repo, then web added by --branch", ch.Repos)
+	}
+	if want := map[string]string{"web": "fix-cache", "api": "feature/x"}; !maps.Equal(ch.Branches, want) {
+		t.Errorf("branches = %v, want %v", ch.Branches, want)
+	}
+
+	ch, err = startFlags{repos: []string{"api"}, branches: []string{"api=fix"}}.choices(r)
+	if err != nil || !slices.Equal(ch.Repos, []string{"api"}) {
+		t.Errorf("--repo api --branch api=fix: repos %v, err %v: want api once", ch.Repos, err)
+	}
+}
+
+func TestStartBranchFlagErrors(t *testing.T) {
+	r := resolvedFor(t, config.Conventions{}, "api")
+	for name, tc := range map[string]struct {
+		f    startFlags
+		want string
+	}{
+		"no equals":    {startFlags{branches: []string{"web"}}, "want repo=value"},
+		"empty branch": {startFlags{branches: []string{"web="}}, "want repo=value"},
+		"unknown repo": {startFlags{branches: []string{"db=fix"}}, "unknown repo"},
+		"bad name":     {startFlags{branches: []string{"web=a b"}}, "not a valid branch name"},
+		"browse":       {startFlags{mode: "browse", branches: []string{"web=fix"}}, "browse"},
+	} {
+		_, err := tc.f.choices(r)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want %q", name, err, tc.want)
+		}
 	}
 }

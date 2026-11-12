@@ -76,6 +76,102 @@ func (m *Manager) Up(ctx context.Context, p *Plan, o UpOptions) ([]Result, error
 	return m.start(ctx, p, o)
 }
 
+// WaitOptions tunes UpWaiting.
+type WaitOptions struct {
+	// Poll is how often a requirement is looked at (default half a second).
+	Poll time.Duration
+	// Timeout bounds the wait for each requirement (default DefaultWaitTimeout).
+	Timeout time.Duration
+	// Every is how often Waiting repeats (default DefaultWaitReport).
+	Every time.Duration
+	// Waiting is called when a requirement is not ready yet, with a zero
+	// elapsed time, and again every Every with the time waited so far. probe
+	// says what the wait looks for, e.g. "tcp localhost:5173".
+	Waiting func(node, probe string, elapsed time.Duration)
+}
+
+// UpWaiting brings up the plan's last instance without starting the services
+// it requires: each of them must be started elsewhere (its own pane, another
+// workspace), and UpWaiting blocks until it is running and passes its probe.
+// Oneshots still run as part of this call. It is how the services tab orders
+// its panes: every pane waits for what it needs instead of starting it.
+//
+// A wait ends with an error when the requirement's own pane recorded that it
+// failed to come up, and when WaitOptions.Timeout passes. The failure is
+// recorded for the node itself too, so the panes waiting for it fail as well
+// instead of polling for ever.
+func (m *Manager) UpWaiting(ctx context.Context, p *Plan, o UpOptions, w WaitOptions) ([]Result, error) {
+	if o.Holder == "" {
+		return nil, errors.New("workspace: UpWaiting needs a holder")
+	}
+	if _, err := m.Reap(ctx); err != nil {
+		return nil, err
+	}
+	if len(p.Instances) == 0 {
+		return nil, errors.New("workspace: nothing to start")
+	}
+	if w.Poll <= 0 {
+		w.Poll = 500 * time.Millisecond
+	}
+	o.preset = map[string]Result{}
+	for _, in := range p.Instances[:len(p.Instances)-1] {
+		if in.Node.Oneshot() {
+			continue
+		}
+		res, err := m.waitReady(ctx, in, w)
+		if err != nil {
+			if ctx.Err() == nil {
+				self := p.Instances[len(p.Instances)-1]
+				m.recordFailure(self.ID, err.Error())
+			}
+			return nil, err
+		}
+		o.preset[in.ID] = res
+		if o.Progress != nil {
+			o.Progress(res)
+		}
+	}
+	return m.start(ctx, p, o)
+}
+
+// waitReady polls until a service started by someone else is running and
+// ready, it failed to start, or the wait times out.
+func (m *Manager) waitReady(ctx context.Context, in *Instance, w WaitOptions) (Result, error) {
+	pace := newPacer(w.Every, w.Timeout)
+	since := pace.start.Add(-failureGrace)
+	probe := "running"
+	if in.Ready != nil {
+		probe = in.Ready.String()
+	}
+	for {
+		row, err := m.get(in.ID)
+		if err != nil {
+			return Result{}, err
+		}
+		if row != nil && m.reusable(ctx, in, row) {
+			res := Result{ID: in.ID, Node: in.Node.ID, Kind: kindOf(in.Node), Tree: in.Dir, Port: in.Port, PID: row.PID, Outcome: OutcomeReady, Shared: true, Log: in.Log}
+			if in.Ready != nil {
+				res.Ready = in.Ready.String()
+			}
+			return res, nil
+		}
+		if reason, failed := m.failureSince(in.ID, since); failed {
+			return Result{}, fmt.Errorf("%s failed to come up: %s", in.Node.ID, reason)
+		}
+		if pace.expired() {
+			return Result{}, fmt.Errorf("%s was not ready (%s) after %s", in.Node.ID, probe, pace.timeout)
+		}
+		if elapsed, due := pace.report(); due && w.Waiting != nil {
+			w.Waiting(in.Node.ID, probe, elapsed)
+		}
+		select {
+		case <-ctx.Done():
+			return Result{}, ctx.Err()
+		case <-time.After(w.Poll):
+		}
+	}
+}
+
 // start brings the planned instances up in dependency order.
 func (m *Manager) start(ctx context.Context, p *Plan, o UpOptions) ([]Result, error) {
 	results := make([]Result, len(p.Instances))
@@ -141,6 +237,9 @@ func (m *Manager) bring(ctx context.Context, p *Plan, in *Instance, results []Re
 	res.PID, res.Shared = pid, shared
 	if err != nil {
 		res.Outcome, res.Detail = OutcomeFailed, err.Error()
+		if ctx.Err() == nil { // an interrupt is not the instance's failure
+			m.recordFailure(in.ID, err.Error())
+		}
 		return res
 	}
 	res.Outcome = OutcomeReady
@@ -168,6 +267,7 @@ func (m *Manager) ensure(ctx context.Context, p *Plan, in *Instance, o UpOptions
 			return 0, false, err
 		}
 	}
+	m.clearFailure(in.ID)
 	if in.Node.Oneshot() {
 		err = m.runOneshot(ctx, p, in)
 	} else {

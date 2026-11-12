@@ -157,3 +157,33 @@ func (m *Mirror) SetMilestone(ctx context.Context, ref forge.Ref, id int64) erro
 	}
 	return mw.SetMilestone(ctx, ref, id)
 }
+
+// The hierarchy methods forward to the wrapped forge, which the embedded
+// interface would otherwise hide; a forge without one is unavailable.
+
+func (m *Mirror) Parents(ctx context.Context, refs []forge.Ref) (map[forge.Ref]forge.Ref, error) {
+	pr, ok := m.Forge.(forge.Parenter)
+	if !ok {
+		return nil, forge.ErrUnavailable
+	}
+	return pr.Parents(ctx, refs)
+}
+
+func (m *Mirror) Children(ctx context.Context, parent forge.Ref) ([]forge.Ref, error) {
+	pr, ok := m.Forge.(forge.Parenter)
+	if !ok {
+		return nil, forge.ErrUnavailable
+	}
+	return pr.Children(ctx, parent)
+}
+
+func (m *Mirror) SetParent(ctx context.Context, child, parent forge.Ref) error {
+	if err := m.take("SetParent"); err != nil {
+		return err
+	}
+	pr, ok := m.Forge.(forge.Parenter)
+	if !ok {
+		return forge.ErrUnavailable
+	}
+	return pr.SetParent(ctx, child, parent)
+}

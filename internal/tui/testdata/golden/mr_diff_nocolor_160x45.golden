@@ -11,7 +11,7 @@
                                             [2m │ [m [2m        4[m [m+[1mtype[m Bucket [1mstruct[m {
                                             [2m │ [m [2m        5[m [m+[m    Rate  [1mint[m [3m// tokens per minute[m
                                             [2m │ [m [2m        6[m [m+[m    Burst [1mint[m
-                                            [2m │ [m           [2m┃[m [2m✓ resolved[m [2mreviewer-rae: Nit: rename Bucket.Rate to PerMinute for clarity.[m
+                                            [2m │ [m           [2m┃[m [2m✓ resolved[m [2mRae Reviewer (reviewer-rae): Nit: rename Bucket.Rate to PerMinute for clarity.[m
                                             [2m │ [m [2m        7[m [m+[m}
                                             [2m │ [m
                                             [2m │ [m

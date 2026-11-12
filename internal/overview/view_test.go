@@ -32,6 +32,7 @@ func item() domain.WorkItem {
 		Issue: forge.Issue{
 			Ref: ref("acme/tracker", 15), Title: "Rate-limit the export endpoint", State: "opened",
 			Assignees:   []forge.User{{Username: "paul"}},
+			Author:      forge.User{Username: "sam", Name: "Sam Smith"},
 			Description: "Exports hammer the API.\n\n- [x] measure\n- [ ] add limiter\n\n## Acceptance criteria\n\n- [x] 429 over the limit\n- [ ] documented\n- [ ] dashboard shows it",
 		},
 		Children: []forge.Issue{{Ref: ref("acme/api", 3), Title: "Limiter middleware", State: "opened"}},
@@ -63,6 +64,7 @@ func TestDraftMRWithoutPipeline(t *testing.T) {
 	}}
 	got := plain(Render(snap(it), "", 60, now))
 	want := ` acme/tracker#15  Rate-limit the export endpoint
+ by Sam Smith (sam)
 
  ●━━●━━●━━◉──○──○──○  draft
  as st br dr ci rv mg
@@ -150,6 +152,13 @@ func TestMergedMRShowsNoPipelineOrThreads(t *testing.T) {
 	}
 	if !strings.Contains(got, "●━━●━━●━━●━━●━━●━━◉  merged") {
 		t.Errorf("track should end on the merged station:\n%s", got)
+	}
+}
+
+func TestHeaderNamesTheIssueAuthor(t *testing.T) {
+	got := plain(Render(snap(item()), "", 80, now))
+	if !strings.Contains(got, "by Sam Smith (sam)") {
+		t.Errorf("view lacks the author:\n%s", got)
 	}
 }
 

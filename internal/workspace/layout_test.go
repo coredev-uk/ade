@@ -233,12 +233,19 @@ func TestBuildLayoutRejectsBadInput(t *testing.T) {
 type fakeZellij struct {
 	sessions string
 	tabs     string
+	panes    string // list-panes --json
+	failOn   string // an action whose arguments contain this fails
 	calls    [][]string
 }
 
 func (f *fakeZellij) run(_ context.Context, args ...string) (string, error) {
 	f.calls = append(f.calls, args)
+	if f.failOn != "" && strings.Contains(strings.Join(args, " "), f.failOn) {
+		return "", errors.New("zellij " + f.failOn + ": failed")
+	}
 	switch {
+	case len(args) > 3 && args[3] == "list-panes":
+		return f.panes, nil
 	case args[0] == "list-sessions":
 		return f.sessions, nil
 	case len(args) > 3 && args[3] == "query-tab-names":
@@ -249,7 +256,7 @@ func (f *fakeZellij) run(_ context.Context, args ...string) (string, error) {
 
 func TestOpenTabCreatesThenFocuses(t *testing.T) {
 	z := &fakeZellij{sessions: "ade [Created 5s ago]\nade-old [Created 2d ago] (EXITED - attach to resurrect)\n", tabs: "home\n"}
-	created, err := openTab(context.Background(), z.run, "ade", "web/418", "/tmp/x.kdl")
+	created, _, err := openTab(context.Background(), z.run, "ade", "web/418", "/tmp/x.kdl", tabLayout{})
 	if err != nil || !created {
 		t.Fatalf("created=%v err=%v", created, err)
 	}
@@ -259,7 +266,7 @@ func TestOpenTabCreatesThenFocuses(t *testing.T) {
 	}
 
 	z = &fakeZellij{sessions: "ade [Created 5s ago]\n", tabs: "home\nweb/418\n"}
-	created, err = openTab(context.Background(), z.run, "ade", "web/418", "/tmp/x.kdl")
+	created, _, err = openTab(context.Background(), z.run, "ade", "web/418", "/tmp/x.kdl", tabLayout{})
 	if err != nil || created {
 		t.Fatalf("existing tab: created=%v err=%v", created, err)
 	}
@@ -271,7 +278,7 @@ func TestOpenTabCreatesThenFocuses(t *testing.T) {
 func TestOpenTabNeverTouchesOtherSessions(t *testing.T) {
 	// Only a resurrectable "ade" and a live neighbour exist: neither is usable.
 	z := &fakeZellij{sessions: "ade [Created 5d ago] (EXITED - attach to resurrect)\nadept [Created 1s ago]\n"}
-	_, err := openTab(context.Background(), z.run, "ade", "t", "/tmp/x.kdl")
+	_, _, err := openTab(context.Background(), z.run, "ade", "t", "/tmp/x.kdl", tabLayout{})
 	if !errors.Is(err, ErrNoSession) {
 		t.Fatalf("got %v", err)
 	}

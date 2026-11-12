@@ -138,7 +138,7 @@ func fuzzyScore(q, s string) (score int, ok bool) {
 func rowFields(r homeRow) []string {
 	if r.mr != nil {
 		mr := r.mr
-		return []string{mr.Ref.String(), mr.Title, mr.Author.Username, mr.SourceBranch}
+		return []string{mr.Ref.String(), mr.Title, mr.Author.Username, mr.Author.Name, mr.SourceBranch}
 	}
 	it := r.item
 	return []string{

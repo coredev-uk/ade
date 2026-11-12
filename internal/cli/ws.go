@@ -79,7 +79,7 @@ func newWsCmd() *cobra.Command {
 		Use:   "ws",
 		Short: "Workspaces: run graph, instances and tabs for a worktree",
 	}
-	cmd.AddCommand(newWsUpCmd(), newWsDownCmd(), newWsStatusCmd(), newWsRestartCmd(), newWsLayoutCmd())
+	cmd.AddCommand(newWsUpCmd(), newWsDownCmd(), newWsStatusCmd(), newWsRestartCmd(), newWsLayoutCmd(), newWsInstallCmd())
 	return cmd
 }
 
@@ -197,6 +197,16 @@ func runWorkspace(cmd *cobra.Command, a *app.App, worktree string, tf treeFlags,
 	w := cmd.OutOrStdout()
 	if len(plan.Instances) == 0 {
 		return fmt.Errorf("workspace %q of %s runs nothing: add a run group to [workspaces.%s]", plan.Workspace, loc.Project, plan.Workspace)
+	}
+	// Install hooks come before any service, as in the workspace's services tab.
+	if targets := mgr.InstallTargets(loc, plan, true); len(targets) > 0 {
+		out := w
+		if jsonOut {
+			out = cmd.ErrOrStderr()
+		}
+		if err := installError(installTargets(ctx, a, mgr, targets, loc.Project, false, out)); err != nil {
+			return err
+		}
 	}
 	tel := newWsTelemetry(ctx, a, loc, plan.Workspace)
 	defer tel.close()
@@ -437,13 +447,17 @@ Dependents that belong to another workspace's plan are not restarted from here.`
 
 func newWsLayoutCmd() *cobra.Command {
 	var (
-		tf     treeFlags
-		layout string
+		tf       treeFlags
+		layout   string
+		services bool
 	)
 	cmd := &cobra.Command{
 		Use:   "layout [worktree]",
 		Short: "Print the zellij layout (KDL) a worktree's tab would use",
-		Args:  cobra.MaximumNArgs(1),
+		Long: `Prints the layout of the worktree's workspace tab. --services prints the layout
+of its background services tab instead (nothing when the workspace opens none:
+services = "manual", or no install hook and no service).`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			trees, err := tf.options()
 			if err != nil {
@@ -458,7 +472,17 @@ func newWsLayoutCmd() *cobra.Command {
 			if layout != "" {
 				opts = append(opts, workspace.WithLayout(layout))
 			}
-			kdl, err := workspace.RenderLayout(cmd.Context(), a, loc.Project, loc.Repo, loc.Tree, opts...)
+			render := workspace.RenderLayout
+			if services {
+				render = func(ctx context.Context, a *app.App, project, repo, worktree string, opts ...workspace.OpenOption) (string, error) {
+					kdl, ok, err := workspace.RenderServicesLayout(ctx, a, project, repo, worktree, opts...)
+					if err == nil && !ok {
+						err = errors.New("this workspace opens no services tab")
+					}
+					return kdl, err
+				}
+			}
+			kdl, err := render(cmd.Context(), a, loc.Project, loc.Repo, loc.Tree, opts...)
 			if err != nil {
 				return err
 			}
@@ -468,6 +492,7 @@ func newWsLayoutCmd() *cobra.Command {
 	}
 	tf.add(cmd)
 	cmd.Flags().StringVar(&layout, "layout", "", "code | agent | review | manual (default: the workspace's layout)")
+	cmd.Flags().BoolVar(&services, "services", false, "print the background services tab's layout instead")
 	return cmd
 }
 
@@ -484,6 +509,7 @@ func newTaskRunCmd() *cobra.Command {
 		tf       treeFlags
 		worktree string
 		noFollow bool
+		gates    = taskGates{timeout: workspace.DefaultWaitTimeout}
 	)
 	cmd := &cobra.Command{
 		Use:   "run <node>",
@@ -494,23 +520,46 @@ ready, then follows its output. When this command ends (Ctrl-C, or the node
 exits) it releases its hold; instances nobody else uses stop.
 
 --no-follow returns after readiness. A service started that way stays up until
-"ade ws down"; a oneshot has simply finished.`,
+"ade ws down"; a oneshot has simply finished.
+
+--after-install waits until the install hooks of the worktrees the node runs in
+have succeeded (ade ws install). --wait-requires starts only the node itself:
+it waits until each service it requires is running and ready, started by its
+own pane or another workspace. The services tab's panes use both. A node that
+is already running for another workspace is not started twice: the pane says
+so, keeps holding it and follows its log.
+
+A wait says every 30 seconds that it is still waiting, and what for. It ends
+with an error when the install or the required service failed (the pane that
+ran it recorded why), and after --wait-timeout (default 10m).`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if gates.timeout <= 0 {
+				return fmt.Errorf("--wait-timeout %s: want a positive duration", gates.timeout)
+			}
 			trees, err := tf.options()
 			if err != nil {
 				return err
 			}
-			return taskRun(cmd, appFrom(cmd), args[0], worktree, tf, trees, noFollow)
+			return taskRun(cmd, appFrom(cmd), args[0], worktree, tf, trees, noFollow, gates)
 		},
 	}
 	tf.add(cmd)
 	cmd.Flags().StringVar(&worktree, "worktree", ".", "the workspace's worktree")
 	cmd.Flags().BoolVar(&noFollow, "no-follow", false, "return after readiness instead of following the output")
+	cmd.Flags().BoolVar(&gates.afterInstall, "after-install", false, "wait for the install hooks of the node's worktrees first")
+	cmd.Flags().BoolVar(&gates.waitRequires, "wait-requires", false, "wait for required services started elsewhere instead of starting them")
+	cmd.Flags().DurationVar(&gates.timeout, "wait-timeout", gates.timeout, "with --after-install and --wait-requires: give up a wait after this long")
 	return cmd
 }
 
-func taskRun(cmd *cobra.Command, a *app.App, node, worktree string, tf treeFlags, trees workspace.TreeOptions, noFollow bool) error {
+// taskGates are the waits `ade task run` can put before the start.
+type taskGates struct {
+	afterInstall, waitRequires bool
+	timeout                    time.Duration // of each wait
+}
+
+func taskRun(cmd *cobra.Command, a *app.App, node, worktree string, tf treeFlags, trees workspace.TreeOptions, noFollow bool, gates taskGates) error {
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	loc, err := workspace.Locate(a.Root, worktree)
@@ -528,6 +577,21 @@ func taskRun(cmd *cobra.Command, a *app.App, node, worktree string, tf treeFlags
 	self, _ := plan.Instance(node)
 	w := cmd.OutOrStdout()
 	fmt.Fprintln(w, workspace.StartMarker(node))
+	if gates.afterInstall {
+		targets := mgr.InstallTargets(loc, plan, false)
+		err := mgr.WaitInstalled(ctx, targets, workspace.InstallWait{Timeout: gates.timeout, Waiting: func(pending []workspace.InstallTarget, elapsed time.Duration) {
+			for _, t := range pending {
+				if elapsed == 0 {
+					fmt.Fprintf(w, "ade: waiting for the install of %s (%s); if nothing is installing it, run: ade ws install %s\n", t.Repo, t.Tree, loc.Tree)
+				} else {
+					fmt.Fprintf(w, "ade: still waiting for the install of %s (%s) %s\n", t.Repo, t.Tree, elapsed.Round(time.Second))
+				}
+			}
+		}})
+		if err != nil {
+			return ignoreInterrupt(ctx, err)
+		}
+	}
 
 	tel := newWsTelemetry(ctx, a, loc, tf.workspace)
 	defer tel.close()
@@ -538,7 +602,22 @@ func taskRun(cmd *cobra.Command, a *app.App, node, worktree string, tf treeFlags
 	if !noFollow || self.Node.Oneshot() {
 		opts.HolderPID = os.Getpid() // released when this command ends, even by a crash
 	}
-	results, err := mgr.Up(ctx, plan, opts)
+	var results []workspace.Result
+	if gates.waitRequires {
+		wait := workspace.WaitOptions{Timeout: gates.timeout, Waiting: func(req, probe string, elapsed time.Duration) {
+			if elapsed == 0 {
+				fmt.Fprintf(w, "ade: waiting for %s (%s) to be ready; it starts in its own pane\n", req, probe)
+			} else {
+				fmt.Fprintf(w, "ade: still waiting for %s (%s) %s\n", req, probe, elapsed.Round(time.Second))
+			}
+		}}
+		results, err = mgr.UpWaiting(ctx, plan, opts, wait)
+	} else {
+		results, err = mgr.Up(ctx, plan, opts)
+	}
+	if len(results) == 0 {
+		return ignoreInterrupt(ctx, err)
+	}
 	last := results[len(results)-1] // the plan is in start order: the requested node is last
 	if err != nil || last.Outcome != workspace.OutcomeReady {
 		tel.record(workspace.RunFailed, results)
@@ -547,6 +626,9 @@ func taskRun(cmd *cobra.Command, a *app.App, node, worktree string, tf treeFlags
 			return err
 		}
 		return withCode(1, fmt.Errorf("%s: %s", node, last.Detail))
+	}
+	if last.Shared {
+		fmt.Fprintf(w, "ade: %s already running (pid %d), started for another workspace or pane; this pane holds it and shows its log\n", node, last.PID)
 	}
 	fmt.Fprintf(w, "%s (port %d)\n", workspace.ReadyMarker(node), last.Port)
 	if noFollow || self.Node.Oneshot() {
@@ -581,4 +663,13 @@ func taskRun(cmd *cobra.Command, a *app.App, node, worktree string, tf treeFlags
 		return withCode(1, fmt.Errorf("%s exited", node))
 	}
 	return relErr
+}
+
+// ignoreInterrupt turns the cancellation a user's Ctrl-C causes into a clean
+// exit; any other error stays.
+func ignoreInterrupt(ctx context.Context, err error) error {
+	if err != nil && ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+		return nil
+	}
+	return err
 }

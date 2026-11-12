@@ -139,6 +139,9 @@ func (s *Service) syncProject(ctx context.Context, st *store.Store, ref config.P
 		return fail(err)
 	}
 	p := &pipeline{f: f, st: st, m: m, cfg: s.App.Config, forgeName: m.Forge, now: s.Now()}
+	if hadPrev {
+		p.prev = old
+	}
 	if err := p.run(ctx, &res); err != nil {
 		return fail(err)
 	}

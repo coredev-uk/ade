@@ -71,7 +71,7 @@ func ClassifyJob(forgeName string, in ClassifyInput) (Job, error) {
 		Feature: "classify", Role: RoleClassify, PromptVersion: classifyVersion,
 		System: classifySystem, Prompt: b.String(), Schema: classifySchema,
 		Forge: forgeName, Ref: in.Issue.Ref, Name: "classify",
-		MaxTokens: 200,
+		MaxTokens: 600, // a reasoning model spends part of the cap thinking
 	}, nil
 }
 

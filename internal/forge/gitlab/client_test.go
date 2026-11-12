@@ -416,15 +416,15 @@ func TestMRReviewerVerdictsThreadsAndMerger(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(m.ChangesRequestedBy) != 0 || m.MergedBy != "" {
-			t.Errorf("fresh MR: changes %+v merged by %q", m.ChangesRequestedBy, m.MergedBy)
+		if len(m.ChangesRequestedBy) != 0 || m.MergedBy.Username != "" {
+			t.Errorf("fresh MR: changes %+v merged by %q", m.ChangesRequestedBy, m.MergedBy.Username)
 		}
 		// Threads: rae's two open threads and her resolved nit; the first has my reply.
 		// The system note is not conversation.
 		if m.Threads == nil || len(m.Threads) != 3 {
 			t.Fatalf("threads = %+v, want 3 conversations (the system note is skipped)", m.Threads)
 		}
-		if a := m.Threads[0].Authors; len(a) != 2 || a[0] != "reviewer-rae" || a[1] != "sandbox-dev" {
+		if a := m.Threads[0].Authors; len(a) != 2 || a[0].Username != "reviewer-rae" || a[1].Username != "sandbox-dev" {
 			t.Errorf("first thread authors = %v", a)
 		}
 
@@ -447,12 +447,12 @@ func TestMRReviewerVerdictsThreadsAndMerger(t *testing.T) {
 		if err := srv.MergeMRAs(ref, "reviewer-rae"); err != nil {
 			t.Fatal(err)
 		}
-		if m, _ = c.MR(ctx, ref); m.State != "merged" || m.MergedBy != "reviewer-rae" {
-			t.Errorf("merged MR = %q by %q", m.State, m.MergedBy)
+		if m, _ = c.MR(ctx, ref); m.State != "merged" || m.MergedBy.Username != "reviewer-rae" {
+			t.Errorf("merged MR = %q by %q", m.State, m.MergedBy.Username)
 		}
 		// The list payload carries the merger too: merged MRs get no detail fetch.
 		list, err := c.ListMRs(ctx, forge.MRQuery{Project: apiProj, State: "merged"})
-		if err != nil || len(list) != 1 || list[0].MergedBy != "reviewer-rae" {
+		if err != nil || len(list) != 1 || list[0].MergedBy.Username != "reviewer-rae" {
 			t.Errorf("merged list = %+v %v", list, err)
 		}
 	})

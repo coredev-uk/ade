@@ -182,16 +182,16 @@ func mrEvents(project, me string, wi domain.WorkItem, mr forge.MR, oldMRs map[fo
 	if title := newComments(mr, prev, me, label); title != "" {
 		emit(EvMRComment, events.Info, title)
 	}
-	if names := newcomers(userNames(mr.Approvals.ApprovedBy), userNames(prev.Approvals.ApprovedBy), me); len(names) > 0 {
+	if names := newcomers(mr.Approvals.ApprovedBy, prev.Approvals.ApprovedBy, me); len(names) > 0 {
 		emit(EvMRApproved, events.Success, fmt.Sprintf("%s approved by %s", label, strings.Join(names, ", ")))
 	}
-	if names := newcomers(userNames(mr.ChangesRequestedBy), userNames(prev.ChangesRequestedBy), me); len(names) > 0 {
+	if names := newcomers(mr.ChangesRequestedBy, prev.ChangesRequestedBy, me); len(names) > 0 {
 		emit(EvMRChangesAsked, events.Warn, fmt.Sprintf("changes requested on %s by %s", label, strings.Join(names, ", ")))
 	}
-	if mr.State == mrMerged && prev.State != mrMerged && (me == "" || mr.MergedBy != me) {
+	if mr.State == mrMerged && prev.State != mrMerged && (me == "" || mr.MergedBy.Username != me) {
 		title := label + " merged"
-		if mr.MergedBy != "" {
-			title += " by " + mr.MergedBy
+		if by := mr.MergedBy.Display(); by != "" {
+			title += " by " + by
 		}
 		emit(EvMRMerged, events.Success, title)
 	}
@@ -200,21 +200,13 @@ func mrEvents(project, me string, wi domain.WorkItem, mr forge.MR, oldMRs map[fo
 
 const mrMerged = "merged"
 
-func userNames(us []forge.User) []string {
-	names := make([]string, len(us))
-	for i, u := range us {
-		names[i] = u.Username
-	}
-	return names
-}
-
-// newcomers lists names in cur that prev lacked, leaving out me: what I did
-// myself is not news.
-func newcomers(cur, prev []string, me string) []string {
+// newcomers lists, by display name, the users in cur that prev lacked
+// (matched by username), leaving out me: what I did myself is not news.
+func newcomers(cur, prev []forge.User, me string) []string {
 	var out []string
-	for _, n := range cur {
-		if n != me && !slices.Contains(prev, n) {
-			out = append(out, n)
+	for _, u := range cur {
+		if u.Username != me && !slices.ContainsFunc(prev, func(p forge.User) bool { return p.Username == u.Username }) {
+			out = append(out, u.Display())
 		}
 	}
 	return out
@@ -240,7 +232,7 @@ func newComments(mr, prev forge.MR, me, label string) string {
 		n, existed := had[t.ID]
 		fresh := 0
 		for _, a := range t.Authors[min(n, len(t.Authors)):] {
-			if a != me {
+			if a.Username != me {
 				fresh++
 			}
 		}

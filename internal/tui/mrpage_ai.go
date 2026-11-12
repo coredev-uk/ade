@@ -62,6 +62,7 @@ type aiText struct {
 	pf      *ai.Preflight // the call waits for a yes
 	notes   bool          // the answer used the user's notes
 	shown   bool          // a draft reply that has been put in the editor once
+	cut     string        // set when the model did not finish: what to say beside the text
 
 	added, rejected int // review: drafts saved, comments the diff did not have
 }
@@ -257,6 +258,7 @@ func (m *model) onAI(d *mrData, msg mrResultMsg) tea.Cmd {
 	}
 	st.l = load{st: loadOK}
 	st.text, st.profile, st.model, st.cost, st.cached, st.notes = strings.TrimSpace(ans.res.Text), ans.res.Profile, ans.res.Model, ans.res.CostUSD, ans.res.CacheHit, ans.notes
+	st.cut = ans.res.CutShort()
 	switch k.kind {
 	case aiReply:
 		m.deliverReply(d, k.id, st)
@@ -316,6 +318,9 @@ func (m *model) openReply(d *mrData, id string, st *aiText) {
 		st.shown = true
 		md.ed = newEditor(st.text)
 		md.aiNote = fmt.Sprintf(m.g.T("AI draft · %s · %s · edit it: enter posts, esc throws it away"), st.model, costWord(st))
+		if st.cut != "" {
+			md.aiCut = m.g.Warn + " " + st.cut + m.g.T(": finish it before posting")
+		}
 	}
 	m.mr.modal = md
 }
@@ -435,6 +440,9 @@ func (m model) aiBlock(title string, st *aiText, w int) []string {
 	guide := "AI " + g.Sep + " " + st.model + " " + g.Sep + " " + costWord(st)
 	if st.notes {
 		guide += " " + g.Sep + " includes your notes"
+	}
+	if st.cut != "" {
+		guide += " " + g.Sep + " " + st.cut
 	}
 	l := []string{subRule(title, guide, w, g)}
 	for _, ln := range m.mdLines(st.text, max(10, w-6)) {

@@ -1,4 +1,5 @@
  [1macme/tracker#15[m[1m  Rate-limit the export endpoint[m
+ [2mby Sam Smith (sam)[m
 
  [m●[m[m━━[m[m●[m[m━━[m[m●[m[m━━[m[m●[m[m━━[m[m●[m[m━━[m[1m◉[m[2m──[m[2m○[m  [1mreview[m
  [2mas st br dr ci rv mg[m
@@ -38,7 +39,6 @@
 
  1. check the tenant list
  2. then `ade sync`
-
 
 
 

@@ -3,7 +3,7 @@
  [2m#1 › [22;1mapi!1  Rate-limit the export endpoint[m
  Ready[2m · [22m✓[m CI passed[2m · [m1 of 2 approvals[2m · [22m2 unresolved[2m · [22m▲ it needs approval[m
  [1m[Overview][m [2mThreads[22m 2[m  [2mDiff 1[m  [2mReview[m  [2mCI[m [m✓[m  [2mHistory[m
- [1mOverview[m [2m───────────────────────────────────────────────────────────────────────────────────────────────[m [2msandbox-dev · 1-rate-limit-the-export-endpoint → main[m
+ [1mOverview[m [2m─────────────────────────────────────────────────────────────────────────────────[m [2mSandbox Dev (sandbox-dev) · 1-rate-limit-the-export-endpoint → main[m
    Work item [2m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[m [2made-demo-env/tracker#1[m
    [1made-demo-env/tracker#1  Rate-limit the export endpoint[m
    [2munweighted[m
@@ -35,9 +35,9 @@
 
    Merge request [2m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[m [2made-demo-env/api!1[m
    [2mstate     [mopened
-   [2mauthor    [msandbox-dev
+   [2mauthor    [mSandbox Dev (sandbox-dev)
    [2mbranch    [m1-rate-limit-the-export-endpoint → main
-   [2mreviewers [mreviewer-rae
+   [2mreviewers [mRae Reviewer (reviewer-rae)
    [2mapprovals [m1 of 2 approvals
    [2mpipeline  [22m✓[m CI passed
    [2mthreads   [m2 unresolved · 1 resolved

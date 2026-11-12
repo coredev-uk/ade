@@ -76,6 +76,7 @@ type mrModal struct {
 
 	thread string // reply: the discussion
 	aiNote string // reply: set when the text is an AI draft
+	aiCut  string // reply: set when the AI draft is cut short, so the user finishes it before posting
 
 	ai aiKey // modalAI: the call waiting for a yes
 
@@ -252,12 +253,15 @@ func (m model) mrOverlay(w, h int) string {
 		title = m.g.T("Reply · ") + p.data.ref.String()
 		for _, t := range p.data.threadList() {
 			if t.d.ID == md.thread {
-				l = append(l, stFaint.Render(m.g.Vertical)+" "+stFaint.Render(ansi.Truncate(t.where()+m.g.T(" · ")+t.first().Author.Username+`: "`+oneLine(t.first().Body)+`"`, inner-3, m.g.Ell)), "")
+				l = append(l, stFaint.Render(m.g.Vertical)+" "+stFaint.Render(ansi.Truncate(t.where()+m.g.T(" · ")+t.first().Author.Display()+`: "`+oneLine(t.first().Body)+`"`, inner-3, m.g.Ell)), "")
 				break
 			}
 		}
 		if md.aiNote != "" {
 			l = append(l, stFaint.Render(ansi.Wrap(md.aiNote, inner, "")))
+		}
+		if md.aiCut != "" {
+			l = append(l, stWarn.Render(ansi.Wrap(md.aiCut, inner, "")))
 		}
 		l = append(l, md.ed.view(inner, editorRows, "your reply")...)
 	case modalComment, modalEditDraft:

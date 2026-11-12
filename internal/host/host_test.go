@@ -14,7 +14,12 @@ func TestDecide(t *testing.T) {
 		action Action
 		ok     bool
 	}{
-		{"auto inside zellij", Env{Mode: ModeAuto, InsideZellij: true, ZellijAvailable: true}, RunHere, true},
+		{"auto inside the ade session", Env{Mode: ModeAuto, InsideZellij: true, CurrentSession: "ade"}, FocusHome, true},
+		{"auto inside another session", Env{Mode: ModeAuto, InsideZellij: true, CurrentSession: "work"}, OpenHome, true},
+		{"inside zellij without a session name", Env{Mode: ModeAuto, InsideZellij: true}, RunHere, true},
+		{"a session that only starts with ade is another session", Env{InsideZellij: true, CurrentSession: "ade-old"}, OpenHome, true},
+		{"plain inside zellij runs here", Env{Mode: ModePlain, InsideZellij: true, CurrentSession: "ade"}, RunHere, true},
+		{"vscode inside zellij runs here", Env{Mode: ModeVSCode, InsideZellij: true, CurrentSession: "work"}, RunHere, true},
 		{"auto absent session", Env{Mode: ModeAuto, ZellijAvailable: true}, Create, true},
 		{"auto live session", Env{Mode: ModeAuto, ZellijAvailable: true, Session: zellij.Live}, Attach, true},
 		{"auto exited session", Env{Mode: ModeAuto, ZellijAvailable: true, Session: zellij.Exited}, Attach, true},
@@ -24,7 +29,7 @@ func TestDecide(t *testing.T) {
 		{"vscode runs here", Env{Mode: ModeVSCode, ZellijAvailable: true}, RunHere, true},
 		{"zellij mode missing binary", Env{Mode: ModeZellij}, RunHere, false},
 		{"zellij mode creates", Env{Mode: ModeZellij, ZellijAvailable: true}, Create, true},
-		{"zellij mode inside zellij", Env{Mode: ModeZellij, InsideZellij: true}, RunHere, true},
+		{"zellij mode inside the ade session", Env{Mode: ModeZellij, InsideZellij: true, CurrentSession: "ade"}, FocusHome, true},
 	}
 	for _, c := range cases {
 		a, ok := Decide(c.env)
@@ -45,6 +50,8 @@ func TestArgv(t *testing.T) {
 		{Attach, zellij.Live, "", []string{"zellij", "attach", "ade"}},
 		{Attach, zellij.Exited, "", []string{"zellij", "attach", "--force-run-commands", "ade"}},
 		{RunHere, zellij.Absent, "", nil},
+		{FocusHome, zellij.Live, "", nil},
+		{OpenHome, zellij.Live, "", nil},
 		{Create, zellij.Absent, "/c/z.kdl", []string{"zellij", "--config", "/c/z.kdl", "--session", "ade", "--new-session-with-layout", "/l.kdl"}},
 		{Attach, zellij.Live, "/c/z.kdl", []string{"zellij", "--config", "/c/z.kdl", "attach", "ade"}},
 		{Attach, zellij.Exited, "/c/z.kdl", []string{"zellij", "--config", "/c/z.kdl", "attach", "--force-run-commands", "ade"}},
@@ -72,5 +79,24 @@ func TestUsesUnlockFirstOnlyInsideVSCodeWithoutAUserConfig(t *testing.T) {
 	}
 	if (Env{InsideVSCode: true}).UsesUnlockFirst(userCfg) {
 		t.Error("an explicit $ZELLIJ_CONFIG_FILE wins over ADE's preset")
+	}
+}
+
+func TestFocusesHomeFirstOnlyBeforeAttachingALiveSession(t *testing.T) {
+	cases := []struct {
+		a     Action
+		state zellij.State
+		want  bool
+	}{
+		{Attach, zellij.Live, true},
+		{Attach, zellij.Exited, false},
+		{Create, zellij.Absent, false},
+		{RunHere, zellij.Live, false},
+		{FocusHome, zellij.Live, false},
+	}
+	for _, c := range cases {
+		if got := FocusesHomeFirst(c.a, c.state); got != c.want {
+			t.Errorf("FocusesHomeFirst(%v,%v) = %v, want %v", c.a, c.state, got, c.want)
+		}
 	}
 }

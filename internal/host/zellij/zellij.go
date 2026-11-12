@@ -78,6 +78,9 @@ const TabTemplate = `    default_tab_template {
     }
 `
 
+// HomeTab is the name of the tab that runs the dashboard.
+const HomeTab = "home"
+
 // Layout returns the KDL layout for a session: one borderless "home" tab
 // running `<ade> dash`. Paths come from the filesystem, so every string is
 // escaped rather than assumed safe.
@@ -85,7 +88,7 @@ func Layout(ade string) string {
 	var b strings.Builder
 	b.WriteString("layout {\n")
 	b.WriteString(TabTemplate)
-	b.WriteString("    tab name=\"home\" focus=true {\n")
+	b.WriteString("    tab name=" + Quote(HomeTab) + " focus=true {\n")
 	b.WriteString("        pane borderless=true focus=true command=" + Quote(ade) + " {\n")
 	b.WriteString("            args \"dash\"\n")
 	b.WriteString("        }\n")

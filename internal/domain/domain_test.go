@@ -191,10 +191,25 @@ func TestChildren(t *testing.T) {
 		{Ref: both.Ref, Type: "relates_to"},
 		{Ref: other.Ref, Type: "blocks"},
 	}
-	got := children(tracker, links, []forge.Issue{linked, byDesc, both, both, other, tracker})
-	want := []forge.Issue{linked, byDesc, both}
+	byHierarchy := forge.Issue{Ref: ref("g/web#2")}
+	otherParent := forge.Issue{Ref: ref("g/web#3")}
+	parents := map[forge.Ref]forge.Ref{byHierarchy.Ref: tracker.Ref, otherParent.Ref: ref("g/tracker#9")}
+	got := children(tracker, links, parents, []forge.Issue{linked, byDesc, byHierarchy, otherParent, both, both, other, tracker})
+	want := []forge.Issue{linked, byDesc, byHierarchy, both}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestParentsPutTheForgesParentFirst(t *testing.T) {
+	child := forge.Issue{Ref: ref("g/web#1"), Description: "Parent: g/tracker#2\nPart of g/tracker#1"}
+	got := Parents(child, map[forge.Ref]forge.Ref{child.Ref: ref("g/tracker#1")})
+	want := []forge.Ref{ref("g/tracker#1"), ref("g/tracker#2")}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	if got := Parents(child, nil); len(got) != 2 {
+		t.Errorf("without a forge parent the description decides: %v", got)
 	}
 }
 
