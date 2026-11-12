@@ -37,10 +37,12 @@ type Result struct {
 	PID     int     `json:"pid,omitempty"`
 	Outcome Outcome `json:"outcome"`
 	// Shared is true when an instance another workspace had already started was reused.
-	Shared bool   `json:"shared,omitempty"`
-	Ready  string `json:"ready,omitempty"` // the probe, e.g. "http http://localhost:54012/healthz"
-	Detail string `json:"detail,omitempty"`
-	Log    string `json:"log"`
+	Shared bool `json:"shared,omitempty"`
+	// Prepared is true when the node's prepare command ran for this start.
+	Prepared bool   `json:"prepared,omitempty"`
+	Ready    string `json:"ready,omitempty"` // the probe, e.g. "http http://localhost:54012/healthz"
+	Detail   string `json:"detail,omitempty"`
+	Log      string `json:"log"`
 }
 
 // UpOptions says who keeps the instances alive.
@@ -53,6 +55,9 @@ type UpOptions struct {
 	HolderPID int
 	// Progress, when set, is called as each node finishes. Calls are serialised.
 	Progress func(Result)
+	// Prepared, when set, is called after a node's prepare command ran, with
+	// its error (nil on success). Calls may be concurrent.
+	Prepared func(in *Instance, command string, err error)
 
 	// restore are the holds a restarted instance had before it was stopped
 	// (dropping its row dropped them); they replace the new hold of Holder.
@@ -149,7 +154,7 @@ func (m *Manager) waitReady(ctx context.Context, in *Instance, w WaitOptions) (R
 			return Result{}, err
 		}
 		if row != nil && m.reusable(ctx, in, row) {
-			res := Result{ID: in.ID, Node: in.Node.ID, Kind: kindOf(in.Node), Tree: in.Dir, Port: in.Port, PID: row.PID, Outcome: OutcomeReady, Shared: true, Log: in.Log}
+			res := Result{ID: in.ID, Node: in.Node.ID, Kind: kindOf(in.Node), Tree: in.Tree.Path, Port: in.Port, PID: row.PID, Outcome: OutcomeReady, Shared: true, Log: in.Log}
 			if in.Ready != nil {
 				res.Ready = in.Ready.String()
 			}
@@ -212,7 +217,7 @@ func (m *Manager) start(ctx context.Context, p *Plan, o UpOptions) ([]Result, er
 
 // bring starts (or reuses) one instance, or reports why it cannot.
 func (m *Manager) bring(ctx context.Context, p *Plan, in *Instance, results []Result, index map[string]int, o UpOptions) Result {
-	res := Result{ID: in.ID, Node: in.Node.ID, Kind: kindOf(in.Node), Tree: in.Dir, Port: in.Port, Log: in.Log}
+	res := Result{ID: in.ID, Node: in.Node.ID, Kind: kindOf(in.Node), Tree: in.Tree.Path, Port: in.Port, Log: in.Log}
 	if in.Ready != nil {
 		res.Ready = in.Ready.String()
 	}
@@ -233,8 +238,8 @@ func (m *Manager) bring(ctx context.Context, p *Plan, in *Instance, results []Re
 		return res
 	}
 	defer unlock()
-	pid, shared, err := m.ensure(ctx, p, in, o)
-	res.PID, res.Shared = pid, shared
+	pid, shared, prepared, err := m.ensure(ctx, p, in, o)
+	res.PID, res.Shared, res.Prepared = pid, shared, prepared
 	if err != nil {
 		res.Outcome, res.Detail = OutcomeFailed, err.Error()
 		if ctx.Err() == nil { // an interrupt is not the instance's failure
@@ -249,34 +254,96 @@ func (m *Manager) bring(ctx context.Context, p *Plan, in *Instance, results []Re
 // ensure runs under the instance lock. It reuses a healthy instance or starts
 // a new one, and records the hold before the lock is released so a concurrent
 // Release cannot stop it in between.
-func (m *Manager) ensure(ctx context.Context, p *Plan, in *Instance, o UpOptions) (pid int, shared bool, err error) {
+func (m *Manager) ensure(ctx context.Context, p *Plan, in *Instance, o UpOptions) (pid int, shared, prepared bool, err error) {
 	row, err := m.get(in.ID)
 	if err != nil {
-		return 0, false, err
+		return 0, false, false, err
 	}
 	if row != nil {
 		if m.reusable(ctx, in, row) {
 			if err := m.holdFor(in.ID, o); err != nil {
-				return 0, false, err
+				return 0, false, false, err
 			}
-			return row.PID, true, nil
+			return row.PID, true, false, nil
 		}
 		// Stale: a crashed or half-started instance. Clear it before starting afresh.
 		stopGroup(row.PID, row.pstart, m.Grace)
 		if err := m.drop(in.ID); err != nil {
-			return 0, false, err
+			return 0, false, false, err
 		}
 	}
 	m.clearFailure(in.ID)
+	if err := m.startLog(in); err != nil {
+		return 0, false, false, err
+	}
+	if prepared, err = m.prepare(ctx, in, o); err != nil {
+		return 0, false, prepared, err
+	}
 	if in.Node.Oneshot() {
 		err = m.runOneshot(ctx, p, in)
 	} else {
 		pid, err = m.startService(ctx, p, in)
 	}
 	if err != nil {
-		return pid, false, err
+		return pid, false, prepared, err
 	}
-	return pid, false, m.holdFor(in.ID, o)
+	return pid, false, prepared, m.holdFor(in.ID, o)
+}
+
+// startLog empties the instance's log for a fresh start: the prepare command
+// and then the node itself append to it.
+func (m *Manager) startLog(in *Instance) error {
+	if err := os.MkdirAll(filepath.Dir(in.Log), 0o700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(in.Log, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+
+// prepare runs the node's prepare command in its working directory, inside the
+// dev shell, with the node's environment; its output goes to the node's log
+// ahead of the node's own. It is skipped while the node's prepare_if_missing
+// path exists. A node whose directory does not exist fails here with that
+// said, before anything is started in it.
+func (m *Manager) prepare(ctx context.Context, in *Instance, o UpOptions) (ran bool, err error) {
+	if fi, err := os.Stat(in.Dir); err != nil || !fi.IsDir() {
+		return false, fmt.Errorf("working directory %s does not exist in the worktree (dir = %q)", in.Dir, in.Node.Task.Dir)
+	}
+	if in.Prepare == "" {
+		return false, nil
+	}
+	if in.PrepareIfMissing != "" {
+		if _, err := os.Lstat(in.PrepareIfMissing); err == nil {
+			return false, nil
+		}
+	}
+	logf, err := os.OpenFile(in.Log, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return false, err
+	}
+	defer logf.Close()
+	fmt.Fprintf(logf, "ade: prepare: %s\n", in.Prepare)
+	cmd := in.command(ctx, in.Prepare)
+	cmd.Stdout, cmd.Stderr = logf, logf
+	// Its own process group, so an interrupt stops what the command started too.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
+	cmd.WaitDelay = m.Grace
+	err = cmd.Run()
+	if o.Prepared != nil {
+		o.Prepared(in, in.Prepare, err)
+	}
+	if err != nil {
+		detail := fmt.Sprintf("prepare %q failed: %v", in.Prepare, err)
+		if line := readiness.LastLine(in.Log); line != "" {
+			detail += ", last log line: " + line
+		}
+		return true, errors.New(detail)
+	}
+	return true, nil
 }
 
 // holdFor records who keeps id up: its previous holds when it was restarted,
@@ -317,7 +384,7 @@ func (m *Manager) reusable(ctx context.Context, in *Instance, row *Row) bool {
 
 func (m *Manager) row(p *Plan, in *Instance, state string) Row {
 	return Row{
-		ID: in.ID, Node: in.Node.ID, Tree: in.Dir, Project: p.Loc.Project, Kind: kindOf(in.Node),
+		ID: in.ID, Node: in.Node.ID, Tree: in.Tree.Path, Project: p.Loc.Project, Kind: kindOf(in.Node),
 		Port: in.Port, State: state, Keep: in.Node.Task.Keep, Log: in.Log, StartedAt: time.Now(), Requires: in.Requires,
 	}
 }
@@ -337,18 +404,12 @@ func (m *Manager) spawn(in *Instance) (*exec.Cmd, <-chan struct{}, error) {
 			return nil, nil, err
 		}
 	}
-	logf, err := os.OpenFile(in.Log, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	logf, err := os.OpenFile(in.Log, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer logf.Close()
-	argv := in.Devshell.Wrap([]string{"sh", "-c", in.Cmd})
-	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.Dir = in.Dir
-	cmd.Env = os.Environ()
-	for _, k := range slices.Sorted(maps.Keys(in.Env)) {
-		cmd.Env = append(cmd.Env, k+"="+in.Env[k])
-	}
+	cmd := in.command(context.Background(), in.Cmd)
 	cmd.Stdout, cmd.Stderr = logf, logf
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
@@ -360,6 +421,24 @@ func (m *Manager) spawn(in *Instance) (*exec.Cmd, <-chan struct{}, error) {
 		close(exited)
 	}()
 	return cmd, exited, nil
+}
+
+// command builds the shell command that runs script as the instance: in its
+// working directory, inside the tree's dev shell, with the node's environment.
+// A dev shell may start the command in the directory it was entered from, so
+// a node with its own `dir` changes into it inside the shell.
+func (in *Instance) command(ctx context.Context, script string) *exec.Cmd {
+	if in.Dir != in.Tree.Path {
+		script = "cd " + shellQuote(in.Dir) + " || exit 1\n" + script
+	}
+	argv := in.Devshell.Wrap([]string{"sh", "-c", script})
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Dir = in.Dir
+	cmd.Env = os.Environ()
+	for _, k := range slices.Sorted(maps.Keys(in.Env)) {
+		cmd.Env = append(cmd.Env, k+"="+in.Env[k])
+	}
+	return cmd
 }
 
 func (m *Manager) startService(ctx context.Context, p *Plan, in *Instance) (int, error) {
@@ -441,6 +520,7 @@ func (m *Manager) runOneshot(ctx context.Context, p *Plan, in *Instance) error {
 type Stopped struct {
 	ID   string `json:"id"`
 	Node string `json:"node"`
+	Tree string `json:"tree,omitempty"`
 	Port int    `json:"port,omitempty"`
 }
 
@@ -479,10 +559,11 @@ func (m *Manager) Reap(ctx context.Context) ([]Stopped, error) {
 		ids = append(ids, id)
 	}
 	rows.Close()
-	return m.reap(ctx, ids)
+	return m.reap(ctx, ids, false)
 }
 
-func (m *Manager) reap(ctx context.Context, ids []string) ([]Stopped, error) {
+// reap stops each of ids that no holder keeps; force also stops `keep` instances.
+func (m *Manager) reap(ctx context.Context, ids []string, force bool) ([]Stopped, error) {
 	var rows []Row
 	for _, id := range ids {
 		r, err := m.get(id)
@@ -496,7 +577,7 @@ func (m *Manager) reap(ctx context.Context, ids []string) ([]Stopped, error) {
 	slices.SortFunc(rows, func(a, b Row) int { return b.StartedAt.Compare(a.StartedAt) })
 	var stopped []Stopped
 	for _, r := range rows {
-		s, err := m.reapOne(ctx, r.ID)
+		s, err := m.reapOne(ctx, r.ID, force)
 		if err != nil {
 			return stopped, err
 		}
@@ -508,7 +589,7 @@ func (m *Manager) reap(ctx context.Context, ids []string) ([]Stopped, error) {
 }
 
 // reapOne stops id under its lock if it is still unheld.
-func (m *Manager) reapOne(ctx context.Context, id string) (*Stopped, error) {
+func (m *Manager) reapOne(ctx context.Context, id string, force bool) (*Stopped, error) {
 	unlock, err := m.lock(ctx, id)
 	if err != nil {
 		return nil, err
@@ -525,14 +606,14 @@ func (m *Manager) reapOne(ctx context.Context, id string) (*Stopped, error) {
 	if len(h) > 0 {
 		return nil, nil
 	}
-	if r.Keep && r.Alive {
+	if r.Keep && r.Alive && !force {
 		return nil, nil
 	}
 	stopGroup(r.PID, r.pstart, m.Grace)
 	if err := m.drop(id); err != nil {
 		return nil, err
 	}
-	return &Stopped{ID: r.ID, Node: r.Node, Port: r.Port}, nil
+	return &Stopped{ID: r.ID, Node: r.Node, Tree: r.Tree, Port: r.Port}, nil
 }
 
 // Follow copies the instance's log to w from the start until ctx ends or the

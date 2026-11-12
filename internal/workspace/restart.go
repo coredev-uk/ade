@@ -124,7 +124,7 @@ func (m *Manager) stopInstance(ctx context.Context, id string) ([]holdRec, error
 // standing is the result of an instance a restart leaves alone: ready when its
 // process still runs (a finished oneshot counts), blocked otherwise.
 func (m *Manager) standing(in *Instance) Result {
-	res := Result{ID: in.ID, Node: in.Node.ID, Kind: kindOf(in.Node), Tree: in.Dir, Port: in.Port, Log: in.Log, Outcome: OutcomeBlocked}
+	res := Result{ID: in.ID, Node: in.Node.ID, Kind: kindOf(in.Node), Tree: in.Tree.Path, Port: in.Port, Log: in.Log, Outcome: OutcomeBlocked}
 	row, err := m.get(in.ID)
 	switch {
 	case err != nil:

@@ -414,6 +414,65 @@ Validation: every repo of a group must exist and be listed once, `repos` must no
 path-safe file name (letters, digits, `.`, `_`, `-`), unique across groups and not the name of a repo, and a group
 name uses letters, digits, `_` and `-`.
 
+### Working directory and prepare step of a node
+
+```toml
+[repos.web.tasks.dev]
+cmd                = "npm run dev -- --port {port}"
+dir                = "packages/app"      # run in <worktree>/packages/app
+prepare            = "npm ci"            # before the node starts ...
+prepare_if_missing = "node_modules"      # ... but only while <dir>/node_modules does not exist
+```
+
+**`dir`** is the working directory of a task or service, relative to the root of the worktree it runs in (the project
+directory for a `services.*` node, which belongs to no repo). It replaces `cmd = "cd packages/app && …"`. It must be
+relative and stay inside that tree: `/abs` and `..` are validation errors, and a `dir` that leaves the tree through a
+symlink is refused when the node is planned. `ade task run`, `ade ws up`, `ade services up`, the zellij panes and the
+tasks of the VS Code export (`options.cwd`) all run the node there, inside the repo's dev shell (which is still the
+worktree's: its `.envrc` or flake stays at the root). A `dir` the worktree does not have (a branch that predates it)
+fails that node with the directory named. `{dir}` in `cmd` and `env` stays the worktree root, as `{<repo>.dir}` is;
+the process's own cwd is the node's `dir`.
+
+**`prepare`** is a shell command that runs in the node's working directory and dev shell before the node starts, with
+the node's environment (`{…}` templates are filled in). Its output leads the node's log (`ade: prepare: <command>`). A
+failing prepare fails the node with its last output line, and the command is not started. **`prepare_if_missing`** is a
+path relative to the node's working directory: the prepare step runs only while that path does not exist
+(`node_modules`, `.venv`, `generated/client.ts`), and without it `prepare` runs on every start. It needs `prepare`, and
+like `dir` must stay inside the tree. ADE checks it each time the node *starts*; a node that another workspace already
+runs is not prepared again. Each prepare command is audited as `git.hook` with `hook=prepare`.
+
+Which one to use: `hooks.install` is per repo and per worktree, runs once for all of a workspace's trees, is keyed on
+lockfiles and makes the services tab wait; use it for what every worktree needs (`npm ci`). `prepare` /
+`prepare_if_missing` is per node, looks at the disk at each start and needs no marker, so it also works with
+`services = "manual"` and for `ade task run` alone; use it for one node's own setup, in its own subdirectory. They
+combine: `hooks.install` installs the repo, `prepare_if_missing` builds a generated directory only one task needs.
+Both run commands from the project manifest with the same trust as `cmd` and `post_worktree`.
+
+### Services outside a worktree
+
+`ade services` runs and inspects the nodes of a project without any worktree tab, over each repo's baseline tree (or a
+`--with repo=branch` pin). A node is named by its id (`api.dev`, `services.db`), by the bare name of a service (`db`) or
+by a group of the manifest. Without names, `up`, `install` and `open` take every `[services.*]` node.
+
+```sh
+ade services status                     # the project: every service and every running node, per worktree
+ade services status --json              # [{project, services: [{node, declared, state, instances: [...]}]}]
+ade services up db api.dev --detach     # install hooks, then start in dependency order; stays up
+ade services up stack                   # a group; without --detach it holds the services until Ctrl-C
+ade services down [names]               # release the project's hold; stop what no workspace holds
+ade services down --force               # also stop instances a worktree's workspace holds, and keep = true ones
+ade services open                       # the project's own "<project> · services" zellij tab
+```
+
+The instances are the ones workspaces use (one row per node and tree, held by whoever started them), so a service that
+a worktree's tab already runs is shared and not started twice, `status` shows who holds it (`held by web/main, project`),
+and `ade ws status` lists the same rows. `down` releases only the project-level hold: an instance a workspace still holds
+stays up and is listed as `still running … held by …`. `ade services open` creates the same unfocused-pane tab layout as
+a workspace's services tab (install pane, then one pane per node, each waiting for the install and what it requires),
+named `<project> · services`, runs through `ade task run --project <name>`, and focuses it; with the tab already open it
+only focuses it. Outside zellij it says to run `ade services up` instead. With no `--project`, the project is the one the
+working directory is in, else the only one.
+
 ### Dev shell per repo
 
 ```toml

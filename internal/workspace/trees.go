@@ -97,7 +97,11 @@ type treeResolver struct {
 }
 
 func newTreeResolver(loc Location, o TreeOptions) *treeResolver {
-	return &treeResolver{loc: loc, opts: o, done: map[string]Tree{loc.Repo: {Repo: loc.Repo, Path: loc.Tree, Source: SourceSelf}}}
+	r := &treeResolver{loc: loc, opts: o, done: map[string]Tree{}}
+	if loc.Repo != "" { // a project-level location has no tree of its own
+		r.done[loc.Repo] = Tree{Repo: loc.Repo, Path: loc.Tree, Source: SourceSelf}
+	}
+	return r
 }
 
 // tree resolves repo: self, then a pin, then the work item's tree, then the

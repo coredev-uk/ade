@@ -175,13 +175,24 @@ type Hooks struct {
 
 // Task is a node in the run graph: a repo task or a service.
 type Task struct {
-	Cmd      string            `toml:"cmd"`
-	Kind     string            `toml:"kind"` // service (default) | oneshot
-	Port     PortSpec          `toml:"port"`
-	Env      map[string]string `toml:"env"`
-	Requires []string          `toml:"requires"` // node refs: "<repo>.<task>" or "services.<name>"
-	Ready    Ready             `toml:"ready"`
-	Keep     bool              `toml:"keep"`
+	Cmd string `toml:"cmd"`
+	// Dir is the working directory of the node, relative to the root of the
+	// worktree it runs in (the project directory for services.*). It must stay
+	// inside that tree. Unset: the root.
+	Dir string `toml:"dir"`
+	// Prepare is a shell command that runs, in the node's working directory and
+	// dev shell, before the node starts. With PrepareIfMissing it runs only
+	// while that path does not exist.
+	Prepare string `toml:"prepare"`
+	// PrepareIfMissing is a path relative to the working directory: when it
+	// exists, Prepare is skipped.
+	PrepareIfMissing string            `toml:"prepare_if_missing"`
+	Kind             string            `toml:"kind"` // service (default) | oneshot
+	Port             PortSpec          `toml:"port"`
+	Env              map[string]string `toml:"env"`
+	Requires         []string          `toml:"requires"` // node refs: "<repo>.<task>" or "services.<name>"
+	Ready            Ready             `toml:"ready"`
+	Keep             bool              `toml:"keep"`
 }
 
 // PortSpec is either "auto" or a fixed port number.

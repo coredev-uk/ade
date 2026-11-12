@@ -279,6 +279,10 @@
                 "cmd": {
                   "type": "string"
                 },
+                "dir": {
+                  "description": "Working directory of the node, relative to the root of the worktree it runs in (the project directory for a service). Must stay inside that tree. Unset: the root.",
+                  "type": "string"
+                },
                 "env": {
                   "additionalProperties": {
                     "type": "string"
@@ -307,6 +311,14 @@
                       "type": "integer"
                     }
                   ]
+                },
+                "prepare": {
+                  "description": "Shell command run in the node's working directory, inside the repo's dev shell, before the node starts (npm ci). With prepare_if_missing it runs only while that path is missing; without it, on every start of the node. Runs with ADE's environment: same trust as cmd.",
+                  "type": "string"
+                },
+                "prepare_if_missing": {
+                  "description": "Path relative to the node's working directory (node_modules). When it exists, prepare is skipped. Needs prepare.",
+                  "type": "string"
                 },
                 "ready": {
                   "additionalProperties": false,
@@ -362,6 +374,10 @@
           "cmd": {
             "type": "string"
           },
+          "dir": {
+            "description": "Working directory of the node, relative to the root of the worktree it runs in (the project directory for a service). Must stay inside that tree. Unset: the root.",
+            "type": "string"
+          },
           "env": {
             "additionalProperties": {
               "type": "string"
@@ -389,6 +405,14 @@
                 "type": "integer"
               }
             ]
+          },
+          "prepare": {
+            "description": "Shell command run in the node's working directory, inside the repo's dev shell, before the node starts (npm ci). With prepare_if_missing it runs only while that path is missing; without it, on every start of the node. Runs with ADE's environment: same trust as cmd.",
+            "type": "string"
+          },
+          "prepare_if_missing": {
+            "description": "Path relative to the node's working directory (node_modules). When it exists, prepare is skipped. Needs prepare.",
+            "type": "string"
           },
           "ready": {
             "additionalProperties": false,

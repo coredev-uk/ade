@@ -476,6 +476,17 @@ func (v *manifestValidator) checkTask(n node) {
 	if t.Cmd == "" {
 		v.errorf(n.path+".cmd", "required")
 	}
+	if t.Dir != "" && !filepath.IsLocal(t.Dir) {
+		v.errorf(n.path+".dir", "%q must be a relative path inside the worktree (no leading / and no ..)", t.Dir)
+	}
+	if t.PrepareIfMissing != "" {
+		if t.Prepare == "" {
+			v.errorf(n.path+".prepare_if_missing", "needs prepare: the command to run when the path is missing")
+		}
+		if !filepath.IsLocal(t.PrepareIfMissing) {
+			v.errorf(n.path+".prepare_if_missing", "%q must be a relative path inside the node's directory (no leading / and no ..)", t.PrepareIfMissing)
+		}
+	}
 }
 
 // reach returns every node id transitively required by id (excluding id itself

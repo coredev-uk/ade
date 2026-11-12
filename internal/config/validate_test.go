@@ -360,3 +360,34 @@ func TestRepoGroupValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestTaskDirAndPrepareValidation(t *testing.T) {
+	const base = header + "[repos.web]\npath = \"w\"\n[repos.web.tasks.dev]\ncmd = \"x\"\n"
+	tests := []struct {
+		name string
+		add  string
+		want []string
+	}{
+		{"nested dir", "dir = \"packages/app\"\n", nil},
+		{"dir dot", "dir = \".\"\n", nil},
+		{"dir inside via dotdot", "dir = \"a/../b\"\n", nil},
+		{"absolute dir", "dir = \"/etc\"\n", []string{"repos.web.tasks.dev.dir: \"/etc\" must be a relative path inside the worktree"}},
+		{"dir escapes", "dir = \"../api\"\n", []string{"repos.web.tasks.dev.dir: \"../api\" must be a relative path inside the worktree"}},
+		{"dir escapes late", "dir = \"a/../../b\"\n", []string{"repos.web.tasks.dev.dir"}},
+		{"prepare only", "prepare = \"npm ci\"\n", nil},
+		{"prepare if missing", "prepare = \"npm ci\"\nprepare_if_missing = \"node_modules\"\n", nil},
+		{"if missing needs prepare", "prepare_if_missing = \"node_modules\"\n", []string{"repos.web.tasks.dev.prepare_if_missing: needs prepare"}},
+		{"if missing absolute", "prepare = \"npm ci\"\nprepare_if_missing = \"/node_modules\"\n", []string{"repos.web.tasks.dev.prepare_if_missing: \"/node_modules\" must be a relative path"}},
+		{"if missing escapes", "prepare = \"npm ci\"\nprepare_if_missing = \"../node_modules\"\n", []string{"repos.web.tasks.dev.prepare_if_missing"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertIssues(t, mustManifest(t, base+tt.add).Validate(testCfg), tt.want...)
+		})
+	}
+	t.Run("services too", func(t *testing.T) {
+		src := header + "[services.db]\ncmd = \"x\"\ndir = \"../x\"\nprepare_if_missing = \"data\"\n"
+		assertIssues(t, mustManifest(t, src).Validate(testCfg),
+			"services.db.dir: \"../x\" must be a relative path", "services.db.prepare_if_missing: needs prepare")
+	})
+}
