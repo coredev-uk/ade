@@ -116,6 +116,9 @@ type model struct {
 	// agt is the open agent dialog, nil when closed (agent.go).
 	agt *agentDialog
 
+	// ait is the open AI digest / stand-in dialog, nil when closed (aitext.go).
+	ait *aiTextDialog
+
 	// ws is the running-instances view behind Home's Services strip (workspace.go).
 	ws wsState
 
@@ -243,6 +246,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return next, cmd
 	}
 	if next, cmd, ok := m.agentUpdate(msg); ok {
+		return next, cmd
+	}
+	if next, cmd, ok := m.aiTextUpdate(msg); ok {
 		return next, cmd
 	}
 	if next, cmd, ok := m.homeUpdate(msg); ok {

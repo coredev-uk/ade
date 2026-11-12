@@ -68,6 +68,7 @@ func newAICmd() *cobra.Command {
 	}
 	cmd.AddCommand(newAISummarizeCmd(), newAIClassifyCmd(), newAIReplyCmd(), newAIReviewCmd(), newAITriageCmd(), newAIModelsCmd())
 	cmd.AddCommand(newAIResearchCmd(), newAIDescribeCmd(), newAICITriageCmd())
+	cmd.AddCommand(newAIDigestCmd(), newAIStandInCmd())
 	return cmd
 }
 
