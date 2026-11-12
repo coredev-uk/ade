@@ -608,11 +608,19 @@ func (m model) mrCI(w, h int) string {
 		}
 	}
 	l = append(l, "")
+	triage := ""
+	if m.aiOn() && failed > 0 {
+		triage = m.g.T(" · t asks the AI for cause and fix")
+	}
 	switch {
 	case failed > 0:
-		l = append(l, "   "+stBad.Render(fmt.Sprintf("%s %d failed %s", g.Bad, failed, plural(failed, "job")))+stFaint.Render(m.g.T(" · l shows the log tail · r retries the failed jobs")))
+		l = append(l, "   "+stBad.Render(fmt.Sprintf("%s %d failed %s", g.Bad, failed, plural(failed, "job")))+stFaint.Render(m.g.T(" · l shows the log tail · r retries the failed jobs")+triage))
 	default:
 		l = append(l, "   "+stFaint.Render(m.g.T("l shows a job's log tail · r retries failed jobs")))
+	}
+	if blk := m.ciTriageLines(d, w); len(blk) > 0 {
+		l = append(append(l, ""), blk...)
+		return m.scrolled(l, w, h)
 	}
 	return fit(m.g, strings.Join(l, "\n"), w, h)
 }

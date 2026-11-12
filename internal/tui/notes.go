@@ -42,6 +42,10 @@ type notesDialog struct {
 	adding  bool
 	input   string
 	blocked bool
+
+	// rs is set when the dialog is the item's research (research.go) instead
+	// of its notes.
+	rs *researchState
 }
 
 // notesEditedMsg ends the editor: the record is read again.
@@ -112,6 +116,8 @@ func (m model) notesLoad(d *notesDialog) {
 func (m model) notesUpdate(msg tea.Msg) (model, tea.Cmd, bool) {
 	d := m.nt
 	switch msg := msg.(type) {
+	case researchStartedMsg:
+		return m.researchUpdate(msg), nil, true
 	case notesEditedMsg:
 		if d == nil || msg.d != d {
 			return m, nil, true
@@ -125,6 +131,10 @@ func (m model) notesUpdate(msg tea.Msg) (model, tea.Cmd, bool) {
 	case tea.KeyPressMsg:
 		if d == nil || msg.String() == "ctrl+c" {
 			return m, nil, false
+		}
+		if d.rs != nil {
+			next, cmd := m.researchKey(msg.String())
+			return next, cmd, true
 		}
 		if d.adding {
 			next, cmd := m.noteAddKey(msg)
@@ -189,6 +199,7 @@ func (m model) noteSave(d *notesDialog) (model, tea.Cmd) {
 // rows and detail pane read that map, never the files. It runs on each
 // refresh and after a note is added or edited.
 func (m *model) loadNotes() {
+	m.loadResearch()
 	m.notes = map[string][]records.Note{}
 	if m.app == nil {
 		return
@@ -261,6 +272,9 @@ func (m model) notesOverlay(w, h int) string {
 	d := m.nt
 	if d == nil {
 		return ""
+	}
+	if d.rs != nil {
+		return m.researchOverlay(d, w, h)
 	}
 	dw := min(w, 100) // the shared dialog measure; blankFieldLayer centres it
 	inner := dw - 4

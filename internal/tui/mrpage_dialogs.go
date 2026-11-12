@@ -30,6 +30,7 @@ const (
 	modalMerge
 	modalLog
 	modalAI
+	modalDescribe // an AI-drafted MR description, editable, applied on enter
 )
 
 // severities are the choices of a comment, in cycling order. The first, none,
@@ -293,6 +294,8 @@ func (m *model) modalKey(k tea.KeyPressMsg) tea.Cmd {
 		return m.mergeKey(md, ks)
 	case modalAI:
 		return m.aiConfirmKey(md, ks)
+	case modalDescribe:
+		return m.describeModalKey(md, k)
 	case modalLog:
 		md.logKey(k)
 	}
@@ -396,6 +399,8 @@ func (m model) mrOverlay(w, h int) string {
 		title, l = m.mergeDialog(md, inner)
 	case modalAI:
 		title, l = m.aiModal(md, inner)
+	case modalDescribe:
+		title, l = m.describeDialog(md, inner, h)
 	}
 	if md.warn != "" {
 		l = append(l, "", stWarn.Render(m.g.Warn+" "+md.warn))
@@ -424,6 +429,8 @@ func (m model) modalHint(md *mrModal) string {
 		return keys("enter", "post reply", "alt+enter", "newline", "esc", "cancel")
 	case modalAI:
 		return keys("enter", "send", "esc", "cancel")
+	case modalDescribe:
+		return keys("enter", "write to the MR", "alt+enter", "newline", "ctrl+r", "new draft", "esc", "discard")
 	case modalComment:
 		return keys("enter", "add draft", "tab", "severity", "alt+enter", "newline", "esc", "cancel")
 	case modalEditDraft:

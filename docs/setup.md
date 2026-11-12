@@ -274,11 +274,11 @@ Each AI feature asks for a *role*; the profile maps the role to a model. A role 
 
 | Role | Used for | Falls back to |
 | --- | --- | --- |
-| `explain` | summaries (`ade ai summarize`), thread summaries, standup, sprint review and parent-issue text | (required) |
+| `explain` | summaries (`ade ai summarize`), thread summaries, CI triage (`ade ai ci-triage`), standup, sprint review and parent-issue text | (required) |
 | `classify` | `ade ai classify` and the classify dialog: short structured answers (a type and app label as JSON) | `explain` |
-| `draft` | reply drafts, MR text | `explain` |
+| `draft` | reply drafts, MR text (`ade ai describe`) | `explain` |
 | `review` | AI review passes over an MR diff | `draft`, then `explain` |
-| `plan`, `implement` | agent plans and runs (through the profile's agent CLI) | `explain` |
+| `plan`, `implement` | agent plans and runs (through the profile's agent CLI); `plan` also serves issue research (`ade ai research`) | `explain` |
 
 Weight suggestions and the keyword classifier used when AI is off never call a model. Pre-flight estimates, the per-call, daily and sprint caps and the audit trail are identical for every role; a classify call is just a cheaper entry in the ledger (`ade audit --action ai.classify`).
 

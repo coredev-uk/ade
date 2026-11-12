@@ -158,6 +158,9 @@ func (m model) paletteEntries() []palEntry {
 		pressEntry("Set weight", "=", "ade issue weight <ref> <n>", true),
 		pressEntry("Move to the next sprint", ">", "ade issue move <ref>", true),
 	}
+	if m.aiOn() {
+		home = append(home, pressEntry("Research the issue in the background", "R", "ade ai research <ref> --detach", true))
+	}
 	es = append(home, es...)
 	// Named filters and project choices, directly.
 	es = append(es, m.filterEntries()...)

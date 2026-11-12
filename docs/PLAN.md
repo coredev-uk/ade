@@ -620,6 +620,7 @@ Global conventions: `j/k` move, `enter` open, `esc` back, `tab` switch pane, `/`
     - Overview shows the AI summary in place of the description, `d` toggles the raw description, `s` asks again past the cache.
     - On Threads `s` summarises the selected thread and `d` drafts a reply into the reply editor (the sketch above first had this on `A`, which is the review pass of 6.9 on every tab); the draft is posted only by `enter`.
     - `A` runs the agent review pass and `P` is the agent menu (plan, address comments) that `A` used to open.
+    - `B` drafts the MR description from the repo's template, the commits and the diff (`ade ai describe`): an editable dialog, `enter` writes only the description (audited `forge.mr.description`), `esc` drops it. On the CI tab `t` asks for the cause and a fix of each failed job from its log tail (`ade ai ci-triage`), shown under the job list. On Home, `R` opens the item's stored research (`ade ai research`, a detached worker; state in the item record's `research/job.json`, answer an AI artifact, so never bought twice).
     - `D` on the Diff tab opens `delta` (else the git pager) in a zellij floating pane, or in this terminal outside zellij; without delta and without a pager of your own the patch is highlighted by chroma before `less -R`.
 
 ### 6.3 Start work (tracker‑project pattern)

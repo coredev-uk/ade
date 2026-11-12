@@ -646,6 +646,7 @@ func (m model) itemDetail(it *domain.WorkItem, w int, hint bool) string {
 		l = append(l, stFaint.Render(fmt.Sprintf("tasks %d of %d", t.Done, t.Total)))
 	}
 	l = append(l, m.noteLines(it, w, hint)...)
+	l = append(l, m.researchLines(it, w)...)
 	if d := strings.TrimSpace(it.Issue.Description); d != "" {
 		l = append(l, "")
 		l = append(l, m.mdPreview(d, w, 8)...)
