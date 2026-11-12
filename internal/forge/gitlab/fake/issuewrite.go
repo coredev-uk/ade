@@ -247,6 +247,20 @@ func (s *Server) updateIssue(w http.ResponseWriter, r *http.Request) {
 	for _, l := range splitLabels(str(p, "remove_labels")) {
 		is.Labels = slices.DeleteFunc(is.Labels, func(x string) bool { return x == l })
 	}
+	if raw, has := p["assignee_ids"]; has {
+		ids, _ := raw.([]any)
+		var users []*user
+		for _, r := range ids {
+			f, _ := r.(float64)
+			u := s.userByID(int64(f))
+			if u == nil {
+				badRequest(w, "assignee_ids is invalid")
+				return
+			}
+			users = append(users, u)
+		}
+		is.Assignees = users
+	}
 	if _, has := p["milestone_id"]; has {
 		if id := int64(intOf(p, "milestone_id")); id == 0 {
 			is.Milestone = nil

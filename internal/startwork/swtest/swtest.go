@@ -158,6 +158,15 @@ func (m *Mirror) SetMilestone(ctx context.Context, ref forge.Ref, id int64) erro
 	return mw.SetMilestone(ctx, ref, id)
 }
 
+// SetAssignees forwards to the wrapped forge.
+func (m *Mirror) SetAssignees(ctx context.Context, ref forge.Ref, users []forge.User) error {
+	aw, ok := m.Forge.(forge.AssigneeWriter)
+	if !ok {
+		return forge.ErrUnavailable
+	}
+	return aw.SetAssignees(ctx, ref, users)
+}
+
 // The hierarchy methods forward to the wrapped forge, which the embedded
 // interface would otherwise hide; a forge without one is unavailable.
 

@@ -973,3 +973,54 @@ func TestDryRunNamesThePinnedBranchAsNewOrExisting(t *testing.T) {
 		}
 	}
 }
+
+// OnlyChild is `ade issue child`: the child, its link and its place in the
+// hierarchy, and nothing else.
+func TestOnlyChildCreatesJustTheLinkedChild(t *testing.T) {
+	h := newHarness(t, fake.Free)
+	ch := startwork.Choices{Repos: []string{"api"}, OnlyChild: true}
+	branchesBefore := h.srv.BranchNames(apiProj)
+
+	_, res, err := h.env.Start(context.Background(), h.resolve(3), ch, true)
+	if err != nil || h.mutations() != 0 {
+		t.Fatalf("dry run: %v, %d writes", err, h.mutations())
+	}
+	for _, s := range res.Steps {
+		if s.Kind != startwork.StepChild && s.Kind != startwork.StepLink {
+			t.Errorf("dry run plans a %s step: %+v", s.Kind, s)
+		}
+	}
+
+	_, res, err = h.start(3, ch)
+	if err != nil {
+		t.Fatalf("%v\n%+v", err, res.Steps)
+	}
+	api := target(t, res, "api")
+	if api.Child == nil || api.MR != nil || api.Worktree != "" || api.Branch != "" {
+		t.Fatalf("target = %+v: want a child and nothing more", api)
+	}
+	if got, ok := h.srv.Parent(*api.Child); !ok || got != issueRef(tracker, 3) {
+		t.Errorf("hierarchy parent = %v, %v", got, ok)
+	}
+	if branches := h.srv.BranchNames(apiProj); !slices.Equal(branches, branchesBefore) {
+		t.Errorf("branches %v -> %v: a branch was made", branchesBefore, branches)
+	}
+	actions := h.auditActions()
+	for _, want := range []string{"forge.issue.create", "forge.issue.link", "forge.issue.parent"} {
+		if !slices.Contains(actions, want) {
+			t.Errorf("audit lacks %s: %v", want, actions)
+		}
+	}
+	for _, not := range []string{"forge.branch.create", "forge.mr.create", "forge.issue.labels"} {
+		if slices.Contains(actions, not) {
+			t.Errorf("audit has %s: %v", not, actions)
+		}
+	}
+
+	// Run again: the child is found, nothing is written.
+	before := h.mutations()
+	_, res, err = h.start(3, ch)
+	if err != nil || res.Created() != 0 || h.mutations() != before {
+		t.Fatalf("second run: %v, created %d, writes %d→%d", err, res.Created(), before, h.mutations())
+	}
+}

@@ -562,6 +562,9 @@ func (e *Env) finish(p Plan, res Result) {
 	if p.Mode == ModeBrowse {
 		kind, title = "work.browse", "Browsing "+p.Item.String()
 	}
+	if p.in.Choices.OnlyChild {
+		kind, title = "work.child", "Child issue for "+p.Item.String()
+	}
 	if res.Created() == 0 {
 		kind = "work.resumed"
 		title = "Nothing to do for " + p.Item.String() + ": already started"

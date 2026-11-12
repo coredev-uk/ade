@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **`ade issue child <tracker-ref>`** creates just the child issue of a tracker issue in a code repo (copied type, assignee, milestone and iteration, `relates_to` link, hierarchy parent), and **`ade issue assign <ref>`** assigns an issue to you, keeping the others (`--replace` for only you). Both are audited, take `--dry-run` and `--json`.
+- **`ade mr checkout <ref>`** checks an MR's head out as a detached `mr-<iid>` worktree without a review tab; `--json` gives the path.
+- **`ade mr from-branch [dir]`** opens the draft MR for the branch checked out in a worktree started outside ADE: MR template, `--closes`, commit prefix and quick-action stripping as for `ade start`.
+- **`ade mr pipeline <ref>`** shows the MR's pipeline and jobs (failed first, with stage and duration); `--log <job>` prints a job's log tail.
+- **`ade cleanup <ref>`** cleans up one item: removes its worktrees, fast-forwards the default-branch baseline and deletes the local branches, only where `ade gc` would remove the tree (clean, pushed, MR merged or closed). Dry run, `--json`, audited.
 - **Breaking default:** an unset `labels.workflow.sync` now means `ask`, not `auto`. ADE no longer moves labels on a shared board unless the manifest says `sync = "auto"`. With `ask`, `ade start` moves the label only with `--move-label` or the dialog toggle, and `ade sync` reports pending moves as warnings and in the inbox. `ade project bootstrap` writes `sync = "ask"`.
 - **Personal namespaces:** GitLab trackers in a user namespace sync. Capabilities skip the group endpoints and sample the tracker project, so weights go to the weight field. Sprints come from the tracker project's milestones. `ade doctor --probe` agrees with sync, and the sprint-move hint names the project.
 - **`ade start --dry-run`** accounts for the workflow label: the move as a write step, or a note saying why it will not happen.

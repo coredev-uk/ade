@@ -185,6 +185,21 @@ func (c *Client) SetIteration(_ context.Context, ref forge.Ref, _ int64) error {
 	return fmt.Errorf("github: iteration of %s: %w", ref, forge.ErrUnavailable)
 }
 
+var _ forge.AssigneeWriter = (*Client)(nil)
+
+// SetAssignees implements forge.AssigneeWriter: the issue's assignees become
+// exactly these logins.
+func (c *Client) SetAssignees(ctx context.Context, ref forge.Ref, assignees []forge.User) error {
+	if err := wantAny(ref); err != nil {
+		return err
+	}
+	logins := make([]string, len(assignees))
+	for i, u := range assignees {
+		logins[i] = u.Username
+	}
+	return c.send(ctx, http.MethodPatch, issuePath(ref), map[string]any{"assignees": logins}, nil)
+}
+
 var _ forge.MilestoneWriter = (*Client)(nil)
 
 // SetMilestone implements forge.MilestoneWriter. The id is resolved to the

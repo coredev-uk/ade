@@ -84,6 +84,12 @@ type WeightWriter interface {
 	SetWeight(ctx context.Context, ref Ref, weight *int) error
 }
 
+// AssigneeWriter replaces an issue's assignees. GitLab sends the user ids and
+// GitHub the logins; callers pass whole users. An empty list unassigns.
+type AssigneeWriter interface {
+	SetAssignees(ctx context.Context, ref Ref, assignees []User) error
+}
+
 // MilestoneWriter sets an issue's milestone, the sprint on forges whose
 // sprints are milestones (GitLab Free, GitHub). milestoneID 0 clears it.
 // The id is the one Milestone.ID reports; a forge whose ids are per
