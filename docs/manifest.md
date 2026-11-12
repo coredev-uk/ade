@@ -272,6 +272,8 @@ esac
 printf '%s %s\n' "$prefix" "$(cat "$1")" > "$1.new" && mv "$1.new" "$1"
 ```
 
+The same keys feed the shell prompt: `ade prompt` prints `ade.commitPrefix` (else `#<ade.parent>`) and the count of items waiting on you without starting git ([setup.md](setup.md#shell-prompt)).
+
 ADE sets `ADE_AGENT_RUN=1` in the environment of every agent it starts (`ade agent plan|run|address`, and the `omp`
 pane of the `agent` layout), and not in its own: the push of `ade agent push` is unmarked. A global `pre-push` hook can
 use it to refuse an agent's own `git push`:

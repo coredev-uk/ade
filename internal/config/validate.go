@@ -753,6 +753,7 @@ func (c *Config) Validate() []Issue {
 	if c.Update.Concurrency < 1 {
 		s.errorf("update.concurrency", "must be at least 1")
 	}
+	validateNotify(&s, c.Notify)
 	if !retainFmt.MatchString(c.Records.AuditRetain) {
 		s.errorf("records.audit_retain", "%q: want \"forever\" or a day count like \"365d\"", c.Records.AuditRetain)
 	}
@@ -779,6 +780,30 @@ func (c *Config) Validate() []Issue {
 		s.warnf(k, "unknown key")
 	}
 	return s.list
+}
+
+func validateNotify(s *issues, n Notify) {
+	x := n.External
+	if !oneOf(x.MinSeverity, "info", "success", "warn", "error") {
+		s.errorf("notify.external.min_severity", "unknown value %q: want info, success, warn or error", x.MinSeverity)
+	}
+	if x.Timeout.Duration <= 0 {
+		s.errorf("notify.external.timeout", "must be positive")
+	}
+	if x.Dedupe.Duration < 0 {
+		s.errorf("notify.external.dedupe", "must not be negative")
+	}
+	if n.SyncStalledAfter.Duration < 0 {
+		s.errorf("notify.sync_stalled_after", "must not be negative")
+	}
+	for i, k := range x.Kinds {
+		if strings.TrimSpace(k) == "" {
+			s.errorf(fmt.Sprintf("notify.external.kinds[%d]", i), "must not be empty")
+		}
+	}
+	if strings.TrimSpace(x.Command) != "" && len(x.Kinds) == 0 {
+		s.warnf("notify.external.kinds", "empty: the command never runs")
+	}
 }
 
 func validateForge(s *issues, path string, f Forge) {

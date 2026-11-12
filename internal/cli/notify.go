@@ -2,8 +2,10 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -15,7 +17,47 @@ func init() { register(newNotifyCmd) }
 
 func newNotifyCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "notify", Short: "Notification tools"}
-	cmd.AddCommand(newNotifySendCmd())
+	cmd.AddCommand(newNotifySendCmd(), newNotifyTestCmd())
+	return cmd
+}
+
+// newNotifyTestCmd runs the [notify.external] command once with a sample
+// event, bypassing its kind filter and dedupe window, so a new command can be
+// tried without waiting for a budget warning.
+func newNotifyTestCmd() *cobra.Command {
+	var sev string
+	cmd := &cobra.Command{
+		Use:   "test",
+		Short: "Run the external notification command once with a sample event",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			x := appFrom(cmd).Config.Notify.External
+			if strings.TrimSpace(x.Command) == "" {
+				return errors.New("notify.external.command is not set in the user config")
+			}
+			e := events.New("notify.test", events.ParseSeverity(strings.ToLower(sev)), "ade external notification test")
+			e.Detail = "sent by `ade notify test`"
+			start := time.Now()
+			err := notify.Run(cmd.Context(), x, e)
+			took := time.Since(start)
+			if jsonOut {
+				out := map[string]any{"ok": err == nil, "command": x.Command, "took_ms": took.Milliseconds()}
+				if err != nil {
+					out["error"] = err.Error()
+				}
+				if perr := printJSON(cmd.OutOrStdout(), out); perr != nil {
+					return perr
+				}
+			} else if err == nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "ran %q: ok (%s)\n", x.Command, took.Round(time.Millisecond))
+			}
+			if err != nil {
+				return withCode(1, fmt.Errorf("external notification command failed: %w", err))
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&sev, "severity", "warn", "info | success | warn | error")
 	return cmd
 }
 

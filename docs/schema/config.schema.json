@@ -293,6 +293,62 @@
     "notify": {
       "additionalProperties": false,
       "properties": {
+        "external": {
+          "additionalProperties": false,
+          "description": "Hands system-level events to a command of your own, e.g. to a CDE inbox. It never blocks the dashboard; failures are written to the audit log (notify.external).",
+          "properties": {
+            "command": {
+              "description": "Run with sh -c for each matching event. The event is JSON on stdin and ADE_EVENT_* variables (ID, KIND, SEVERITY, TITLE, PROJECT, SUBJECT, DETAIL, LINK, TIME). Empty turns the hook off.",
+              "type": "string"
+            },
+            "dedupe": {
+              "description": "The same kind and severity in the same project is sent once per this window, also across ade processes (default 1h; 0 sends every event).",
+              "examples": [
+                "10m",
+                "90s"
+              ],
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+              "type": "string"
+            },
+            "kinds": {
+              "description": "Event-kind globs the command receives (default budget.* and sync.stalled). Transient status events are never sent.",
+              "items": {
+                "description": "Event-kind globs the command receives (default budget.* and sync.stalled). Transient status events are never sent.",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "min_severity": {
+              "description": "Lowest severity sent: info, success, warn (default) or error.",
+              "enum": [
+                "info",
+                "success",
+                "warn",
+                "error"
+              ],
+              "type": "string"
+            },
+            "timeout": {
+              "description": "Kills the command after this long (default 10s).",
+              "examples": [
+                "10m",
+                "90s"
+              ],
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "sync_stalled_after": {
+          "description": "How long a project's sync may keep failing before ADE raises sync.stalled, once per outage (default 2h; 0 never).",
+          "examples": [
+            "10m",
+            "90s"
+          ],
+          "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+          "type": "string"
+        },
         "toast": {
           "description": "Event-kind globs shown as pop-ups; every event is recorded in the inbox regardless.",
           "items": {

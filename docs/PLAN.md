@@ -105,6 +105,14 @@ concurrency      = 4
 
 [notify]                       # (6.8)
 toast = ["*"]                  # event kinds shown as pop-ups; every event is recorded in the inbox
+sync_stalled_after = "2h"      # a sync failing this long raises sync.stalled, once per outage (0: never)
+
+[notify.external]              # optional: hand system-level events to a command of yours (6.8)
+command      = ""              # run with sh -c; event JSON on stdin, ADE_EVENT_* in the environment; empty: off
+kinds        = ["budget.*", "sync.stalled"]
+min_severity = "warn"          # info | success | warn | error
+timeout      = "10s"
+dedupe       = "1h"            # same kind, project and severity at most once per window; 0: every event
 
 [ai]
 mode    = "ask"            # off | ask | auto
@@ -755,8 +763,9 @@ Every subsystem publishes typed events onto one in‑process bus: update/sync, g
 | `issue.assigned`, `issue.iteration_changed` | forge diff |
 | `agent.plan.ready`, `agent.run.end`, `agent.run.failed` (progress events: `agent.run.queued\|planning\|running\|approved\|pushed\|cancelled\|push-failed`, mostly transient) | agent runs (6.6) |
 | `budget.warn` (80 % of a daily, weekly or sprint cap, once per period), `budget.stop`, `project.manifest.invalid`, `worktree.removable` | budget, projects, worktrees |
+| `sync.failed` (a project's sync fails with a new error; the same error again is transient), `sync.stalled` (a project's sync has failed for longer than `notify.sync_stalled_after`, once per outage) | forge sync |
 
-Notifications live only inside the dashboard. ADE never sends terminal escape sequences or desktop notifications: support is unreliable across the terminals ADE runs in (VS Code, browser terminals, zellij), so the dashboard is the one place they are guaranteed to appear (decided 2026‑11‑11).
+Notifications live only inside the dashboard. ADE never sends terminal escape sequences or desktop notifications: support is unreliable across the terminals ADE runs in (VS Code, browser terminals, zellij), so the dashboard is the one place they are guaranteed to appear (decided 2026‑11‑11). The one way out is a command **you** configure (`[notify.external]`, below): ADE hands the event over and the command decides where it goes (a CDE inbox, a chat webhook, `notify-send`).
 
 - **Pop‑ups:**
   - a stack in the bottom‑right corner, up to three visible, with `+n earlier` above them
@@ -776,6 +785,18 @@ Notifications live only inside the dashboard. ADE never sends terminal escape se
 - **Row markers:** every list row whose subject has unread notifications carries a `●` marker in the warn colour, until they are read.
   - **As built:** the marker is the word `new` (`3 new` for several), bold in the warn colour, rather than a `●`. On the Home screen a dot is already a station on the item's track (the Interchange design), so a second dot would read as a stage; and a word survives `NO_COLOR`, the ascii glyph set and a monochrome capture, where the colour distinction is gone. The header keeps the `●` for the unread count, where a number sits beside it.
 - **CLI:** `ade inbox [--unread] [--json]` reads the inbox, and `ade notify send --kind … --title … --subject …` records a notification from a script.
+- **External command (`[notify.external]`):** system-level events that should reach you when the dashboard is closed (the AI budget running out overnight, a sync that has failed all morning) go to a command of your own, for example one that posts to a CDE inbox.
+  - **Which events:** those whose kind matches `kinds` (default `budget.*` and `sync.stalled`) and whose severity is at least `min_severity` (default `warn`). Transient status events are never sent. Every process that raises events delivers them (the dashboard, `ade sync` from cron, `ade ai …`), so `ade notify send --kind budget.warn --severity warn …` also reaches it.
+  - **What the command gets:** `sh -c <command>` with the event as one JSON line on stdin (`id`, `time`, `kind`, `severity`, `project`, `subject`, `title`, `detail`, `link`; credentials masked as in the inbox) and as `ADE_EVENT_ID`, `_TIME`, `_KIND`, `_SEVERITY`, `_PROJECT`, `_SUBJECT`, `_TITLE`, `_DETAIL` and `_LINK`. It runs in its own process group and is killed after `timeout` (default 10 s).
+  - **It never blocks ADE:** events go through a queue of 32 to one delivery goroutine, so a slow command delays neither the bus, the toasts nor the screen; a burst past the queue is dropped (the inbox still has every event). When ADE exits, deliveries still running after 3 s are killed.
+  - **No spam:** the same kind, project and severity is sent once per `dedupe` window (default 1 h), also across processes: the window lives in `cache.db`. A change of severity (warn to error) passes. `budget.warn` is already once per period, and `sync.stalled` is raised once per outage (the cached sync state remembers it until a sync succeeds), so a long outage is one notification, not one per sync interval.
+  - **Failures are logged, not fatal:** every run is an audit entry `notify.external` (target = event kind, outcome `ok` or `error`, the command's stderr or "timed out after 10s" as the error), found with `ade audit --action notify.external`; nothing is printed over the dashboard. `ade notify test [--severity …]` runs the command once with a sample event, ignoring the filter and the window, and exits non-zero with the reason when it fails.
+  - **`sync.stalled`:** a project whose sync has failed since its last good one, for longer than `notify.sync_stalled_after` (default 2 h; 0 turns it off), raises `sync.stalled` once for that outage; a project that never synced has no baseline and raises only `sync.failed`.
+- **Shell prompt (`ade prompt`):** a segment for `PS1`/starship/p10k: the worktree's ticket and the count of items that wait on you.
+  - **What it prints:** `GL-412 !3`: the worktree's `ade.commitPrefix` (else `#<ade.parent>`), then `!N` where N is the assigned, not-done items whose court is you (what Home calls "waiting on you") plus open MRs that ask for your review. `--format` takes `{ticket} {attention} {attention_n} {items} {reviews} {project} {repo} {branch} {worktree}`; empty values and the blanks round them disappear; nothing waiting prints no count unless `--zero`; `--scope project` counts only the directory's project; `--json` prints every field (`in_tree`, `project`, `repo`, `worktree`, `branch`, `parent`, `prefix`, `ticket`, `cache`, `attention`).
+  - **Silent elsewhere:** outside `<root>/<project>/<repo>` (a repo needs its `.bare` clone) it prints nothing and exits 0. At a repo or baseline tree it prints the count without a ticket. Without a cache (no sync yet) the count is left out, and `--json` says `"cache": "missing"`.
+  - **Fast by construction:** it never starts git or the network. It reads `.git`, `HEAD` and `config.worktree` of the worktree, and counts in `cache.db` over a read-only connection with no migrations, no write lock, no audit line and no cache created when there is none, so a running dashboard is never disturbed. The count comes from an index SQLite keeps on `work_items` (`attention`, derived from each item's JSON), so no item is decoded: the command's own work is about a millisecond even for 2000 items of 5 KB (`go test ./internal/prompt -bench Read`). A cache written by an older ade gets the index when any newer `ade` command first opens it; until then the prompt omits the count (`"cache": "missing"`). What remains of a prompt's wall time is the process start every `ade` command pays (about 25 ms on a busy development machine, most of it package initialisation of the syntax highlighter).
+- **VS Code notifications extension: not built** (F26, decided 2026‑11‑12). An extension would be a TypeScript package with its own toolchain, packaging and marketplace/`.vsix` distribution next to a single static Go binary built by Nix, and nothing in CI could exercise it (the extension host needs a downloaded Electron). It would also only duplicate the contract ADE already keeps for every non-TUI client: `ade inbox --unread --json` (poll it from a VS Code task or an extension a team writes itself), `ade audit tail --follow --json`, and `ade notify send` for the other direction. What exists instead: the in-dashboard toasts in the VS Code terminal, `[notify.external]` (point `command` at whatever reaches a VS Code window in your CDE, for example a script that writes to the workspace's notification file or the CDE's own inbox), and `ade prompt` for an always-visible count in the integrated terminal. If a team needs a native status-bar item, a thin extension over `ade inbox --unread --json` is the smallest design, and the JSON fields are the contract it would rely on.
 
 Forge‑derived events are computed by diffing consecutive syncs, so they work on every tier with no webhooks. What the diff reads:
 
@@ -845,7 +866,8 @@ internal/onboard/        pure parts of `ade init`
 internal/git/            bare clone + refspec fix, worktrees, fetch, ff-only, ahead/behind
 internal/startwork/      start-work flow (6.3)
 internal/events/         typed event bus; run-record/audit watchers for cross-process events
-internal/notify/         inbox store and in-dashboard toasts
+internal/notify/         inbox store, in-dashboard toasts, external notification command
+internal/prompt/         `ade prompt`: worktree ticket and attention count from files and the cache
 internal/ai/             drivers (omp, anthropic, openai-compat), prompts/ (versioned), result cache
 internal/agent/          agent runs (omp, claude, codex) on work items
 internal/billing/        provider spend sources (litellm, omp, anthropic, openai, ...)

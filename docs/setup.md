@@ -293,6 +293,50 @@ Events (CI failures, review requests, agent runs finishing) appear as pop-ups an
 toast = ["ci.failed", "mr.*", "agent.*"]
 ```
 
+#### External notification command
+
+Budget warnings and a sync that has been failing for hours matter when the dashboard is closed. `[notify.external]` hands them to a command of your own, for example one that posts to a CDE inbox:
+
+```toml
+[notify.external]
+command      = "my-cde-inbox-push"                 # sh -c; empty turns it off
+kinds        = ["budget.*", "sync.stalled"]        # default; add "sync.failed", "ci.failed", ...
+min_severity = "warn"                              # info | success | warn | error
+timeout      = "10s"                               # the command is killed after this
+dedupe       = "1h"                                # same kind + project + severity once per window; "0s" sends all
+
+[notify]
+sync_stalled_after = "2h"   # raise sync.stalled once a project's sync has failed this long; "0s" never
+```
+
+The command gets the event as one JSON line on stdin (`id`, `time`, `kind`, `severity`, `project`, `subject`, `title`, `detail`, `link`) and as `ADE_EVENT_KIND`, `ADE_EVENT_SEVERITY`, `ADE_EVENT_TITLE`, `ADE_EVENT_PROJECT`, `ADE_EVENT_SUBJECT`, `ADE_EVENT_DETAIL`, `ADE_EVENT_LINK`, `ADE_EVENT_ID` and `ADE_EVENT_TIME`:
+
+```sh
+#!/bin/sh
+# my-cde-inbox-push: $ADE_EVENT_TITLE is enough for a one-line inbox
+curl -fsS -X POST --data-urlencode "text=[$ADE_EVENT_SEVERITY] $ADE_EVENT_TITLE" "$CDE_INBOX_URL"
+```
+
+It runs without blocking the dashboard, and a hung command is killed. A failing command never stops anything: the failure is an audit entry (`ade audit --action notify.external`), not a message over the screen. Try it with `ade notify test`. Transient status events are never sent, and a long outage is one notification (`sync.stalled` is raised once per outage, and `dedupe` holds across `ade` processes). Keep secrets out of the command line: read tokens from the command's own environment or files.
+
+### Shell prompt
+
+`ade prompt` prints the current worktree's ticket and how many items wait on you (items whose court is you, plus MRs asking for your review), from local files and the cache only:
+
+```sh
+# bash / zsh
+PS1='$(ade prompt) \$ '
+```
+
+```toml
+# starship (~/.config/starship.toml)
+[custom.ade]
+command = "ade prompt"      # prints nothing outside ADE trees, so the module hides itself
+when    = true
+```
+
+`GL-412 !3` means ticket GL-412, three things waiting. Outside `<root>/<project>/<repo>` it prints nothing, so it can stay in the prompt everywhere. `--format '{project} {ticket} {attention}'`, `--scope project` and `--json` are in [reference.md](reference.md). The count is as old as the last sync; the ticket needs no sync.
+
 ### Commit prefix
 
 If your team prefixes the first commit of an MR with the ticket (e.g. `GL-412 Fix export`), set `conventions.commit_prefix = "GL-{parent}"` in the manifest. ADE applies it to its own first commit and to squash messages and records `ade.commitPrefix` and `ade.target` per worktree. A sample `commit-msg` hook for your own commits is in [manifest.md](manifest.md#commit-prefix).

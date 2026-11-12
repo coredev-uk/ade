@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/coredev-uk/ade/internal/domain"
 	"github.com/coredev-uk/ade/internal/events"
@@ -27,6 +28,7 @@ const (
 	EvWorktreeRemovable = "worktree.removable"
 	EvSyncDone          = "sync.done"
 	EvSyncFailed        = "sync.failed"
+	EvSyncStalled       = "sync.stalled"
 )
 
 // diff lists what changed between two syncs of the same project.
@@ -309,6 +311,20 @@ func summary(results []Result, prev map[string]Result) events.Event {
 	e.Detail = strings.Join(details, "\n")
 	e.Transient = fresh == 0
 	return e
+}
+
+// stalled is the sync.stalled event for a project whose sync has failed since
+// lastGood: raised once per outage, the first time the outage is older than
+// notify.sync_stalled_after (the caller remembers that in Result.StalledAt).
+// ok is false while the outage is younger than that, or the check is off.
+func stalled(project string, lastGood, now time.Time, after time.Duration, errText string) (events.Event, bool) {
+	if after <= 0 || lastGood.IsZero() || now.Sub(lastGood) < after {
+		return events.Event{}, false
+	}
+	age := now.Sub(lastGood).Round(time.Minute)
+	e := events.New(EvSyncStalled, events.Warn, fmt.Sprintf("sync of %s has failed for %s (last good sync %s)", project, age, lastGood.Format("2006-01-02 15:04")))
+	e.Project, e.Subject, e.Detail = project, project, errText
+	return e, true
 }
 
 func plural(n int, noun string) string {

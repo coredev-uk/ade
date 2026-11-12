@@ -17,6 +17,13 @@ func init() {
 		json    TEXT NOT NULL,
 		PRIMARY KEY (project, ref)
 	)`)
+	// attention is derived by SQLite from the item's own JSON, so every writer
+	// of work_items (a sync, a one-item refresh) keeps it right, and CountAttention
+	// answers from the index without decoding any item.
+	store.Register("forgesync.work_items_attention", fmt.Sprintf(`ALTER TABLE work_items ADD COLUMN attention INTEGER
+		GENERATED ALWAYS AS (CASE WHEN json_extract(json, '$.assigned') = 1 AND json_extract(json, '$.court') = %q
+			AND json_extract(json, '$.stage') != %d THEN 1 ELSE 0 END) VIRTUAL`, "you", int(domain.StageDone)))
+	store.Register("forgesync.work_items_attention_idx", `CREATE INDEX work_items_attention ON work_items (attention, project)`)
 	store.Register("forgesync.sync_state", `CREATE TABLE sync_state (
 		project TEXT PRIMARY KEY,
 		json    TEXT NOT NULL
@@ -65,6 +72,9 @@ func saveFailure(st *store.Store, old Result, hadPrev bool, failed Result) error
 	if hadPrev {
 		r = old
 		r.Err = failed.Err
+		if !failed.StalledAt.IsZero() {
+			r.StalledAt = failed.StalledAt
+		}
 	}
 	state, err := stateJSON(r)
 	if err != nil {
