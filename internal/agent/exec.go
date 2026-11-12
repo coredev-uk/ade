@@ -13,6 +13,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/coredev-uk/ade/internal/config"
 )
 
 // StopCostCap is Call.StoppedBy when ADE killed the process at the cap.
@@ -51,7 +53,7 @@ type procHooks struct {
 func runProcess(ctx context.Context, c Cmd, p Parser, h procHooks, omp3 bool) callResult {
 	cmd := exec.Command(c.Path, c.Args...)
 	cmd.Dir = c.Dir
-	cmd.Env = append(os.Environ(), c.Env...)
+	cmd.Env = append(config.WithoutEnv(os.Environ(), c.Unset), c.Env...)
 	cmd.Stdin = strings.NewReader(c.Stdin)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	var stderr tailBuffer

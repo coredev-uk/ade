@@ -377,3 +377,74 @@ func TestVersionCommand(t *testing.T) {
 		t.Errorf("version output = %q", got)
 	}
 }
+
+const initReadToken = "INIT_TEST_READ_TOKEN"
+
+func TestInitReadTokenLandsInTheConfig(t *testing.T) {
+	e := newInitEnv(t)
+	t.Setenv(initReadToken, fake.Token)
+	res, progress, err := e.init(e.args("--read-token-env", initReadToken)...)
+	if err != nil && !doctorOnly(err, res.Doctor) {
+		t.Fatalf("init: %v\n%s", err, progress)
+	}
+	cfg, lerr := config.Load(e.configPath())
+	if lerr != nil || cfg.Missing {
+		t.Fatalf("config not written: %v", lerr)
+	}
+	if f := cfg.Forges["team-gl"]; f.TokenEnv != initToken || f.ReadTokenEnv != initReadToken || f.ReadTokenCmd != "" {
+		t.Errorf("forge = %+v", f)
+	}
+	if !strings.Contains(progress, "write token ok") {
+		t.Errorf("the write token was not verified:\n%s", progress)
+	}
+}
+
+func TestInitReadTokenCmdLandsInTheConfig(t *testing.T) {
+	e := newInitEnv(t)
+	res, progress, err := e.init(e.args("--read-token-cmd", "echo "+fake.Token)...)
+	if err != nil && !doctorOnly(err, res.Doctor) {
+		t.Fatalf("init: %v\n%s", err, progress)
+	}
+	cfg, lerr := config.Load(e.configPath())
+	if lerr != nil || cfg.Missing {
+		t.Fatalf("config not written: %v", lerr)
+	}
+	if f := cfg.Forges["team-gl"]; f.ReadTokenCmd != "echo "+fake.Token || f.ReadTokenEnv != "" {
+		t.Errorf("forge = %+v", f)
+	}
+}
+
+func TestInitFailsBeforeWritingWhenTheWriteTokenDoesNotResolve(t *testing.T) {
+	e := newInitEnv(t)
+	t.Setenv(initReadToken, fake.Token)
+	t.Setenv(initToken, "")
+	_, _, err := e.init(e.args("--read-token-env", initReadToken)...)
+	if err == nil || !strings.Contains(err.Error(), "write token") {
+		t.Fatalf("err = %v, want a write token failure", err)
+	}
+	if _, serr := os.Stat(e.configPath()); serr == nil {
+		t.Error("the config was written despite the failed write token")
+	}
+}
+
+func TestInitReadTokenOnlyIsReadOnly(t *testing.T) {
+	e := newInitEnv(t)
+	t.Setenv(initReadToken, fake.Token)
+	args := []string{
+		"--yes", "--forge", "gitlab", "--host", e.srv.URL, "--read-token-env", initReadToken,
+		"--git-protocol", "https", "--project", e.manifest,
+	}
+	// Unattended, an exported conventional variable is not adopted as the write token.
+	t.Setenv("GITLAB_TOKEN", "exported")
+	res, progress, err := e.init(args...)
+	if err != nil && !doctorOnly(err, res.Doctor) {
+		t.Fatalf("init: %v\n%s", err, progress)
+	}
+	cfg, lerr := config.Load(e.configPath())
+	if lerr != nil || cfg.Missing {
+		t.Fatalf("config not written: %v", lerr)
+	}
+	if f := cfg.Forges["team-gl"]; f.HasWriteToken() || f.ReadTokenEnv != initReadToken {
+		t.Errorf("forge = %+v", f)
+	}
+}

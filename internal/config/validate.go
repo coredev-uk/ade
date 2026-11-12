@@ -696,8 +696,17 @@ func validateForge(s *issues, path string, f Forge) {
 	if u, err := url.Parse(f.URL); f.URL != "" && (err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "") {
 		s.errorf(path+".url", "%q is not an http(s) URL", f.URL)
 	}
-	if f.TokenCmd == "" && f.TokenEnv == "" {
+	switch {
+	case !f.HasWriteToken() && !f.HasReadToken():
 		s.warnf(path, "no token_cmd or token_env: API calls will be unauthenticated and fail")
+	case !f.HasWriteToken():
+		s.warnf(path, "only a read token (read_token_env/read_token_cmd): ADE is read-only on this forge and every write fails; add token_env or token_cmd for writes")
+	}
+	if f.ReadTokenEnv != "" && f.ReadTokenEnv == f.TokenEnv {
+		s.errorf(path+".read_token_env", "%s is also token_env: the read token must be a different token from the write token", f.ReadTokenEnv)
+	}
+	if f.ReadTokenCmd != "" && f.ReadTokenCmd == f.TokenCmd {
+		s.errorf(path+".read_token_cmd", "same command as token_cmd: the read token must be a different token from the write token")
 	}
 	if f.CAFile != "" {
 		if _, err := os.Stat(f.CAFile); err != nil {

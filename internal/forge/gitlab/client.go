@@ -42,7 +42,7 @@ const (
 // Client implements forge.Forge against one GitLab instance.
 type Client struct {
 	base       string // scheme://host[/prefix], no trailing slash, no /api/v4
-	token      string
+	token      string // the read token; also used for writes without a write source
 	hc         *http.Client
 	sem        chan struct{}
 	inFlight   int
@@ -50,6 +50,12 @@ type Client struct {
 	maxRetries int
 	now        func() time.Time
 	sleep      func(context.Context, time.Duration) error
+
+	// writeSource resolves the write token on the first write (see
+	// writeToken); nil means writes use token.
+	writeSource func(context.Context) (string, error)
+	writeMu     sync.Mutex
+	writeTok    string // the resolved write token, empty until resolved
 
 	// rate is shared with every client of the same instance and token: the
 	// 429 gate and the RateLimit-* budget (see ratelimit.go). The in-flight
@@ -94,9 +100,17 @@ func WithMaxConcurrency(n int) Option {
 	}
 }
 
+// WithWriteToken sets where writes get their token when it differs from the
+// read token passed to New. src runs on the first write only and a successful
+// answer is kept; a failure fails that write and is retried by the next one.
+func WithWriteToken(src func(context.Context) (string, error)) Option {
+	return func(c *Client) { c.writeSource = src }
+}
+
 // New returns a client for the GitLab instance at baseURL (for example
 // https://gitlab.com), authenticating with a personal, group or project
-// access token.
+// access token. token is the read token; see WithWriteToken for a separate
+// write token.
 func New(baseURL, token string, opts ...Option) *Client {
 	c := &Client{
 		base:       strings.TrimRight(baseURL, "/"),
@@ -166,6 +180,12 @@ type request struct {
 	body   []byte
 	gated  bool
 	accept string // Accept header override; default application/json
+	read   bool   // a POST that only reads: a GraphQL query
+}
+
+// writes reports whether r changes state, so it needs the write token.
+func (r request) writes() bool {
+	return !r.read && r.method != http.MethodGet && r.method != http.MethodHead
 }
 
 // do sends r and returns the open response for a 2xx answer; the caller must
@@ -205,6 +225,13 @@ func (c *Client) do(ctx context.Context, r request) (*http.Response, error) {
 // once performs a single attempt. The in-flight slot is held until the
 // response body is closed, so streaming bodies count against the cap.
 func (c *Client) once(ctx context.Context, r request, retry bool) (*http.Response, error) {
+	token := c.token
+	if r.writes() {
+		var err error
+		if token, err = c.writeToken(ctx); err != nil {
+			return nil, fmt.Errorf("gitlab %s %s: write token: %w", r.method, r.path, err)
+		}
+	}
 	select {
 	case c.sem <- struct{}{}:
 	case <-ctx.Done():
@@ -235,7 +262,7 @@ func (c *Client) once(ctx context.Context, r request, retry bool) (*http.Respons
 		release()
 		return nil, fmt.Errorf("gitlab %s %s: %w", r.method, r.path, err)
 	}
-	req.Header.Set("PRIVATE-TOKEN", c.token)
+	req.Header.Set("PRIVATE-TOKEN", token)
 	accept := "application/json"
 	if r.accept != "" {
 		accept = r.accept
@@ -253,6 +280,24 @@ func (c *Client) once(ctx context.Context, r request, retry bool) (*http.Respons
 	c.rate.observe(resp.Header, time.Now())
 	resp.Body = &slotBody{ReadCloser: resp.Body, release: release}
 	return resp, nil
+}
+
+// writeToken returns the token for writes: the one WithWriteToken resolves,
+// once, or the read token when no source was set.
+func (c *Client) writeToken(ctx context.Context) (string, error) {
+	if c.writeSource == nil {
+		return c.token, nil
+	}
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	if c.writeTok == "" {
+		tok, err := c.writeSource(ctx)
+		if err != nil {
+			return "", err
+		}
+		c.writeTok = tok
+	}
+	return c.writeTok, nil
 }
 
 // slotBody frees the in-flight slot when the body is closed.

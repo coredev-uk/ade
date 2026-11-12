@@ -521,3 +521,61 @@ func selfSignedPEM(t *testing.T) []byte {
 	}
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }
+
+func TestSetupReadTokenFromEnvReachesConfig(t *testing.T) {
+	e := newInitEnv(t)
+	e.setupEnvVars()
+	t.Setenv(initReadToken, fake.Token)
+	t.Setenv("ADE_SETUP_READ_TOKEN_ENV", initReadToken)
+	res, p, err := e.setup()
+	if err != nil {
+		t.Fatalf("setup: %v\n%s", err, p)
+	}
+	cfg, lerr := config.Load(e.configPath())
+	if lerr != nil || cfg.Missing {
+		t.Fatalf("config not written: %v", lerr)
+	}
+	if f := cfg.Forges["team-gl"]; f.TokenEnv != initToken || f.ReadTokenEnv != initReadToken {
+		t.Errorf("forge = %+v", f)
+	}
+	if res.Status != "ok" || len(res.Tokens) != 1 || res.Tokens[0].Error != "" {
+		t.Errorf("status = %q tokens = %+v", res.Status, res.Tokens)
+	}
+}
+
+func TestSetupReadTokenOnlyForgePassesTheTokenStep(t *testing.T) {
+	e := newInitEnv(t)
+	e.setupEnvVars()
+	t.Setenv("ADE_SETUP_TOKEN_ENV", "")
+	t.Setenv("GITLAB_TOKEN", "")
+	t.Setenv(initReadToken, fake.Token)
+	t.Setenv("ADE_SETUP_READ_TOKEN_ENV", initReadToken)
+	res, p, err := e.setup()
+	if err != nil {
+		t.Fatalf("setup: %v\n%s", err, p)
+	}
+	if len(res.Tokens) != 1 || res.Tokens[0].Error != "" {
+		t.Errorf("tokens = %+v", res.Tokens)
+	}
+	if !strings.Contains(p, "(read-only)") {
+		t.Errorf("setup does not say the forge is read-only:\n%s", p)
+	}
+}
+
+func TestSetupKeepsReadingWhenTheWriteTokenDoesNotResolve(t *testing.T) {
+	e := newInitEnv(t)
+	e.setupEnvVars()
+	t.Setenv(initReadToken, fake.Token)
+	t.Setenv("ADE_SETUP_READ_TOKEN_ENV", initReadToken)
+	if _, p, err := e.setup(); err != nil {
+		t.Fatalf("setup: %v\n%s", err, p)
+	}
+	t.Setenv(initToken, "")
+	res, _, err := e.setup()
+	if exitOf(err) != exitSetupPartial || len(res.Tokens) != 1 || res.Tokens[0].Error != "" || !strings.Contains(res.Tokens[0].WriteError, "token_env") {
+		t.Errorf("err = %v tokens = %+v", err, res.Tokens)
+	}
+	if len(res.Sync) == 0 {
+		t.Errorf("a write token that does not resolve must not skip the forge steps: sync = %+v", res.Sync)
+	}
+}

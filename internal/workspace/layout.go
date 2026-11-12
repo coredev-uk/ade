@@ -63,6 +63,9 @@ type LayoutSpec struct {
 	// Agent holds the arguments of omp in the agent layout: the config overlay
 	// that loads the ADE implement skill and the opening prompt.
 	Agent []string
+	// AgentUnset names variables the agent pane's omp must not inherit (the
+	// write tokens of forges with a read token); the other panes keep them.
+	AgentUnset []string
 	// Up is `ade ws up --no-zellij` for the whole run graph: the strip's first
 	// pane, the one-step way to start everything in order.
 	Up Pane
@@ -271,9 +274,15 @@ func (s LayoutSpec) primary() command {
 		return command{name: "editor"}
 	case LayoutAgent:
 		if s.Tools.Omp != "" {
-			// env sets the marker for the agent only; the pane's shell (and a hook
-			// that blocks agent pushes) stays unmarked outside this process.
-			return command{prog: "env", args: append([]string{AgentRunEnv + "=1", s.Tools.Omp}, s.Agent...), name: "agent"}
+			// env sets the marker for the agent only and drops the write-token
+			// variables; the pane's shell (and a hook that blocks agent pushes)
+			// stays unmarked outside this process.
+			args := make([]string, 0, 2*len(s.AgentUnset)+2+len(s.Agent))
+			for _, v := range s.AgentUnset {
+				args = append(args, "-u", v)
+			}
+			args = append(append(args, AgentRunEnv+"=1", s.Tools.Omp), s.Agent...)
+			return command{prog: "env", args: args, name: "agent"}
 		}
 		return command{name: "agent"}
 	case LayoutReview:

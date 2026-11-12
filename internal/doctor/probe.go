@@ -106,7 +106,7 @@ func probeTarget(ctx context.Context, o Options, t ProbeTarget) ProbeReport {
 		return r
 	}
 	tctx, cancel := context.WithTimeout(ctx, o.Timeout)
-	tok, err := f.Token(tctx)
+	tok, err := f.ReadToken(tctx)
 	cancel()
 	if err != nil {
 		r.Err = err.Error()

@@ -79,11 +79,11 @@ func openForge(ctx context.Context, name string, f config.Forge) (forge.Forge, e
 		}
 		return c, nil
 	case "github":
-		tok, err := f.Token(ctx)
+		c, err := github.Open(ctx, name, f)
 		if err != nil {
-			return nil, fmt.Errorf("forge %s: %w", name, err)
+			return nil, err
 		}
-		return github.New(f.URL, tok), nil
+		return c, nil
 	}
 	return nil, fmt.Errorf("forge %s: unknown kind %q", name, f.Kind)
 }

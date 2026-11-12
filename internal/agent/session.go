@@ -33,7 +33,7 @@ func ForApp(a *app.App) (*Manager, error) {
 	m.Reviews = review.NewStore(st)
 	psvc := project.New(a, "user")
 	m.GitFor = func(ctx context.Context, r Run) (git.Client, error) {
-		return psvc.GitClient(ctx, r.Forge, filepath.Join(a.Root, r.Project, r.Repo, ".bare"))
+		return psvc.PushClient(ctx, r.Forge, filepath.Join(a.Root, r.Project, r.Repo, ".bare"))
 	}
 	return m, nil
 }

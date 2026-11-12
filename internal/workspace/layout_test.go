@@ -122,6 +122,35 @@ func TestBuildLayoutAgentPaneStartsOmpWithTheSkillOverlay(t *testing.T) {
 	}
 }
 
+func TestBuildLayoutAgentPaneUnsetsHiddenVariables(t *testing.T) {
+	s := baseSpec(LayoutAgent)
+	s.Agent = []string{"--config", "/cache/omp.yml"}
+	s.AgentUnset = []string{"GITLAB_TOKEN", "GH_TOKEN"}
+	got, err := BuildLayout(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `pane name="agent" size="60%" focus=true command="env" {
+                args "-u" "GITLAB_TOKEN" "-u" "GH_TOKEN" "ADE_AGENT_RUN=1" "/bin/omp" "--config" "/cache/omp.yml"
+            }`
+	if !strings.Contains(got, want) {
+		t.Fatalf("agent pane:\n%s", got)
+	}
+	// Only the agent pane loses the variables.
+	if strings.Count(got, `"-u"`) != 2 || strings.Count(got, `command="env"`) != 1 {
+		t.Fatalf("other panes changed:\n%s", got)
+	}
+	// Without omp the pane is a plain shell: nothing to wrap.
+	s.Tools.Omp = ""
+	if got, _ = BuildLayout(s); strings.Contains(got, `"env"`) {
+		t.Fatalf("fallback:\n%s", got)
+	}
+	s = baseSpec(LayoutAgent)
+	if got, _ = BuildLayout(s); strings.Contains(got, `"-u"`) || !strings.Contains(got, `args "ADE_AGENT_RUN=1" "/bin/omp"`) {
+		t.Fatalf("empty AgentUnset must only carry the run marker:\n%s", got)
+	}
+}
+
 func TestBuildLayoutVariants(t *testing.T) {
 	tests := []struct {
 		layout string

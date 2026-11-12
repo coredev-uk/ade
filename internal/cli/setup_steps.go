@@ -42,9 +42,11 @@ func checkTemplate(data []byte) error {
 	return nil
 }
 
-// checkForgeToken resolves the forge's token and asks the forge who it is.
+// checkForgeToken resolves the forge's read token (the write token when there
+// is none) and asks the forge who it is. A forge with only a read token is
+// read-only and passes.
 func checkForgeToken(ctx context.Context, a *app.App, name string, fg config.Forge) (string, error) {
-	if _, err := fg.Token(ctx); err != nil {
+	if _, err := fg.ReadToken(ctx); err != nil {
 		return "", fmt.Errorf("no usable token: %w", err)
 	}
 	c, err := forgesync.New(a).Open(ctx, name, fg)

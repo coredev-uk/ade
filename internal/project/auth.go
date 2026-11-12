@@ -95,10 +95,16 @@ func matchForge(cfg *config.Config, preferred, rawURL string) (name string, f co
 }
 
 // tokenCache resolves each forge's token once per run: token_cmd may be slow
-// (`gh auth token`) and every repo of a forge would otherwise repeat it.
+// (`gh auth token`) and every repo of a forge would otherwise repeat it. The
+// read and the write token of a forge are cached apart.
 type tokenCache struct {
 	mu sync.Mutex
-	m  map[string]tokenEntry
+	m  map[tokenKey]tokenEntry
+}
+
+type tokenKey struct {
+	forge string
+	write bool
 }
 
 type tokenEntry struct {
@@ -106,23 +112,43 @@ type tokenEntry struct {
 	err   error
 }
 
-func (c *tokenCache) get(ctx context.Context, name string, f config.Forge) (string, error) {
+// get returns the forge's write token when write is set, else its read token.
+func (c *tokenCache) get(ctx context.Context, name string, f config.Forge, write bool) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if e, ok := c.m[name]; ok {
+	key := tokenKey{name, write}
+	if e, ok := c.m[key]; ok {
 		return e.token, e.err
 	}
-	tok, err := f.Token(ctx)
-	if c.m == nil {
-		c.m = map[string]tokenEntry{}
+	resolve := f.ReadToken
+	if write {
+		resolve = f.Token
 	}
-	c.m[name] = tokenEntry{tok, err}
-	return tok, err
+	tok, err := resolve(ctx)
+	if err != nil {
+		// Not cached: a token_cmd that failed once (a cancelled passphrase)
+		// may work on the next push.
+		return "", err
+	}
+	if c.m == nil {
+		c.m = map[tokenKey]tokenEntry{}
+	}
+	c.m[key] = tokenEntry{tok, nil}
+	return tok, nil
 }
 
 // client returns a git client authorised for rawURL: https remotes on a
-// configured forge host get that forge's token; everything else runs bare.
+// configured forge host get that forge's read token; everything else runs bare.
 func (s *Service) client(ctx context.Context, preferredForge, rawURL string) (git.Client, error) {
+	return s.authorised(ctx, preferredForge, rawURL, false)
+}
+
+// pushClient is client with the forge's write token, for `git push`.
+func (s *Service) pushClient(ctx context.Context, preferredForge, rawURL string) (git.Client, error) {
+	return s.authorised(ctx, preferredForge, rawURL, true)
+}
+
+func (s *Service) authorised(ctx context.Context, preferredForge, rawURL string, write bool) (git.Client, error) {
 	if !strings.HasPrefix(rawURL, "https://") {
 		return git.Client{}, nil
 	}
@@ -130,7 +156,7 @@ func (s *Service) client(ctx context.Context, preferredForge, rawURL string) (gi
 	if !ok {
 		return git.Client{}, nil
 	}
-	tok, err := s.tokens.get(ctx, name, f)
+	tok, err := s.tokens.get(ctx, name, f, write)
 	if err != nil {
 		return git.Client{}, fmt.Errorf("forge %s token: %w: %w", name, git.ErrCredentials, err)
 	}

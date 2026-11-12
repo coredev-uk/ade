@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -53,13 +54,21 @@ type User struct {
 	Holidays []string `toml:"holidays"`
 }
 
-// Forge is one GitLab or GitHub host. Credentials come from TokenCmd or TokenEnv.
+// Forge is one GitLab or GitHub host. Credentials come from TokenCmd or
+// TokenEnv (the write token, which also reads when no read token is set) and
+// ReadTokenCmd or ReadTokenEnv (the read token: syncs, dashboards, AI context).
 type Forge struct {
-	Kind        string `toml:"kind"` // gitlab | github
-	URL         string `toml:"url"`  // web/API base; defaults per kind
-	TokenCmd    string `toml:"token_cmd"`
-	TokenEnv    string `toml:"token_env"`
-	GitProtocol string `toml:"git_protocol"` // ssh | https (default ssh)
+	Kind     string `toml:"kind"` // gitlab | github
+	URL      string `toml:"url"`  // web/API base; defaults per kind
+	TokenCmd string `toml:"token_cmd"`
+	TokenEnv string `toml:"token_env"`
+	// ReadTokenCmd and ReadTokenEnv name a second, read-only token. With one
+	// set, every read (GET, GraphQL queries, clone and fetch) uses it, the
+	// write token is resolved only when ADE writes, and agents ADE launches
+	// do not see TokenEnv.
+	ReadTokenCmd string `toml:"read_token_cmd"`
+	ReadTokenEnv string `toml:"read_token_env"`
+	GitProtocol  string `toml:"git_protocol"` // ssh | https (default ssh)
 	// CAFile is a PEM bundle of the certificate authority a self-hosted
 	// forge's certificate chains to. It is added to the system pool for API
 	// calls and handed to git (http.<host>.sslCAInfo) for https clones.
@@ -304,30 +313,87 @@ func (c *Config) RecordsDir(dataDir string) (string, error) {
 // UpdateOnStart reports whether `ade` should run an update at startup.
 func (c *Config) UpdateOnStart() bool { return c.Update.OnStart == nil || *c.Update.OnStart }
 
-// Token resolves the forge credential from TokenEnv or TokenCmd. The value is
-// never logged or persisted by ADE.
+// Token resolves the forge's write credential from TokenEnv or TokenCmd; it
+// is also the read credential when HasReadToken is false. The value is never
+// logged or persisted by ADE.
 func (f Forge) Token(ctx context.Context) (string, error) {
-	if f.TokenEnv != "" {
-		if v := strings.TrimSpace(os.Getenv(f.TokenEnv)); v != "" {
+	return resolveToken(ctx, "token", f.TokenEnv, f.TokenCmd)
+}
+
+// HasReadToken reports whether the forge names a separate read token.
+func (f Forge) HasReadToken() bool { return f.ReadTokenEnv != "" || f.ReadTokenCmd != "" }
+
+// HasWriteToken reports whether the forge names a write token (token_env or
+// token_cmd). A forge with only a read token is read-only.
+func (f Forge) HasWriteToken() bool { return f.TokenEnv != "" || f.TokenCmd != "" }
+
+// ReadToken resolves the credential for reads: the read token when one is
+// configured, else the write token (Token).
+func (f Forge) ReadToken(ctx context.Context) (string, error) {
+	if !f.HasReadToken() {
+		return f.Token(ctx)
+	}
+	return resolveToken(ctx, "read_token", f.ReadTokenEnv, f.ReadTokenCmd)
+}
+
+// resolveToken reads the variable env, falling back to running cmd. key names
+// the pair in messages ("token" for token_env/token_cmd).
+func resolveToken(ctx context.Context, key, env, command string) (string, error) {
+	if env != "" {
+		if v := strings.TrimSpace(os.Getenv(env)); v != "" {
 			return v, nil
 		}
-		if f.TokenCmd == "" {
-			return "", fmt.Errorf("token_env %s is empty", f.TokenEnv)
+		if command == "" {
+			return "", fmt.Errorf("%s_env %s is empty", key, env)
 		}
 	}
-	if f.TokenCmd == "" {
-		return "", errors.New("no token_cmd or token_env configured")
+	if command == "" {
+		return "", fmt.Errorf("no %s_cmd or %s_env configured", key, key)
 	}
-	cmd := exec.CommandContext(ctx, "sh", "-c", f.TokenCmd)
+	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("token_cmd failed: %w: %s", err, strings.TrimSpace(stderr.String()))
+		return "", fmt.Errorf("%s_cmd failed: %w: %s", key, err, strings.TrimSpace(stderr.String()))
 	}
 	tok := strings.TrimSpace(string(out))
 	if tok == "" {
-		return "", errors.New("token_cmd produced no output")
+		return "", fmt.Errorf("%s_cmd produced no output", key)
 	}
 	return tok, nil
+}
+
+// AgentHiddenEnv names the environment variables agents launched by ADE must
+// not inherit: the token_env of every forge that has a read token, so an agent
+// reaches the forge with the read token at most. Forges without a read token
+// are left alone (the agent sees what the user's shell sees). A token_cmd
+// cannot be hidden this way: the agent runs as the same user.
+func (c *Config) AgentHiddenEnv() []string {
+	if c == nil {
+		return nil
+	}
+	var names []string
+	for _, f := range c.Forges {
+		if f.HasReadToken() && f.TokenEnv != "" && f.TokenEnv != f.ReadTokenEnv && !slices.Contains(names, f.TokenEnv) {
+			names = append(names, f.TokenEnv)
+		}
+	}
+	slices.Sort(names)
+	return names
+}
+
+// WithoutEnv returns environ (KEY=value entries) minus the variables names.
+func WithoutEnv(environ, names []string) []string {
+	if len(names) == 0 {
+		return environ
+	}
+	out := make([]string, 0, len(environ))
+	for _, kv := range environ {
+		k, _, _ := strings.Cut(kv, "=")
+		if !slices.Contains(names, k) {
+			out = append(out, kv)
+		}
+	}
+	return out
 }

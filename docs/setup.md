@@ -102,6 +102,28 @@ git_protocol = "ssh"                     # or "https"
 
 `token_cmd` is the better choice: the secret stays in your password manager and nothing has to live in your shell profile.
 
+### A read token and a write token
+
+One token does everything by default. To keep the write token out of everyday traffic, give the forge a second, read-only token:
+
+```toml
+[forges.work]
+kind           = "gitlab"
+url            = "https://gitlab.example.com"
+read_token_env = "GITLAB_TOKEN"          # read_api, read_user (+ read_repository for https git); or read_token_cmd
+token_cmd      = "pass show ade/gitlab"  # api (+ write_repository for https push): writes only
+```
+
+| Uses the read token | Uses the write token |
+|---|---|
+| sync, Home, the MR page, `ade item`, standup and sprint data, AI and agent context, `ade doctor --probe`; git clone and fetch over https | every forge write (issues, labels, weights, sprints, notes, approvals, MRs, draft notes, merges, pipeline retries, `project bootstrap --publish`); `git push` of an agent run over https |
+
+- The write token is resolved only when ADE writes, so a password manager that asks for a passphrase is not asked during a sync. Without any write token (only `read_token_*`), ADE's API calls are read-only on that forge: reads work and every write fails with the reason. Git pushes over ssh use your SSH key, not a token, so `git_protocol = "ssh"` still pushes.
+- Both tokens must belong to the same account: ADE knows "you" (assignments, your own actions) from the read token. `ade doctor` checks it.
+- **Agents.** Agent runs (`ade agent plan|run|address`) and the `agent` pane of a work tab start without the write token's `token_env` variable, so the write token is not in the agent's environment and tools it runs (`glab`, `gh`, `ade`) reach the forge with the read token. This is hygiene against accidents, not a security boundary: the agent runs as you, so a determined process could still read the variable from its parent's `/proc/<pid>/environ` or use your SSH key. Naming the read token `GITLAB_TOKEN` (as above) keeps `glab` working, read-only, inside the agent. A `token_cmd` cannot be hidden this way either: the agent could run the command itself, so keep the write token where it needs your input (a passphrase, a touch), or accept that. `ade setup` resolves the write token once to report it; a failure there is exit 3, but the reads and the sync still run. Without a read token nothing changes: agents see what your shell sees.
+- GitHub: classic scopes cannot be read-only for private repositories (`repo` writes), so the read token should be a fine-grained token with read-only *Contents*, *Issues*, *Pull requests* and *Metadata*.
+- `ade init` and `ade setup` take `--read-token-env` / `--read-token-cmd` (`ADE_SETUP_READ_TOKEN_ENV` / `_CMD`) beside `--token-env` / `--token-cmd`.
+
 ### GitHub
 
 ```toml
@@ -296,7 +318,7 @@ What one run does, in order (each step prints one line; `--json` prints the summ
 
 A lock in the cache directory (`setup.lock`) serialises concurrent runs; the second waits and then finds nothing left to do.
 
-Exit codes: `0` complete, `3` partial (token missing or rejected, or a repo or project failed; the rest still ran), `1` failure (invalid config, nothing could be created).
+Exit codes: `0` complete, `3` partial (token missing or rejected, a write token that does not resolve beside a working read token, or a repo or project failed; the rest still ran), `1` failure (invalid config, nothing could be created).
 
 ### Variables
 
@@ -306,6 +328,7 @@ Every flag has an `ADE_SETUP_<FLAG>` variable (`--token-env` is `ADE_SETUP_TOKEN
 |---|---|
 | `ADE_SETUP_FORGE`, `ADE_SETUP_HOST` | forge kind and host (`gitlab`, `gitlab.example.com`) |
 | `ADE_SETUP_TOKEN_ENV` / `ADE_SETUP_TOKEN_CMD` | where the token comes from; the value itself is never written |
+| `ADE_SETUP_READ_TOKEN_ENV` / `ADE_SETUP_READ_TOKEN_CMD` | an optional read-only token ([A read token and a write token](#a-read-token-and-a-write-token)); with only these the forge is read-only, and no exported `GITLAB_TOKEN` is adopted as the write token |
 | `ADE_SETUP_CA_FILE` | PEM bundle of the forge's internal CA (self-hosted GitLab) |
 | `ADE_SETUP_GIT_PROTOCOL`, `ADE_SETUP_ROOT`, `ADE_SETUP_HANDLE` | clone protocol, projects root, forge username (default: asked from the forge) |
 | `ADE_SETUP_PROJECT` | project manifests (path, https URL or `git+<url>#<path>`) |
@@ -404,7 +427,7 @@ It never touches your real config. `--record` additionally writes `demo.gif`.
 - **First step for anything:** `ade doctor`. Each line says what is wrong and the fix; `--vscode` and `--probe` add the VS Code and API-shape checks.
 - **Rate limits.** GitLab.com allows 100 requests per minute per user, shared by everything using your token (the web UI, `glab`, CI). ADE honours `RateLimit-*` and `Retry-After`, uses at most 4 concurrent requests per host and syncs incrementally, so it waits rather than failing. A sync also leaves 30% of the window to dialogs when the server reports it (GitLab.com does), and reads each project's open merge requests in one GraphQL request instead of four REST calls per MR. If the dashboard seems slow after heavy use elsewhere, wait a minute.
 - **See the traffic:** `ade --debug-http <command>` logs one line per request and response to stderr (method, URL, status, timing, which credential header; never the secret or bodies).
-- **Token problems:** `ade doctor` shows the user the token authenticates as and its scopes; a `token_env is empty` error means the variable is not set in the shell that started ADE; a `token_cmd` error prints the command's stderr.
+- **Token problems:** `ade doctor` shows the user the token authenticates as and its scopes (with a read token, both tokens, whether the read token can write, and whether both are the same account); a `token_env is empty` error means the variable is not set in the shell that started ADE; a `token_cmd` error prints the command's stderr. A `403 insufficient_scope` on a write while reads work means the write went out with a read-only token: check that `token_env`/`token_cmd` is the `api` token.
 - **Stale or odd data:** `ade cache reset` deletes the cache and rebuilds the AI cache and spend ledger from your records. It tells you what is lost (unsubmitted review drafts, unread notifications) and asks first. It is safe: the forge remains the source of truth.
 - **Updates arrive a couple of seconds late:** the dashboard and `ade item --watch` follow `cache.db`, the item records and the audit log with fsnotify and re-read the moment one changes. Where fsnotify is unavailable (inotify limit reached, some network filesystems) they poll the files every 2 s instead, which works the same but later; `ade doctor` reports `file watching: polling` then. On Linux, raising `fs.inotify.max_user_watches` and `fs.inotify.max_user_instances` restores instant updates.
 - **No tabs appear:** zellij is missing or `host.mode` is `plain`/`vscode`; check `ade doctor`.

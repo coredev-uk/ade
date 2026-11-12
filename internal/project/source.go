@@ -183,7 +183,7 @@ func (s *Service) fetchHTTP(ctx context.Context, rawURL string) ([]byte, error) 
 	var transport http.RoundTripper
 	if strings.HasPrefix(rawURL, "https://") {
 		if name, f, ok := matchForge(s.App.Config, "", rawURL); ok {
-			tok, err := s.tokens.get(ctx, name, f)
+			tok, err := s.tokens.get(ctx, name, f, false)
 			if err != nil {
 				return nil, fmt.Errorf("forge %s token: %w", name, err)
 			}

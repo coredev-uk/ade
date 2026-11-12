@@ -18,13 +18,24 @@ const DefaultURL = "https://gitlab.com"
 // any path prefix such as https://host/gitlab), its token, the CA bundle of a
 // self-hosted instance and its request-concurrency cap. Every place ADE talks
 // to GitLab goes through it so a self-hosted forge behaves the same
-// everywhere.
+// everywhere. The read token resolves now; a separate write token resolves on
+// the first write.
 func Open(ctx context.Context, name string, f config.Forge, opts ...Option) (*Client, error) {
-	tok, err := f.Token(ctx)
+	tok, err := f.ReadToken(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("forge %s: %w", name, err)
 	}
-	return New(f.URL, tok, append(Options(f), opts...)...).withDefaultURL(), nil
+	opts = append(Options(f), opts...)
+	if f.HasReadToken() {
+		opts = append(opts, WithWriteToken(func(ctx context.Context) (string, error) {
+			tok, err := f.Token(ctx)
+			if err != nil {
+				return "", fmt.Errorf("forge %s write token: %w", name, err)
+			}
+			return tok, nil
+		}))
+	}
+	return New(f.URL, tok, opts...).withDefaultURL(), nil
 }
 
 // Options are the client options a forge entry implies, for callers that

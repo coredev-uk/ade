@@ -38,6 +38,19 @@ func TestRenderRoundTripsThroughConfigLoad(t *testing.T) {
 			Answers{Handle: "jdoe", ForgeName: "personal", Kind: "github", TokenCmd: "gh auth token", GitProtocol: "ssh", Root: "/srv/ade"},
 			config.Forge{Kind: "github", URL: "https://github.com", TokenCmd: "gh auth token", GitProtocol: "ssh"},
 		},
+		{
+			"read token next to the write token",
+			Answers{
+				Handle: "jdoe", ForgeName: "work", Kind: "gitlab", TokenEnv: "GITLAB_TOKEN", ReadTokenEnv: "GITLAB_READ_TOKEN",
+				GitProtocol: "ssh", Root: "~/ade",
+			},
+			config.Forge{Kind: "gitlab", URL: "https://gitlab.com", TokenEnv: "GITLAB_TOKEN", ReadTokenEnv: "GITLAB_READ_TOKEN", GitProtocol: "ssh"},
+		},
+		{
+			"read token command only",
+			Answers{Handle: "jdoe", ForgeName: "work", Kind: "gitlab", ReadTokenCmd: "pass show gitlab-read", GitProtocol: "ssh", Root: "~/ade"},
+			config.Forge{Kind: "gitlab", URL: "https://gitlab.com", ReadTokenCmd: "pass show gitlab-read", GitProtocol: "ssh"},
+		},
 	}
 	for _, tt := range tests {
 		tt.want.MaxConcurrency = config.DefaultMaxConcurrency // Load fills the default

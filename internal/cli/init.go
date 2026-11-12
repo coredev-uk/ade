@@ -31,18 +31,20 @@ func init() { register(newInitCmd) }
 // initFlags are the scriptable answers. In a terminal, whatever is missing is
 // asked for; with --yes, whatever is missing is defaulted or an error.
 type initFlags struct {
-	yes, force  bool
-	kind        string
-	host        string
-	tokenEnv    string
-	tokenCmd    string
-	gitProtocol string
-	root        string
-	handle      string
-	projects    []string
-	caFile      string
-	sshPort     int
-	ai          aiFlags
+	yes, force   bool
+	kind         string
+	host         string
+	tokenEnv     string
+	tokenCmd     string
+	readTokenEnv string
+	readTokenCmd string
+	gitProtocol  string
+	root         string
+	handle       string
+	projects     []string
+	caFile       string
+	sshPort      int
+	ai           aiFlags
 }
 
 func newInitCmd() *cobra.Command {
@@ -88,6 +90,8 @@ Exits 2 when a project failed to clone or sync, 1 when ` + "`ade doctor`" + ` re
 	fl.IntVar(&f.sshPort, "ssh-port", 0, "ssh port of a self-hosted forge when not 22 (clone URLs become ssh://git@host:port/...)")
 	fl.StringVar(&f.tokenEnv, "token-env", "", "environment variable holding the token")
 	fl.StringVar(&f.tokenCmd, "token-cmd", "", "command that prints the token (e.g. \"gh auth token\")")
+	fl.StringVar(&f.readTokenEnv, "read-token-env", "", "environment variable holding a read-only token for syncs, dashboards and agents (writes use --token-env/--token-cmd)")
+	fl.StringVar(&f.readTokenCmd, "read-token-cmd", "", "command that prints a read-only token for syncs, dashboards and agents (writes use --token-env/--token-cmd)")
 	fl.StringVar(&f.gitProtocol, "git-protocol", "", "clone protocol: ssh (default) or https")
 	fl.StringVar(&f.root, "root", "", "projects root (default ~/ade)")
 	fl.StringVar(&f.handle, "handle", "", "your forge username (default: asked from the forge)")
@@ -189,6 +193,14 @@ func runInit(cmd *cobra.Command, f initFlags) error {
 		return fmt.Errorf("the forge rejected the token: %w", err)
 	}
 	fmt.Fprintf(say, "token ok: authenticated as %s on %s\n", me.Username, hostLabel(ans))
+	// The forge was opened with the read token; the write token is only
+	// resolved here, so a broken one is found before the config is written.
+	if ans.Forge().HasReadToken() && ans.Forge().HasWriteToken() {
+		if _, err := ans.Forge().Token(vctx); err != nil {
+			return fmt.Errorf("write token: %w", err)
+		}
+		fmt.Fprintln(say, "write token ok")
+	}
 	ans.Handle = f.handle
 	if ans.Handle == "" {
 		ans.Handle = me.Username
@@ -354,18 +366,29 @@ func gather(pr *prompter, f initFlags) (onboard.Answers, []string, error) {
 	}
 
 	a.TokenEnv, a.TokenCmd = f.tokenEnv, f.tokenCmd
+	a.ReadTokenEnv, a.ReadTokenCmd = f.readTokenEnv, f.readTokenCmd
+	readOnly := a.ReadTokenEnv != "" || a.ReadTokenCmd != ""
 	if a.TokenEnv == "" && a.TokenCmd == "" {
 		def := defaultTokenSource(a.Kind)
+		if readOnly && (pr == nil || def == a.ReadTokenEnv) {
+			// With a read token, an unattended run never adopts an exported
+			// variable as the write token: the forge stays read-only.
+			def = ""
+		}
 		src := def
 		if pr != nil {
 			if src, err = pr.ask("Token source: an environment variable name, or !command (the token itself is never stored)", def); err != nil {
 				return a, nil, err
 			}
-		} else if src == "" {
+		} else if src == "" && !readOnly {
 			return a, nil, fmt.Errorf("no token source: pass --token-env (e.g. %s) or --token-cmd", onboard.DefaultTokenEnv(a.Kind))
 		}
-		if a.TokenEnv, a.TokenCmd, err = onboard.ParseTokenSource(src); err != nil {
-			return a, nil, err
+		// Unattended with only a read token and no write token to pick up:
+		// ADE is read-only on this forge.
+		if src != "" {
+			if a.TokenEnv, a.TokenCmd, err = onboard.ParseTokenSource(src); err != nil {
+				return a, nil, err
+			}
 		}
 	}
 
