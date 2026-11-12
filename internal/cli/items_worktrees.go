@@ -31,10 +31,22 @@ type itemWorktree struct {
 
 // itemWithTrees is a cached work item with its worktrees on disk. They are not
 // part of domain.WorkItem, which is what the cache stores; embedding keeps the
-// JSON flat. An item without a worktree has "worktrees": [].
+// JSON flat. An item without a worktree has "worktrees": []. FocusMR is the
+// item's open MR (the least advanced when several are open), omitted when none
+// is: with earlier merged or closed MRs on the same issue, it is the one to act on.
 type itemWithTrees struct {
 	domain.WorkItem
+	FocusMR   *forge.Ref     `json:"focus_mr,omitempty"`
 	Worktrees []itemWorktree `json:"worktrees"`
+}
+
+func withTrees(wi domain.WorkItem, trees []itemWorktree) itemWithTrees {
+	out := itemWithTrees{WorkItem: wi, Worktrees: trees}
+	if mr := wi.FocusMR(); mr != nil {
+		ref := mr.Ref
+		out.FocusMR = &ref
+	}
+	return out
 }
 
 // treeFinder maps work items to their worktrees. It lists each repo's

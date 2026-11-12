@@ -37,7 +37,7 @@ func newItemsCmd() *cobra.Command {
 				finder := newTreeFinder(appFrom(cmd).Root)
 				out := make([]itemWithTrees, len(items))
 				for i, it := range items {
-					out[i] = itemWithTrees{WorkItem: it, Worktrees: finder.of(cmd.Context(), it)}
+					out[i] = withTrees(it, finder.of(cmd.Context(), it))
 				}
 				return printJSON(cmd.OutOrStdout(), out)
 			}

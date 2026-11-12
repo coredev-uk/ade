@@ -726,19 +726,26 @@ func (m model) stationEvidence(it *domain.WorkItem) []string {
 		kids = append(kids, c.Ref.String())
 	}
 	ev[domain.StageStarted] = strings.Join(kids, ", ")
+	// With an open MR the earlier, merged or closed ones are history: show the
+	// open work and count the rest.
+	focus := it.FocusMR()
 	var branches, mrs []string
+	earlier := 0
 	for i := range it.MRs {
 		mr := &it.MRs[i]
+		if focus != nil && mr.State != "opened" {
+			earlier++
+			continue
+		}
 		branches = append(branches, mr.SourceBranch)
 		mrs = append(mrs, mr.Ref.String()+" "+stFaint.Render(mr.State))
 	}
+	if earlier > 0 {
+		mrs = append(mrs, stFaint.Render(fmt.Sprintf("+%d earlier", earlier)))
+	}
 	ev[domain.StageBranch] = strings.Join(branches, ", ")
 	ev[domain.StageDraft] = strings.Join(mrs, ", ")
-	for i := range it.MRs {
-		mr := &it.MRs[i]
-		if mr.State != "opened" {
-			continue
-		}
+	if mr := focus; mr != nil {
 		if p := mr.Pipeline; p != nil {
 			ev[domain.StageCI] = "pipeline " + p.Status
 		} else {
@@ -749,11 +756,11 @@ func (m model) stationEvidence(it *domain.WorkItem) []string {
 			approvals = fmt.Sprintf("%d of %d approvals", len(mr.Approvals.ApprovedBy), mr.Approvals.Required)
 		}
 		ev[domain.StageReview] = approvals + " " + m.g.Sep + " " + fmt.Sprintf("%d unresolved", mr.Unresolved)
-		break
 	}
-	for i := range it.MRs {
+	for i := range it.MRs { // merged MRs come newest first
 		if mr := &it.MRs[i]; mr.MergedAt != nil {
 			ev[domain.StageMerged] = mr.Ref.String() + " " + stFaint.Render(mr.MergedAt.Format("2 Jan"))
+			break
 		}
 	}
 	return ev

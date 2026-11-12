@@ -46,7 +46,7 @@ func Assemble(in AssembleInput) WorkItem {
 		Ref:      in.Tracker.Ref,
 		Issue:    in.Tracker,
 		Children: kids,
-		MRs:      in.MRs,
+		MRs:      sortMRs(in.MRs),
 		Type:     f.Type,
 		Apps:     f.Apps,
 		Repos:    reposFor(m, f.Apps),

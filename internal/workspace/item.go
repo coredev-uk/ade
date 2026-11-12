@@ -94,7 +94,9 @@ func BranchOf(ctx context.Context, loc Location) string {
 
 // ItemTrees finds the work item's own worktree in every repo of the project
 // that has one (a worktree on a branch the item owns): repo → worktree path and
-// repo → branch. Repos that are not cloned have none.
+// repo → branch. Repos that are not cloned have none. When an issue has had
+// several MRs, the worktree of an open MR's branch wins over one left from an
+// earlier, merged or closed MR.
 func ItemTrees(ctx context.Context, root string, m *config.Manifest, wi domain.WorkItem) (trees, branches map[string]string) {
 	projectDir := filepath.Join(root, m.Name)
 	trees, branches = map[string]string{}, map[string]string{}
@@ -104,14 +106,37 @@ func ItemTrees(ctx context.Context, root string, m *config.Manifest, wi domain.W
 		if err != nil {
 			continue // not cloned yet: no tree there
 		}
+		best := -1
 		for _, w := range wts {
-			if OwnsBranch(wi, spec.Path, w.Branch) {
-				trees[repo], branches[repo] = w.Path, w.Branch
-				break
+			if !OwnsBranch(wi, spec.Path, w.Branch) {
+				continue
+			}
+			if r := branchRank(wi, spec.Path, w.Branch); best < 0 || r < best {
+				best, trees[repo], branches[repo] = r, w.Path, w.Branch
 			}
 		}
 	}
 	return trees, branches
+}
+
+// branchRank orders the item's branches in one repo: the focus MR's branch,
+// another open MR's, a branch with no MR yet (fresh work), then branches of
+// merged or closed MRs.
+func branchRank(wi domain.WorkItem, repoPath, branch string) int {
+	if f := wi.FocusMR(); f != nil && strings.EqualFold(f.Ref.Project, repoPath) && f.SourceBranch == branch {
+		return 0
+	}
+	rank := 2
+	for _, mr := range wi.MRs {
+		if !strings.EqualFold(mr.Ref.Project, repoPath) || mr.SourceBranch != branch {
+			continue
+		}
+		if mr.State == "opened" {
+			return 1
+		}
+		rank = 3
+	}
+	return rank
 }
 
 // TargetForItem picks what `w` opens for a work item: the item's own worktree

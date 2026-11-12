@@ -22,6 +22,7 @@
 - **Project dotfiles:** a `[dotfiles]` table in the manifest names the team dotfiles repo (the one used with `coder dotfiles`). `ade setup` and `ade dotfiles` clone or update it and run its install script, or symlink its dotfiles into `$HOME`, as Coder does. Inside Coder they skip a repo Coder already applied. `[dotfiles]` in the user config can switch it off or point elsewhere, and `ade doctor` reports it.
 - **Classify and weight** work on app-repo issues and closed issues, skip a project whose manifest cannot be read, and show the real error when the issue cannot be read.
 - **Facets from the parent:** an app-repo issue or MR without its own type, apps or weight takes them from its tracker issue, on Home rows, review rows and the detail pane.
+- **Several MRs on one issue:** the item focuses on its open MR (the least advanced when several are open). It is listed first, so the MR page and overview open on it. The side panel shows the open MRs, with a count of earlier merged or closed ones, and reads CI and review from the focus MR. `w` opens its worktree, `ade start` resumes its branch instead of the alphabetically first one, and `ade items --json` reports it as `focus_mr`.
 - **Reviews** no longer list draft MRs. A draft marked ready appears then.
 - **Notes on work:** `ade note <ref> <text> [--blocked]` and `N` on Home add a dated local note (never sent to the forge). The side panel shows the newest three, and a row whose newest note is blocked is marked.
 - **CI job log** fills the screen, reads the last 512 KiB, and searches with `/`, `n` and `N`.
