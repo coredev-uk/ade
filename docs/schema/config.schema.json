@@ -170,6 +170,24 @@
       },
       "type": "object"
     },
+    "dotfiles": {
+      "additionalProperties": false,
+      "properties": {
+        "branch": {
+          "description": "Branch of the overriding repo (default: the repository's default branch).",
+          "type": "string"
+        },
+        "enabled": {
+          "description": "Apply project dotfiles on this machine (default true). false turns them off for every project.",
+          "type": "boolean"
+        },
+        "repo": {
+          "description": "Use this git URL instead of the dotfiles repo a project's manifest names. Has no effect on projects without [dotfiles].",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "forges": {
       "additionalProperties": {
         "additionalProperties": false,

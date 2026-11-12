@@ -59,6 +59,12 @@ func TestManifestValidate(t *testing.T) {
 		want []string
 	}{
 		{"minimal clean", header + "[repos.a]\npath = \"g/a\"\n", nil},
+		{"dotfiles clean", header + "[dotfiles]\nrepo = \"git@gl.example.com:team/dotfiles.git\"\nbranch = \"main\"\ninstall = \"script/setup\"\nsymlink = false\n", nil},
+		{"dotfiles without repo", header + "[dotfiles]\nbranch = \"main\"\n", []string{"error: dotfiles.repo: required"}},
+		{"dotfiles repo as option", header + "[dotfiles]\nrepo = \"--upload-pack=x\"\n", []string{"error: dotfiles.repo:", "not an option"}},
+		{"dotfiles install outside the repo", header + "[dotfiles]\nrepo = \"https://x/d.git\"\ninstall = \"../evil.sh\"\n", []string{"error: dotfiles.install:"}},
+		{"dotfiles absolute install", header + "[dotfiles]\nrepo = \"https://x/d.git\"\ninstall = \"/tmp/evil.sh\"\n", []string{"error: dotfiles.install:"}},
+		{"dotfiles unknown key warns", header + "[dotfiles]\nrepo = \"https://x/d.git\"\nrun = \"x\"\n", []string{"warn: dotfiles.run: unknown key"}},
 		{"commit prefix", header + "[conventions]\ncommit_prefix = \"GL-{parent}\"\n", nil},
 		{"commit prefix unknown placeholder", header + "[conventions]\ncommit_prefix = \"GL-{parnt}\"\n", []string{"error: conventions.commit_prefix: unknown placeholder {parnt}"}},
 		{"commit prefix with whitespace", header + "[conventions]\ncommit_prefix = \"GL-{parent} \"\n", []string{"error: conventions.commit_prefix:", "whitespace"}},

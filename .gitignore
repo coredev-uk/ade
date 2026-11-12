@@ -21,3 +21,6 @@ result-*
 demo.gif
 # bun runtime cache that appears when the cli tests run
 **/bun/@t@/
+
+# per-item lock files written next to item records (tests write records under internal/tui/items)
+.item.lock

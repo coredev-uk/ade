@@ -19,6 +19,9 @@
                                                                                           │                                       │
                                                                                           │ you · 2 unresolved threads            │
                                                                                           │                                       │
+                                                                                          │ notes                                 │
+                                                                                          │ none yet · N adds one                 │
+                                                                                          │                                       │
                                                                                           │ Exports hammer the API during the     │
                                                                                           │ nightly batch.                        │
                                                                                           │                                       │
@@ -27,9 +30,6 @@
                                                                                           │ • measure the current rate with `ade  │
                                                                                           │   items`                              │
                                                                                           │ …                                     │
-                                                                                          │                                       │
-                                                                                          │                                       │
-                                                                                          │                                       │
                                                                                           │                                       │
                                                                                           │                                       │
                                                                                           │                                       │

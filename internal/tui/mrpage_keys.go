@@ -450,7 +450,7 @@ func mrHelpRows(ai bool) [][2]string {
 		{"S", "submit the review as one batch"},
 		{"a R m", "approve, ready/draft, merge"},
 		{"P", "agent menu: plan, address comments"},
-		{"l", "CI: job log tail"},
+		{"l", "CI: job log (full screen, / searches)"},
 		{"U", "reload from the forge"},
 	}
 	if ai {

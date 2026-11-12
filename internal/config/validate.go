@@ -5,6 +5,7 @@ import (
 	"maps"
 	"net/url"
 	"os"
+	"path"
 	"regexp"
 	"slices"
 	"strconv"
@@ -141,6 +142,7 @@ func (v *manifestValidator) run() []Issue {
 	v.checkNodes()
 	v.checkGroups()
 	v.checkConventions()
+	v.checkDotfiles()
 	for _, k := range v.m.Undecoded {
 		v.warnf(k, "unknown key")
 	}
@@ -568,6 +570,27 @@ func (v *manifestValidator) checkConventions() {
 	}
 }
 
+func (v *manifestValidator) checkDotfiles() {
+	d := v.m.Dotfiles
+	if d == (Dotfiles{}) {
+		return
+	}
+	switch {
+	case d.Repo == "":
+		v.errorf("dotfiles.repo", "required when [dotfiles] has other keys: the git URL of the team dotfiles")
+	case strings.HasPrefix(d.Repo, "-"):
+		v.errorf("dotfiles.repo", "%q must be a git URL, not an option", d.Repo)
+	}
+	if strings.HasPrefix(d.Branch, "-") {
+		v.errorf("dotfiles.branch", "%q must be a branch name, not an option", d.Branch)
+	}
+	if d.Install != "" {
+		if clean := path.Clean(d.Install); path.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, "../") {
+			v.errorf("dotfiles.install", "%q must be a path inside the dotfiles repo", d.Install)
+		}
+	}
+}
+
 // --- cycles ---------------------------------------------------------------
 
 type cycle struct {
@@ -649,6 +672,12 @@ func (c *Config) Validate() []Issue {
 	}
 	if !oneOf(c.Host.Layout, "", "code", "agent", "manual") {
 		s.errorf("host.layout", "unknown value %q: want code, agent or manual", c.Host.Layout)
+	}
+	if strings.HasPrefix(c.Dotfiles.Repo, "-") {
+		s.errorf("dotfiles.repo", "%q must be a git URL, not an option", c.Dotfiles.Repo)
+	}
+	if strings.HasPrefix(c.Dotfiles.Branch, "-") {
+		s.errorf("dotfiles.branch", "%q must be a branch name, not an option", c.Dotfiles.Branch)
 	}
 	validateAI(&s, c)
 	for _, k := range c.Undecoded {

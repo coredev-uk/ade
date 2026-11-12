@@ -11,6 +11,7 @@ import (
 	"github.com/coredev-uk/ade/internal/domain"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/forgesync"
+	"github.com/coredev-uk/ade/internal/records"
 )
 
 // homeLayout sizes Home's columns, in cells. The track is the signature: one
@@ -214,6 +215,9 @@ func (m model) homeList(w, h int) string {
 	idx := 0
 	legend := false // the station names appear once, above the first project that has tracks
 	narrowed := m.narrowed()
+	if narrowed == "" && !m.searching() {
+		out = append(out, m.lastDayLines(w)...)
+	}
 	for ri := range m.results {
 		res := &m.results[ri]
 		if m.hs.project != "" && res.Project != m.hs.project {
@@ -464,6 +468,9 @@ func (m model) homeRowLine(r homeRow, lay homeLayout, selected bool, titleW int,
 	if selected {
 		title = stBold.Render(title)
 	}
+	if records.Blocked(m.itemDatedNotes(it)) {
+		unread += " " + stWarn.Render(m.g.Warn+"blocked")
+	}
 	titleCell := m.titleCell(it, title, titleW, unread)
 	tr := track(m.g, it, lay.trackGap)
 	if len(it.Triage) > 0 && contains(it.Triage, "type") && contains(it.Triage, "app") {
@@ -586,10 +593,12 @@ func (m model) homeDetail(w int) string {
 	if r.mr != nil {
 		return m.mrDetail(r.mr, w)
 	}
-	return m.itemDetail(r.item, w)
+	return m.itemDetail(r.item, w, true)
 }
 
-func (m model) itemDetail(it *domain.WorkItem, w int) string {
+// itemDetail is the work item's detail block. hint adds the notes hint when
+// the item has none; the MR page leaves it out to keep its overview short.
+func (m model) itemDetail(it *domain.WorkItem, w int, hint bool) string {
 	g := m.g
 	var l []string
 	l = append(l, stBold.Render(ansi.Truncate(it.Ref.String()+"  "+it.Issue.Title, w, m.g.Ell)))
@@ -636,11 +645,44 @@ func (m model) itemDetail(it *domain.WorkItem, w int) string {
 	if t := it.Issue.Tasks; t.Total > 0 {
 		l = append(l, stFaint.Render(fmt.Sprintf("tasks %d of %d", t.Done, t.Total)))
 	}
+	l = append(l, m.noteLines(it, w, hint)...)
 	if d := strings.TrimSpace(it.Issue.Description); d != "" {
 		l = append(l, "")
 		l = append(l, m.mdPreview(d, w, 8)...)
 	}
 	return strings.Join(l, "\n")
+}
+
+// detailNotes is how many dated notes the detail pane shows.
+const detailNotes = 3
+
+// noteLines is the detail pane's notes block: the newest dated notes wrapped
+// to the pane, blocked ones in the warn style, or (with hint) a hint when there
+// are none.
+func (m model) noteLines(it *domain.WorkItem, w int, hint bool) []string {
+	g := m.g
+	notes := m.itemDatedNotes(it)
+	if len(notes) == 0 && !hint {
+		return nil
+	}
+	l := []string{"", stBold.Render("notes")}
+	if len(notes) == 0 {
+		return append(l, stFaint.Render(ansi.Truncate(g.T("none yet · N adds one"), w, g.Ell)))
+	}
+	for _, n := range notes[:min(len(notes), detailNotes)] {
+		stamp, text, style := stFaint.Render(n.At.Format("2 Jan 15:04")), n.Text, lipgloss.NewStyle()
+		if n.Blocked {
+			stamp, text, style = stWarn.Render(g.Warn+" "+n.At.Format("2 Jan 15:04")+" blocked"), n.Text, stWarn
+		}
+		l = append(l, stamp)
+		for _, ln := range wrap(text, max(w-2, 10)) {
+			l = append(l, "  "+style.Render(ansi.Truncate(ln, w-2, g.Ell)))
+		}
+	}
+	if extra := len(notes) - detailNotes; extra > 0 {
+		l = append(l, stFaint.Render(fmt.Sprintf("  + %d older (n shows all)", extra)))
+	}
+	return l
 }
 
 // stationLines draws the item's line vertically, each station with its
@@ -687,19 +729,26 @@ func (m model) stationEvidence(it *domain.WorkItem) []string {
 		kids = append(kids, c.Ref.String())
 	}
 	ev[domain.StageStarted] = strings.Join(kids, ", ")
+	// With an open MR the earlier, merged or closed ones are history: show the
+	// open work and count the rest.
+	focus := it.FocusMR()
 	var branches, mrs []string
+	earlier := 0
 	for i := range it.MRs {
 		mr := &it.MRs[i]
+		if focus != nil && mr.State != "opened" {
+			earlier++
+			continue
+		}
 		branches = append(branches, mr.SourceBranch)
 		mrs = append(mrs, mr.Ref.String()+" "+stFaint.Render(mr.State))
 	}
+	if earlier > 0 {
+		mrs = append(mrs, stFaint.Render(fmt.Sprintf("+%d earlier", earlier)))
+	}
 	ev[domain.StageBranch] = strings.Join(branches, ", ")
 	ev[domain.StageDraft] = strings.Join(mrs, ", ")
-	for i := range it.MRs {
-		mr := &it.MRs[i]
-		if mr.State != "opened" {
-			continue
-		}
+	if mr := focus; mr != nil {
 		if p := mr.Pipeline; p != nil {
 			ev[domain.StageCI] = "pipeline " + p.Status
 		} else {
@@ -710,11 +759,11 @@ func (m model) stationEvidence(it *domain.WorkItem) []string {
 			approvals = fmt.Sprintf("%d of %d approvals", len(mr.Approvals.ApprovedBy), mr.Approvals.Required)
 		}
 		ev[domain.StageReview] = approvals + " " + m.g.Sep + " " + fmt.Sprintf("%d unresolved", mr.Unresolved)
-		break
 	}
-	for i := range it.MRs {
+	for i := range it.MRs { // merged MRs come newest first
 		if mr := &it.MRs[i]; mr.MergedAt != nil {
 			ev[domain.StageMerged] = mr.Ref.String() + " " + stFaint.Render(mr.MergedAt.Format("2 Jan"))
+			break
 		}
 	}
 	return ev
@@ -733,6 +782,9 @@ func (m model) mrDetail(mr *forge.MR, w int) string {
 		approvals = fmt.Sprintf("%d of %d approvals", len(mr.Approvals.ApprovedBy), mr.Approvals.Required)
 	}
 	l = append(l, stFaint.Render(fmt.Sprintf("%s %s %d unresolved %s %d resolved", approvals, gl.Sep, mr.Unresolved, gl.Sep, mr.Resolved)))
+	if f := m.reviewFacetsLine(mr); f != "" {
+		l = append(l, stFaint.Render(ansi.Truncate(f, w, m.g.Ell)))
+	}
 	if d := strings.TrimSpace(mr.Description); d != "" {
 		l = append(l, "")
 		l = append(l, m.mdPreview(d, w, 8)...)

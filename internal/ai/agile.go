@@ -10,8 +10,9 @@ import (
 
 const (
 	standupVersion = "standup-v2"
-	sprintVersion  = "sprint-review-v2"
+	sprintVersion  = "sprint-review-v3"
 	parentVersion  = "sprint-parent-v2"
+	lastDayVersion = "lastday-v1"
 
 	// StandupForge and SprintForge are the item-record roots of the agile
 	// artifacts: items/_standup/<project>/<yyyymmdd>/ai/ and items/_sprint/....
@@ -26,6 +27,8 @@ var (
 	sprintSystem string
 	//go:embed prompts/sprint-parent.md
 	sprintParentSystem string
+	//go:embed prompts/lastday.md
+	lastDaySystem string
 )
 
 // dayKey is yyyymmdd as a record number.
@@ -46,13 +49,25 @@ func StandupJob(project string, day time.Time, facts string) Job {
 	}
 }
 
-// SprintReviewJob turns the review facts (Markdown) into a narrative.
+// LastDayJob turns the facts of your last working day (Markdown) into a short
+// structured summary for the dashboard. It is filed next to that day's standup.
+func LastDayJob(day time.Time, facts string) Job {
+	return Job{
+		Feature: "lastday", Role: RoleExplain, PromptVersion: lastDayVersion,
+		System: lastDaySystem, Prompt: facts,
+		Forge: StandupForge, Ref: forge.Ref{Project: "all", IID: dayKey(day)},
+		Name: "lastday-" + day.Format("2006-01-02"), MaxTokens: 500,
+		Params: map[string]any{"day": day.Format("2006-01-02")},
+	}
+}
+
+// SprintReviewJob turns the review facts (Markdown) into a structured retro.
 func SprintReviewJob(project, sprint string, start time.Time, facts string) Job {
 	return Job{
 		Feature: "sprint-review", Role: RoleExplain, PromptVersion: sprintVersion,
 		System: sprintSystem, Prompt: facts,
 		Forge: SprintForge, Ref: forge.Ref{Project: project, IID: dayKey(start)},
-		Name: "review-" + fmt.Sprint(dayKey(start)), MaxTokens: 500,
+		Name: "review-" + fmt.Sprint(dayKey(start)), MaxTokens: 800,
 		Params: map[string]any{"sprint": sprint},
 	}
 }

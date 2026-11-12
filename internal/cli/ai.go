@@ -25,6 +25,7 @@ import (
 	"github.com/coredev-uk/ade/internal/notify"
 	"github.com/coredev-uk/ade/internal/project"
 	"github.com/coredev-uk/ade/internal/review"
+	"github.com/coredev-uk/ade/internal/startwork"
 )
 
 func init() { register(newAICmd) }
@@ -421,27 +422,19 @@ func printSuggestion(w io.Writer, ref forge.Ref, s ai.Suggestion) {
 }
 
 // classifyInput finds the manifest that serves the issue's project and
-// gathers the label patterns and the values the team already uses.
+// gathers the label patterns and the values the team already uses. An issue
+// of a code repo inherits the facets of its tracker parent.
 func classifyInput(ctx context.Context, a *app.App, f forge.Forge, is forge.Issue) (ai.ClassifyInput, error) {
-	in := ai.ClassifyInput{Issue: is}
-	var found *config.Manifest
-	for _, pr := range a.Config.Projects {
-		m, err := project.FetchManifest(ctx, a, pr)
-		if err != nil {
-			continue
-		}
-		if m.Tracker.Project == is.Ref.Project || slices.ContainsFunc(slices.Collect(repoPaths(m)), func(p string) bool { return p == is.Ref.Project }) {
-			found = m
-			break
-		}
+	found, err := project.Serving(ctx, a, project.FetchManifest, is.Ref.Project)
+	if err != nil {
+		return ai.ClassifyInput{Issue: is}, fmt.Errorf("%w: its manifest holds the label patterns", err)
 	}
-	if found == nil {
-		return in, fmt.Errorf("no registered project serves %s: its manifest holds the label patterns", is.Ref.Project)
+	var parent *forge.Issue
+	if f != nil && is.Ref.Project != found.Tracker.Project {
+		links, _ := f.Links(ctx, is.Ref)
+		parent = startwork.TrackerParent(ctx, f, found, is, links)
 	}
-	in.Labels, in.Weight = found.Labels, found.Tracker.Weight
-	for _, r := range found.Repos {
-		in.KnownApps = append(in.KnownApps, r.App...)
-	}
+	in := ai.NewClassifyInput(found, is, parent)
 	if st, err := a.Cache(); err == nil {
 		if results, err := forgesync.Load(st); err == nil {
 			seen := map[string]bool{}
@@ -465,16 +458,6 @@ func classifyInput(ctx context.Context, a *app.App, f forge.Forge, is forge.Issu
 		}
 	}
 	return in, nil
-}
-
-func repoPaths(m *config.Manifest) func(func(string) bool) {
-	return func(yield func(string) bool) {
-		for _, r := range m.Repos {
-			if !yield(r.Path) {
-				return
-			}
-		}
-	}
 }
 
 // --- draft-reply -------------------------------------------------------------

@@ -13,6 +13,7 @@ import (
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/forgesync"
 	"github.com/coredev-uk/ade/internal/project"
+	"github.com/coredev-uk/ade/internal/records"
 	"github.com/coredev-uk/ade/internal/review"
 	"github.com/coredev-uk/ade/internal/store"
 )
@@ -96,11 +97,16 @@ type model struct {
 	// spend figure (aichip.go).
 	cl   *classifyDialog
 	chip aiChip
+	// ld is Home's last-working-day summary (lastday.go).
+	ld lastDayUI
 
 	// nt and wt are the open Notes and Weight dialogs, nil when closed
 	// (notes.go, weight.go).
 	nt *notesDialog
 	wt *weightDialog
+	// notes are the dated notes of the listed items, read once per refresh
+	// (loadNotes), keyed by markKey(project, ref).
+	notes map[string][]records.Note
 	// sm is the open sprint-move dialog, nil when closed (sprintmove.go).
 	sm *sprintDialog
 
@@ -259,7 +265,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.homeLoaded = true
 		vel := m.loadVelocity(!msg.synced)
-		return m, tea.Batch(m.pollInbox(), vel)
+		return m, tea.Batch(m.pollInbox(), vel, m.loadLastDay())
 	case startUpdateMsg:
 		return m, m.refresh()
 	case updateTickMsg:
@@ -302,6 +308,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ws.chips = msg.chips
 	case aiChipMsg:
 		m.chip = aiChip(msg)
+	case lastDayMsg:
+		m.onLastDay(msg)
 	case agileMsg:
 		return m.agileUpdate(msg)
 	case budgetMsg:
@@ -331,6 +339,7 @@ func (m *model) setResults(rs []forgesync.Result) {
 		empty := func(r forgesync.Result) bool { return r.Err != "" && len(r.Items) == 0 }
 		return !empty(m.results[i]) && empty(m.results[j])
 	})
+	m.loadNotes()
 	m.rebuildHome(keep)
 }
 
@@ -484,6 +493,9 @@ func (m model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return next, cmd
 	case "n":
 		next, cmd := m.openNotes()
+		return next, cmd
+	case "N":
+		next, cmd := m.openNoteAdd()
 		return next, cmd
 	case "=":
 		next, cmd := m.openWeight()

@@ -282,7 +282,7 @@ func runInit(cmd *cobra.Command, f initFlags) error {
 	}
 
 	fmt.Fprintln(say, "\nade doctor")
-	checks := doctor.Run(ctx, doctor.Options{ConfigFile: a.Paths.ConfigFile, Config: a.Config, Root: a.Root, Records: a.RecordsDir})
+	checks := doctor.Run(ctx, doctor.Options{ConfigFile: a.Paths.ConfigFile, Config: a.Config, Root: a.Root, Records: a.RecordsDir, DataDir: a.Paths.DataDir})
 	res.Doctor = checks
 	printChecks(say, checks)
 	if doctor.HasErrors(checks) {

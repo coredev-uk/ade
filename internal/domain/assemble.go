@@ -12,11 +12,14 @@ import (
 // AssembleInput is everything needed to derive one WorkItem. The caller does
 // the fetching; Assemble only interprets.
 type AssembleInput struct {
-	Project    string // ADE project (manifest name)
-	Manifest   *config.Manifest
-	Me         string // current forge username
-	MeID       int64  // current forge user id; 0 when unknown
-	Tracker    forge.Issue
+	Project  string // ADE project (manifest name)
+	Manifest *config.Manifest
+	Me       string // current forge username
+	MeID     int64  // current forge user id; 0 when unknown
+	Tracker  forge.Issue
+	// Parent is the tracker issue above Tracker when Tracker is an issue of a
+	// code repo: it supplies the type, apps and weight Tracker lacks.
+	Parent     *forge.Issue
 	Links      []forge.Link  // the tracker's links
 	Candidates []forge.Issue // issues that may be children; unrelated ones are ignored
 	// Parents maps a candidate to the tracker issue the forge placed it under
@@ -35,7 +38,7 @@ func Assemble(in AssembleInput) WorkItem {
 	if m == nil {
 		m = &config.Manifest{}
 	}
-	f := FacetsOf(in.Tracker.Labels, m.Labels)
+	f, weight := Inherit(in.Tracker, in.Parent, m)
 	kids := children(in.Tracker, in.Links, in.Parents, in.Candidates)
 
 	item := WorkItem{
@@ -43,12 +46,12 @@ func Assemble(in AssembleInput) WorkItem {
 		Ref:      in.Tracker.Ref,
 		Issue:    in.Tracker,
 		Children: kids,
-		MRs:      in.MRs,
+		MRs:      sortMRs(in.MRs),
 		Type:     f.Type,
 		Apps:     f.Apps,
 		Repos:    reposFor(m, f.Apps),
 		Workflow: f.Workflow,
-		Weight:   ResolveWeight(in.Tracker, m.Tracker.Weight),
+		Weight:   weight,
 		Sprint:   SprintOf(in.Tracker, m.Tracker.Iterations, in.Sprints),
 		Assigned: assignedTo(in.Tracker, in.Me, in.MeID) || slices.ContainsFunc(kids, func(k forge.Issue) bool {
 			return k.State == "opened" && assignedTo(k, in.Me, in.MeID)
@@ -73,6 +76,27 @@ func Assemble(in AssembleInput) WorkItem {
 	item.Drift = item.WantWorkflow != "" && item.Workflow != item.WantWorkflow && !strings.EqualFold(item.Workflow, blockedValue)
 	item.Triage = triage(item, m)
 	return item
+}
+
+// Inherit returns the facets and weight of an issue of a code repo: its own
+// when it has them, else those of its tracker parent (nil for none).
+func Inherit(issue forge.Issue, parent *forge.Issue, m *config.Manifest) (Facets, *int) {
+	f := FacetsOf(issue.Labels, m.Labels)
+	weight := ResolveWeight(issue, m.Tracker.Weight)
+	if parent == nil || parent.Ref == issue.Ref {
+		return f, weight
+	}
+	pf := FacetsOf(parent.Labels, m.Labels)
+	if f.Type == "" {
+		f.Type = pf.Type
+	}
+	if len(f.Apps) == 0 {
+		f.Apps = pf.Apps
+	}
+	if weight == nil {
+		weight = ResolveWeight(*parent, m.Tracker.Weight)
+	}
+	return f, weight
 }
 
 // assignedTo reports whether me is among the issue's assignees: by user id

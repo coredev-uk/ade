@@ -34,6 +34,7 @@ var (
 	stWarn  = lipgloss.NewStyle().Foreground(lipgloss.Color(colWarn))
 	stOK    = lipgloss.NewStyle().Foreground(lipgloss.Color(colOK))
 	stBad   = lipgloss.NewStyle().Foreground(lipgloss.Color(colBad))
+	stFound = lipgloss.NewStyle().Reverse(true) // a search match in the job log
 	stRule  = lipgloss.NewStyle().Faint(true)
 )
 

@@ -2,12 +2,14 @@ package tui
 
 import (
 	"context"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/coredev-uk/ade/internal/audit"
+	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/domain"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/forge/gitlab"
@@ -184,8 +186,8 @@ func TestWeightDialogReadFailureIsWordedAndAudited(t *testing.T) {
 	if e.m.wt == nil || e.m.wt.stage != wtFailed {
 		t.Fatalf("dialog = %+v", e.m.wt)
 	}
-	e.want("could not read the issue from the forge", "press = again")
-	e.wantNot("connection refused", "dial tcp")
+	e.want("could not read the issue:", "press = again")
+	e.wantNot("from the forge")
 	if es := e.weightAudit(); len(es) != 1 || es[0].Outcome != "error" || es[0].Error == "" {
 		t.Errorf("audit = %+v", es)
 	}
@@ -253,4 +255,33 @@ func TestClassifyHandsItsSuggestedWeightToTheWeightDialog(t *testing.T) {
 		t.Fatal("= did not open the Weight dialog")
 	}
 	e.want("Weight · "+trk(11).String(), "[ 3_ ]", "suggested 3")
+}
+
+func TestWeightDialogShowsWhyTheIssueCouldNotBeRead(t *testing.T) {
+	e := newWeightEnv(t)
+	it := e.item(1, "Elsewhere")
+	it.Ref = forge.Ref{Project: "other/place", IID: 1, Kind: forge.KindIssue}
+	e.m.results[0].Items = append(e.m.results[0].Items, it)
+	e.m.rebuildHome("")
+	e.selectRow(it.Ref.String())
+	e.open(model.openWeight)
+	if e.m.wt == nil || e.m.wt.stage != wtFailed {
+		t.Fatalf("dialog = %+v", e.m.wt)
+	}
+	e.want("could not read the issue: no registered project serves other/place", "ade project list")
+	e.wantNot("check the connection")
+}
+
+func TestWeightDialogOpensOnAnAppRepoRowAndSurvivesABrokenManifest(t *testing.T) {
+	e := newWeightEnv(t)
+	e.app.Config.Projects = append([]config.ProjectRef{{Source: filepath.Join(t.TempDir(), "gone.ade.toml")}}, e.app.Config.Projects...)
+	it := e.item(1, "Rate-limit the export endpoint")
+	it.Ref = forge.Ref{Project: grp + "/api", IID: 1, Kind: forge.KindIssue}
+	e.m.results[0].Items = append(e.m.results[0].Items, it)
+	e.m.rebuildHome("")
+	e.selectRow(it.Ref.String())
+	e.open(model.openWeight)
+	if e.m.wt == nil || e.m.wt.stage != wtInput {
+		t.Fatalf("dialog = %+v", e.m.wt)
+	}
 }

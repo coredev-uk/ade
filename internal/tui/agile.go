@@ -66,13 +66,16 @@ type (
 		err error
 	}
 
-	// narrativeMsg is the answer of an AI narrative request.
+	// narrativeMsg is the answer of an AI narrative request. auto marks one
+	// nobody asked for (the retro written when the review opens): its
+	// failures stay quiet.
 	narrativeMsg struct {
 		kind    agileKind
 		standup *agile.Standup
 		review  *agile.Review
 		res     ai.Result
 		err     error
+		auto    bool
 	}
 )
 
@@ -130,6 +133,9 @@ func (m model) reload() (model, tea.Cmd) {
 		}
 	case agileReview:
 		m.ag.reviewGen++
+		if m.ag.reviewProj == "" {
+			m.ag.reviewProj = m.reviewResult().Project // several projects: the first with sprints, not an error
+		}
 		gen, c, ctx := m.ag.reviewGen, m.collector(), m.ctx
 		o := agile.ReviewOptions{Project: m.ag.reviewProj, Sprint: m.ag.reviewSpr, Mine: m.ag.mine}
 		return m, func() tea.Msg {
@@ -171,6 +177,9 @@ func (m model) agileUpdate(msg agileMsg) (tea.Model, tea.Cmd) {
 			r.Narrative = old.Narrative
 		}
 		m.ag.review, m.ag.reviewErr = &r, nil
+		if r.Narrative == "" {
+			return m.narrateAuto()
+		}
 	case narrativeMsg:
 		return m.narrativeDone(msg)
 	}
@@ -245,6 +254,9 @@ func (m model) agileKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		if m.ag.kind != agileReview {
 			return m, nil, false
 		}
+		if ks == "p" && len(m.sprintProjects()) < 2 {
+			return m, nil, true // nothing to cycle to
+		}
 		m.stepReview(ks)
 		next, cmd := m.reload()
 		return next, cmd, true
@@ -263,12 +275,7 @@ func (m *model) stepReview(key string) {
 	case "m":
 		m.ag.mine = !m.ag.mine
 	case "p":
-		var names []string
-		for _, r := range m.results {
-			if len(r.Sprints) > 0 {
-				names = append(names, r.Project)
-			}
-		}
+		names := m.sprintProjects()
 		cur := -1
 		for i, n := range names {
 			if n == res.Project {
@@ -302,6 +309,18 @@ func (m *model) stepReview(key string) {
 			m.ag.reviewSpr = sp[i].Title
 		}
 	}
+}
+
+// sprintProjects names the cached projects that have sprints: the ones the
+// review can show and `p` cycles.
+func (m model) sprintProjects() []string {
+	var names []string
+	for _, r := range m.results {
+		if len(r.Sprints) > 0 {
+			names = append(names, r.Project)
+		}
+	}
+	return names
 }
 
 // reviewResult is the cached project the review page concerns.
@@ -418,8 +437,42 @@ func (m model) narrate() (model, tea.Cmd) {
 	}
 }
 
+// narrateAuto writes the retro nobody asked for when the review opens: only
+// with AI set up and the budget not critical (lastday.go), and never with a
+// prompt. A skipped or failed one leaves the page as it was.
+func (m model) narrateAuto() (model, tea.Cmd) {
+	a := m.app
+	if a == nil || m.ag.kind != agileReview {
+		return m, nil
+	}
+	if cfg := a.Config; cfg.AI.Mode == "off" || len(cfg.AI.Profiles) == 0 {
+		return m, nil
+	}
+	next, cmd := m.narrate()
+	if cmd == nil {
+		return next, nil
+	}
+	return next, func() tea.Msg {
+		if ok, _ := autoAI(a); !ok {
+			return narrativeMsg{kind: agileReview, auto: true, err: errAutoSkipped}
+		}
+		msg := cmd()
+		if nm, ok := msg.(narrativeMsg); ok {
+			nm.auto = true
+			return nm
+		}
+		return msg
+	}
+}
+
+// errAutoSkipped is an automatic narrative the budget or AI settings ruled out.
+var errAutoSkipped = errors.New("automatic AI summary skipped")
+
 func (m model) narrativeDone(msg narrativeMsg) (tea.Model, tea.Cmd) {
 	m.ag.narrating = false
+	if msg.auto && msg.err != nil {
+		return m, nil // nobody asked: say nothing
+	}
 	if msg.err != nil {
 		text, subject := "no AI narrative: "+msg.err.Error(), ""
 		if errors.As(msg.err, new(*ai.ErrNeedsConfirm)) {

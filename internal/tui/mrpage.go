@@ -29,7 +29,7 @@ import (
 
 const (
 	mrStale   = 30 * time.Second
-	logTail   = 16 << 10 // bytes of a job log kept for the viewer
+	logTail   = 512 << 10 // bytes of a job log kept for the viewer
 	spinEvery = 120 * time.Millisecond
 )
 
@@ -189,6 +189,7 @@ type mrResultMsg struct {
 	err  error
 	out  any
 	ai   aiKey // what == "ai": which answer this is
+	job  int64 // what == "log": the job whose log this is
 }
 
 type mrSpinMsg struct{}
@@ -539,7 +540,8 @@ func (m *model) onMRResult(msg mrResultMsg) tea.Cmd {
 		}
 		return m.loadFailed(d, "CI jobs", msg.err)
 	case "log":
-		if p := m.mr; p != nil && p.modal != nil && p.modal.kind == modalLog {
+		// A late answer for a job whose viewer was closed must not fill another's.
+		if p := m.mr; p.logOpen() && p.modal.job.ID == msg.job {
 			p.modal.setLog(msg)
 		}
 		return nil

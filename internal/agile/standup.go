@@ -104,8 +104,17 @@ func BuildStandup(in StandupInput) Standup {
 		Today:     []Focus{},
 		Blockers:  []Blocker{},
 	}
-	within := func(t time.Time) bool { return !t.Before(from) && t.Before(to) }
+	s.Done = doneWithin(in, from, to)
+	s.Today = today(in)
+	s.Blockers = blockers(in)
+	return s
+}
 
+// doneWithin is what you did in [from, to), oldest first: your forge events,
+// your merges and closes the cache proves, your ADE actions and the changes on
+// your items a sync noticed.
+func doneWithin(in StandupInput, from, to time.Time) []Entry {
+	within := func(t time.Time) bool { return !t.Before(from) && t.Before(to) }
 	d := newDone()
 	for _, e := range in.Activity {
 		if within(e.At) && isMe(in.Me, e.Author) {
@@ -125,10 +134,63 @@ func BuildStandup(in StandupInput) Standup {
 			d.add(Entry{At: e.Time, Kind: k, Ref: e.Subject, Text: e.Title, Source: SourceEvents})
 		}
 	}
-	s.Done = d.entries()
-	s.Today = today(in)
-	s.Blockers = blockers(in)
-	return s
+	return d.entries()
+}
+
+// LastDay is your last working day before today and what you did on it. The
+// day is found from your own work, not the calendar: the last day you pushed
+// commits or opened or merged an MR.
+type LastDay struct {
+	Date      string    `json:"date"` // YYYY-MM-DD; "" when no such day was found
+	Done      []Entry   `json:"done"` // oldest first
+	Narrative string    `json:"narrative,omitempty"`
+	Warnings  []string  `json:"warnings,omitempty"`
+	From      time.Time `json:"-"` // the day's midnight, in the calendar's zone
+}
+
+// BuildLastDay finds the day of your most recent push, MR opened or MR merged
+// before in.Date's day, and collects everything you did on it.
+func BuildLastDay(in StandupInput) LastDay {
+	before := in.Cal.Day(in.Date)
+	var last time.Time
+	seen := func(t time.Time) {
+		if t.Before(before) && t.After(last) {
+			last = t
+		}
+	}
+	for _, e := range in.Activity {
+		if isMe(in.Me, e.Author) && workEvent(e) {
+			seen(e.At)
+		}
+	}
+	for _, wi := range in.Items {
+		for _, mr := range wi.MRs {
+			if mr.MergedAt != nil && isMe(in.Me, mr.Author) {
+				seen(*mr.MergedAt)
+			}
+		}
+	}
+	if last.IsZero() {
+		return LastDay{Done: []Entry{}}
+	}
+	from := in.Cal.Day(last)
+	return LastDay{Date: from.Format("2006-01-02"), From: from, Done: doneWithin(in, from, from.AddDate(0, 0, 1))}
+}
+
+// workEvent is a feed event that marks a day as worked: commits pushed, an MR
+// opened or merged.
+func workEvent(e forge.Event) bool {
+	if e.Target.IsZero() {
+		return e.Branch != "" && strings.HasPrefix(e.Action, "pushed")
+	}
+	if e.Target.Kind != forge.KindMR {
+		return false
+	}
+	switch e.Action {
+	case "opened", "created", "accepted", "merged":
+		return true
+	}
+	return false
 }
 
 func isMe(me []forge.User, u forge.User) bool {

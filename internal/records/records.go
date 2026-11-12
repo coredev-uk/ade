@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/coredev-uk/ade/internal/audit"
@@ -29,6 +30,10 @@ const (
 	beginMarker = beginPrefix + " (ADE rewrites everything between the markers; write below) -->"
 	endMarker   = "<!-- ade:snapshot:end -->"
 	notesHeader = "## Notes"
+
+	// lockFile serialises the read-modify-rename paths on one record, so a
+	// sync cannot drop a note added while it ran (and the other way round).
+	lockFile = ".item.lock"
 )
 
 // Store writes item records below dir/items.
@@ -70,6 +75,15 @@ func (s *Store) WriteSnapshot(forgeName string, wi domain.WorkItem, comments []f
 	dir := s.ItemDir(forgeName, wi.Ref)
 	path = filepath.Join(dir, ItemFile)
 	block := snapshotBlock(wi, comments, maxComments)
+
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return path, false, fmt.Errorf("create %s: %w", dir, err)
+	}
+	unlock, err := lockDir(dir)
+	if err != nil {
+		return path, false, err
+	}
+	defer unlock()
 
 	existing, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -239,6 +253,34 @@ func (s *Store) ReadNotes(forgeName string, ref forge.Ref) (string, error) {
 	}
 	_, notes, _ := notesSplit(string(data))
 	return notes, nil
+}
+
+// lockDir takes an exclusive flock on the record lock file in dir, waiting
+// for a competing holder; the holders only read and rename one small file.
+// A missing dir is ErrNoRecord: locking never creates a record.
+func lockDir(dir string) (unlock func(), err error) {
+	path := filepath.Join(dir, lockFile)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, ErrNoRecord
+	}
+	if err != nil {
+		return nil, fmt.Errorf("lock %s: %w", path, err)
+	}
+	for {
+		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
+		if !errors.Is(err, syscall.EINTR) {
+			break
+		}
+	}
+	if err != nil {
+		f.Close()
+		return nil, fmt.Errorf("lock %s: %w", path, err)
+	}
+	return func() {
+		syscall.Flock(int(f.Fd()), syscall.LOCK_UN) //nolint:errcheck
+		f.Close()
+	}, nil
 }
 
 // writeAtomic writes via a temp file and rename so readers never see a

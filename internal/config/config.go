@@ -33,6 +33,7 @@ type Config struct {
 	Host     Host             `toml:"host"`
 	AI       AI               `toml:"ai"`
 	Budget   Budget           `toml:"budget"`
+	Dotfiles DotfilesOverride `toml:"dotfiles"`
 
 	// File is the path the config was loaded from; Missing is true when no file
 	// existed and defaults are in effect.
@@ -162,6 +163,18 @@ type Budget struct {
 	ConfirmOverUSD float64 `toml:"confirm_over_usd"` // pre-flight confirmation threshold per action
 	AgentRunUSD    float64 `toml:"agent_run_usd"`    // passed as --max-cost to omp runs
 }
+
+// DotfilesOverride is your say over the project dotfiles every manifest asks
+// for: use another repo or branch, or turn them off on this machine. It never
+// adds dotfiles to a project whose manifest has none.
+type DotfilesOverride struct {
+	Enabled *bool  `toml:"enabled"` // unset: true
+	Repo    string `toml:"repo"`
+	Branch  string `toml:"branch"`
+}
+
+// On reports whether project dotfiles are applied on this machine.
+func (d DotfilesOverride) On() bool { return d.Enabled == nil || *d.Enabled }
 
 type Host struct {
 	Mode   string `toml:"mode"`   // auto | zellij | vscode | plain

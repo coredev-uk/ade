@@ -15,6 +15,7 @@ import (
 	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/domain"
 	"github.com/coredev-uk/ade/internal/forge"
+	"github.com/coredev-uk/ade/internal/project"
 	"github.com/coredev-uk/ade/internal/startwork"
 	"github.com/coredev-uk/ade/internal/weight"
 )
@@ -42,10 +43,11 @@ type clLabel struct {
 }
 
 type classifyDialog struct {
-	ref   forge.Ref
-	stage clStage
+	ref     forge.Ref
+	project string // ADE project of the item: its manifest is preferred when locating
+	stage   clStage
 
-	res *startwork.Resolved
+	res *startwork.Located
 	in  ai.ClassifyInput
 	cr  ai.ClassifyResult
 	pf  *ai.Preflight // what the AI call would cost, for clAsk
@@ -63,7 +65,7 @@ type classifyDialog struct {
 type (
 	clResolvedMsg struct {
 		d   *classifyDialog
-		res *startwork.Resolved
+		res *startwork.Located
 		in  ai.ClassifyInput
 		err error
 	}
@@ -85,7 +87,7 @@ func (m model) openClassify() (model, tea.Cmd) {
 		return m, nil
 	}
 	it := m.homeRows[m.homeSel].item
-	d := &classifyDialog{ref: it.Ref, stage: clResolving}
+	d := &classifyDialog{ref: it.Ref, project: it.Project, stage: clResolving}
 	m.cl = d
 	ctx, a, sync, results := m.ctx, m.app, m.sync, m.results
 	return m, func() tea.Msg {
@@ -103,14 +105,11 @@ func (m model) openClassify() (model, tea.Cmd) {
 			}
 			return w, nil
 		}
-		res, err := startwork.Resolve(ctx, a, open, d.ref.String())
+		res, err := startwork.Locate(ctx, a, open, d.project, d.ref)
 		if err != nil {
 			return clResolvedMsg{d: d, err: err}
 		}
-		in := ai.ClassifyInput{Issue: res.Item.Issue, Labels: res.Manifest.Labels, Weight: res.Manifest.Tracker.Weight}
-		for _, r := range res.Manifest.Repos {
-			in.KnownApps = append(in.KnownApps, r.App...)
-		}
+		in := ai.NewClassifyInput(res.Manifest, res.Issue, res.Parent)
 		seen := map[string]bool{}
 		var items []domain.WorkItem
 		for _, r := range results {
@@ -223,9 +222,9 @@ func (m model) classifyKey(ks string) (model, tea.Cmd) {
 				d.warn = "no weight to suggest: press = on Home to set one by hand"
 				return m, nil
 			}
-			ref, title := d.ref, d.res.Item.Issue.Title
+			ref, title := d.ref, d.res.Issue.Title
 			m.cl = nil
-			return m.openWeightFor(ref, title, d.cr.Suggestion.Weight, d.cr.Suggestion.WeightReason)
+			return m.openWeightFor(d.project, ref, title, d.cr.Suggestion.Weight, d.cr.Suggestion.WeightReason)
 		case "enter", "y":
 			var add []string
 			for _, l := range d.labels {
@@ -283,7 +282,7 @@ func (m model) classifyOverlay(w, h int) string {
 	g := m.g
 	l := []string{}
 	if d.res != nil {
-		l = append(l, stFaint.Render(ansi.Truncate(d.res.Item.Issue.Title, inner, m.g.Ell)), "")
+		l = append(l, stFaint.Render(ansi.Truncate(d.res.Issue.Title, inner, m.g.Ell)), "")
 	}
 	var hint string
 	switch d.stage {
@@ -344,17 +343,26 @@ func (m model) classifyOverlay(w, h int) string {
 	return m.dialog(m.g.T("Classify · ")+d.ref.String(), l, dw)
 }
 
-// classifyFailure words a failed dialog as "cause · what to do". The raw
-// error is in the audit log (the AI call and the label write audit their
-// own failures; auditClassifyFailure covers the read), never on screen.
+// classifyFailure words a failed dialog as "cause · what to do". A failed
+// read shows its error, for the fix depends on it; the AI call and the label
+// write audit their own failures, auditClassifyFailure the read.
 func classifyFailure(d *classifyDialog) string {
 	switch d.failedAt {
 	case clResolving:
-		return "could not read the issue from the forge · check the connection and press c again"
+		return "could not read the issue: " + oneLine(d.err.Error()) + " · " + readFailureFix(d.err, "c")
 	case clApplying:
 		return "the labels were not added · try again, or add them on the forge"
 	}
 	return ai.Human(d.err)
+}
+
+// readFailureFix is what to do about a failed read: a registration or config
+// error needs a fix first, anything else is worth another try on key.
+func readFailureFix(err error, key string) string {
+	if errors.Is(err, project.ErrNoProjects) || errors.Is(err, project.ErrNotServed) || errors.Is(err, startwork.ErrForgeUndefined) {
+		return "see `ade project list` and `ade config check`"
+	}
+	return "check the connection and press " + key + " again"
 }
 
 // auditClassifyFailure records a classify attempt that failed before any AI

@@ -77,13 +77,14 @@ func (m model) openWeight() (model, tea.Cmd) {
 	if m.page != pageHome || m.mr != nil || m.isAgilePage() || m.homeSel >= len(m.homeRows) || m.homeRows[m.homeSel].item == nil {
 		return m, nil
 	}
-	return m.openWeightFor(m.homeRows[m.homeSel].item.Ref, m.homeRows[m.homeSel].item.Issue.Title, nil, "")
+	it := m.homeRows[m.homeSel].item
+	return m.openWeightFor(it.Project, it.Ref, it.Issue.Title, nil, "")
 }
 
 // openWeightFor opens the dialog for one tracker issue (also from classify's
 // `=`, which has just shown the suggestion: shown and why carry it over, for
 // the issue is not labelled yet and the dialog could not derive it alone).
-func (m model) openWeightFor(ref forge.Ref, title string, shown *int, shownWhy string) (model, tea.Cmd) {
+func (m model) openWeightFor(project string, ref forge.Ref, title string, shown *int, shownWhy string) (model, tea.Cmd) {
 	if m.sw != nil || m.cl != nil || m.agt != nil || m.nt != nil || m.wt != nil {
 		return m, nil
 	}
@@ -110,7 +111,7 @@ func (m model) openWeightFor(ref forge.Ref, title string, shown *int, shownWhy s
 			}
 			return w, nil
 		}
-		tg, err := weight.Resolve(ctx, a, open, ref.String())
+		tg, err := weight.ResolveIn(ctx, a, open, project, ref.String())
 		if err != nil {
 			return wtResolvedMsg{d: d, err: err}
 		}
@@ -416,11 +417,11 @@ func (m model) weightInputView(d *weightDialog, inner int) []string {
 	return l
 }
 
-// weightFailure words a failed dialog as "cause · what to do". The raw error
-// is in the audit log, never on screen.
+// weightFailure words a failed dialog as "cause · what to do". A failed read
+// shows its error, for the fix depends on it.
 func weightFailure(d *weightDialog) string {
 	if d.failedAt == wtResolving {
-		return "could not read the issue from the forge · check the connection and press = again"
+		return "could not read the issue: " + oneLine(d.err.Error()) + " · " + readFailureFix(d.err, "=")
 	}
 	return "the weight was not fully written · what was written is listed below; press = to try again, or set it on the forge"
 }

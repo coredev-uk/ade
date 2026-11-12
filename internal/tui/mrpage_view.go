@@ -267,7 +267,7 @@ func (m model) mrOverview(w, h int) string {
 	var l []string
 	if it := p.item; it != nil {
 		l = append(l, subRule("Work item", it.Ref.String(), w, g))
-		for _, ln := range strings.Split(m.itemDetail(it, w-4), "\n") {
+		for _, ln := range strings.Split(m.itemDetail(it, w-4, false), "\n") {
 			l = append(l, "   "+ln)
 		}
 		l = append(l, "")

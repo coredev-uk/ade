@@ -190,7 +190,7 @@ func submittedTitle(ref forge.Ref, res review.Result) string {
 func (m *model) actLog(job forge.Job) tea.Cmd {
 	d := m.mr.data
 	m.mr.modal = &mrModal{kind: modalLog, job: job, logLoading: true}
-	return m.mrRun(d, "log", "", func(ctx context.Context, be review.Backend) (any, error) {
+	return m.mrRunMsg(d, mrResultMsg{what: "log", job: job.ID}, func(ctx context.Context, be review.Backend) (any, error) {
 		txt, err := be.JobLog(ctx, d.ref.Project, job.ID, logTail)
 		return jobLog{job: job, text: txt}, err
 	})

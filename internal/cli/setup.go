@@ -18,6 +18,7 @@ import (
 	"github.com/coredev-uk/ade/internal/audit"
 	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/doctor"
+	"github.com/coredev-uk/ade/internal/dotfiles"
 	"github.com/coredev-uk/ade/internal/forgesync"
 	"github.com/coredev-uk/ade/internal/host"
 	"github.com/coredev-uk/ade/internal/host/zellij"
@@ -63,9 +64,13 @@ fast to run on every boot:
   2. token    every configured forge's token is checked. A missing or rejected
               token skips the forge steps (3) and exits 3; setup never waits for input.
   3. projects ` + "`project add`" + ` for each configured project, then ` + "`update`" + `, then ` + "`sync`" + `.
-  4. machine  writes the zellij unlock-first preset, reports missing tools with the
+  4. dotfiles each project's [dotfiles] repo (the one used with ` + "`coder dotfiles`" + `) is
+              cloned or pulled and its install script run, or its dotfiles are
+              symlinked into $HOME. Its install script is team code. A failure
+              exits 3 and does not block the steps after it.
+  5. machine  writes the zellij unlock-first preset, reports missing tools with the
               nix command to get them, --warm pre-builds each repo's dev shell.
-  5. session  --session starts the detached zellij session so a VS Code remote
+  6. session  --session starts the detached zellij session so a VS Code remote
               terminal or web tty only has to attach.
 
 Every flag can be given as an ADE_SETUP_<FLAG> variable (--token-env as
@@ -171,6 +176,7 @@ type setupResult struct {
 	ZellijConfig  string               `json:"zellij_config,omitempty"`
 	Tools         []onboard.ToolStatus `json:"tools"`
 	InstallHint   string               `json:"install_hint,omitempty"`
+	Dotfiles      []dotfiles.Result    `json:"dotfiles,omitempty"`
 	Warm          []setupWarm          `json:"warm,omitempty"`
 	Session       *setupSession        `json:"session,omitempty"`
 	Doctor        []doctor.Check       `json:"doctor,omitempty"`
@@ -288,12 +294,16 @@ func runSetup(cmd *cobra.Command, f setupFlags) error {
 	return finishSetup(cmd, say, a, f, res, start)
 }
 
-// finishSetup runs the machine steps, doctor, audit and exit mapping that
-// every run ends with.
+// finishSetup runs the dotfiles and machine steps, doctor, audit and exit
+// mapping that every run ends with.
 func finishSetup(cmd *cobra.Command, say io.Writer, a *app.App, f setupFlags, res *setupResult, start time.Time) error {
 	ctx := cmd.Context()
 
-	// 4. machine
+	// 4. dotfiles: team code, so after the projects that name it and before
+	// the machine tools its install script may add.
+	runSetupDotfiles(ctx, say, a, res)
+
+	// 5. machine
 	if dir := filepath.Dir(a.Paths.ConfigFile); dir != "" {
 		if zp, err := zellij.WriteUnlockFirst(dir); err != nil {
 			res.problem(exitSetupPartial, "zellij config: %v", err)
@@ -318,7 +328,7 @@ func finishSetup(cmd *cobra.Command, say io.Writer, a *app.App, f setupFlags, re
 		warmShells(ctx, say, a, res)
 	}
 
-	// 5. session
+	// 6. session
 	if f.session {
 		s := startSession(ctx, a, f.sessionName)
 		res.Session = &s
@@ -330,9 +340,9 @@ func finishSetup(cmd *cobra.Command, say io.Writer, a *app.App, f setupFlags, re
 		}
 	}
 
-	// 6. doctor: informational, never changes the exit code.
+	// 7. doctor: informational, never changes the exit code.
 	dctx, cancel := context.WithTimeout(ctx, 2*setupTimeout)
-	res.Doctor = doctor.Run(dctx, doctor.Options{ConfigFile: a.Paths.ConfigFile, Config: a.Config, Root: a.Root, Records: a.RecordsDir})
+	res.Doctor = doctor.Run(dctx, doctor.Options{ConfigFile: a.Paths.ConfigFile, Config: a.Config, Root: a.Root, Records: a.RecordsDir, DataDir: a.Paths.DataDir})
 	cancel()
 	nErr, nWarn := 0, 0
 	for _, c := range res.Doctor {

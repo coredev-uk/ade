@@ -70,6 +70,10 @@ func (c *Collector) cached() ([]forgesync.Result, error) {
 // ErrNoCache says nothing has been synced yet.
 var ErrNoCache = errors.New("nothing cached yet: run `ade sync` first")
 
+// ErrNoSprints says projects are cached but none has sprints, so there is
+// nothing to review.
+var ErrNoSprints = errors.New("no project has sprints: run `ade sync` once the tracker has them")
+
 // manifests returns the manifest of every registered project by name.
 func (c *Collector) manifests(ctx context.Context) (map[string]*config.Manifest, []string) {
 	out := map[string]*config.Manifest{}
@@ -108,17 +112,52 @@ func (c *Collector) Standup(ctx context.Context, date time.Time) (Standup, error
 	if err != nil {
 		return Standup{}, err
 	}
-	results, err := c.cached()
-	if err != nil {
-		return Standup{}, err
-	}
 	now := c.now()
 	if date.IsZero() {
 		date = now
 	}
 	in := StandupInput{Date: date, Cal: cal, Now: now}
 	from, to := in.Window()
+	warns, err := c.gather(ctx, &in, from, to)
+	if err != nil {
+		return Standup{}, err
+	}
+	s := BuildStandup(in)
+	s.Warnings = warns
+	return s, nil
+}
 
+// lastDayLookback is how far back LastDay looks for your last working day.
+const lastDayLookback = 14
+
+// LastDay finds your last working day before today (the last day you pushed
+// commits or opened or merged an MR, whatever the calendar says) within the
+// past two weeks, with what you did that day.
+func (c *Collector) LastDay(ctx context.Context) (LastDay, error) {
+	cal, err := c.calendar()
+	if err != nil {
+		return LastDay{}, err
+	}
+	now := c.now()
+	in := StandupInput{Date: now, Cal: cal, Now: now}
+	to := cal.Day(now)
+	warns, err := c.gather(ctx, &in, to.AddDate(0, 0, -lastDayLookback), to)
+	if err != nil {
+		return LastDay{}, err
+	}
+	l := BuildLastDay(in)
+	l.Warnings = warns
+	return l, nil
+}
+
+// gather fills in what the reports read: your identity, the cached items and
+// reviews, the forge feeds of every project over [from, to), the audit log
+// since from and the inbox. Sources that cannot be read become warnings.
+func (c *Collector) gather(ctx context.Context, in *StandupInput, from, to time.Time) ([]string, error) {
+	results, err := c.cached()
+	if err != nil {
+		return nil, err
+	}
 	for _, r := range results {
 		if r.Err == "" || len(r.Items) > 0 {
 			in.Me = append(in.Me, r.Me)
@@ -178,9 +217,7 @@ func (c *Collector) Standup(ctx context.Context, date time.Time) (Standup, error
 			}
 		}
 	}
-	s := BuildStandup(in)
-	s.Warnings = warns
-	return s, nil
+	return warns, nil
 }
 
 // brief drops the request URL from a transport failure: "dial tcp …: connection
@@ -207,7 +244,7 @@ func activityProjects(m *config.Manifest) []string {
 
 // ReviewOptions selects what to review.
 type ReviewOptions struct {
-	Project  string // ADE project; empty: the only one, or an error when several
+	Project  string // ADE project; empty: the only one, else the first with sprints
 	Sprint   string // sprint title or key; empty: the current sprint, else the latest finished
 	Velocity int    // closed sprints in the velocity (default 3)
 	Mine     bool
@@ -227,6 +264,15 @@ func (c *Collector) Review(ctx context.Context, o ReviewOptions) (Review, error)
 		return Review{}, err
 	}
 	res, err := pickProject(results, o.Project)
+	note := ""
+	var several *severalProjectsError
+	if errors.As(err, &several) {
+		// No --project: take the first project with sprints, as the dashboard
+		// page does, and say so.
+		if res, err = several.first(); err == nil {
+			note = several.chose(res.Project)
+		}
+	}
 	if err != nil {
 		return Review{}, err
 	}
@@ -247,10 +293,14 @@ func (c *Collector) Review(ctx context.Context, o ReviewOptions) (Review, error)
 	if n <= 0 {
 		n = DefaultVelocitySprints
 	}
-	return BuildReviewLive(ctx, f, ReviewLiveInput{
+	r, err := BuildReviewLive(ctx, f, ReviewLiveInput{
 		Project: res.Project, Manifest: m, Sprint: sp, Sprints: res.Sprints, Me: res.Me, Items: res.Items,
 		Mine: o.Mine, Cal: cal, Now: c.now(), VelocityN: n,
 	})
+	if note != "" && err == nil {
+		r.Warnings = append(r.Warnings, note)
+	}
+	return r, err
 }
 
 func pickProject(results []forgesync.Result, name string) (forgesync.Result, error) {
@@ -282,7 +332,32 @@ func pickProject(results []forgesync.Result, name string) (forgesync.Result, err
 	for i, r := range ok {
 		names[i] = r.Project
 	}
-	return forgesync.Result{}, fmt.Errorf("several projects (%v): choose one with --project", names)
+	return forgesync.Result{}, &severalProjectsError{names: names, results: ok}
+}
+
+// severalProjectsError is pickProject's answer to an empty name with several
+// cached projects. Review recovers from it; other callers report it.
+type severalProjectsError struct {
+	names   []string
+	results []forgesync.Result
+}
+
+func (e *severalProjectsError) Error() string {
+	return fmt.Sprintf("several projects (%v): choose one with --project", e.names)
+}
+
+// first is the first cached project that has sprints (ErrNoSprints if none).
+func (e *severalProjectsError) first() (forgesync.Result, error) {
+	for _, r := range e.results {
+		if len(r.Sprints) > 0 {
+			return r, nil
+		}
+	}
+	return forgesync.Result{}, ErrNoSprints
+}
+
+func (e *severalProjectsError) chose(name string) string {
+	return fmt.Sprintf("several projects (%s): reviewing %s; choose another with --project", strings.Join(e.names, ", "), name)
 }
 
 // PickSprint finds the sprint to review: by title or key when named, else the

@@ -257,6 +257,12 @@ func (e *Env) findBranchAndMR(ctx context.Context, item domain.WorkItem, m *conf
 		if len(bs) > 0 {
 			f.Branch = bs[0]
 		}
+		if len(bs) > 1 {
+			// Several attempts at the child: resume the one whose MR is open.
+			if err := e.preferOpenBranch(ctx, t, work, bs, f); err != nil {
+				return err
+			}
+		}
 	case !withChild:
 		title := childSpec(PlanInput{Manifest: m, Item: item}, t).Title
 		name := BranchName(m, title, item, item.Ref.IID)
@@ -285,6 +291,24 @@ func (e *Env) findBranchAndMR(ctx context.Context, item domain.WorkItem, m *conf
 		if f.MR = pickMR(mrs); f.MR != nil && f.Branch == "" {
 			f.Branch = f.MR.SourceBranch
 		}
+	}
+	return nil
+}
+
+// preferOpenBranch picks, among the child's branches bs, the one with an open
+// MR (the least advanced when several are open), so an issue that has had
+// several MRs resumes the live one, not whichever branch sorts first.
+func (e *Env) preferOpenBranch(ctx context.Context, t Target, work forge.Ref, bs []string, f *Found) error {
+	mrs, err := e.Forge.MRsForIssue(ctx, work)
+	if err != nil {
+		return err
+	}
+	mrs = slices.DeleteFunc(mrs, func(mr forge.MR) bool {
+		return mr.Ref.Project != t.Project || mr.State != "opened" || !slices.Contains(bs, mr.SourceBranch)
+	})
+	wi := domain.WorkItem{MRs: mrs}
+	if mr := wi.FocusMR(); mr != nil {
+		f.Branch, f.MR = mr.SourceBranch, mr
 	}
 	return nil
 }
