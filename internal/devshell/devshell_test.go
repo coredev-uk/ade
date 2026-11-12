@@ -237,12 +237,12 @@ func TestProjectScriptRuns(t *testing.T) {
 	if err := os.WriteFile(script, []byte(ProjectScript("", []string{"hello"})), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", bin+":/usr/bin:/bin")
+	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
 	out, err := exec.Command(script, "echo", "from", "project").CombinedOutput()
 	if err != nil || string(out) != "from project\n" {
 		t.Fatalf("with arguments: %q, %v", out, err)
 	}
-	t.Setenv("SHELL", "/bin/echo")
+	t.Setenv("SHELL", "echo")
 	out, err = exec.Command(script).CombinedOutput()
 	if err != nil || string(out) != "\n" {
 		t.Fatalf("without arguments it must start $SHELL: %q, %v", out, err)
