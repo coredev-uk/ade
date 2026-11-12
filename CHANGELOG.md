@@ -35,6 +35,7 @@
 - **`ade setup` registers new `--project` / `ADE_SETUP_PROJECT` manifests** when a config already exists (appended like `ade project add`, only after the token check), so a manifest added to a Coder template reaches existing workspaces; `--json` lists them as `registered`.
 - **`commit_prefix` `{child}` without a child issue** uses the leading number of the branch (`57-fix-export` → 57) before falling back to the tracker iid, for MRs opened in a code repo without a child issue; applies to agent commits, start work, the worktree's `ade.commitPrefix` and squash messages.
 - **`ade cd <ref|repo> [--repo <name>]`** prints the item's worktree path (or a repo's baseline) and nothing else on stdout, offline, for `adecd() { d=$(ade cd "$@") && cd "$d"; }`.
+- **`conventions.mr.reviewer_group`** requests review from a group when start work opens the MR: the GitLab group's active members (you excluded; GitLab Free keeps one) or a GitHub team. The dry run and the start dialog show who, and a group that cannot be read only warns.
 
 ## v0.1.0
 

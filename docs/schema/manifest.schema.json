@@ -56,6 +56,10 @@
             "mention": {
               "type": "string"
             },
+            "reviewer_group": {
+              "description": "Group whose members start work asks to review the MR: a GitLab group path (acme/reviewers) or, on GitHub, org/team-slug of the repository's owner. Empty requests nobody.",
+              "type": "string"
+            },
             "template": {
               "type": "string"
             }

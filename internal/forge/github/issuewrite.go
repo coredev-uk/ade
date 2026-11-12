@@ -275,13 +275,17 @@ func (c *Client) CreateMR(ctx context.Context, d forge.MRDraft) (forge.MR, error
 	if d.Project == "" || d.Source == "" || d.Target == "" || d.Title == "" {
 		return forge.MR{}, errors.New("github: CreateMR needs project, source, target and title")
 	}
+	teamSlug, err := reviewerTeamSlug(d.Project, d.ReviewerTeam)
+	if err != nil {
+		return forge.MR{}, err
+	}
 	body := map[string]any{"title": d.Title, "head": d.Source, "base": d.Target, "draft": d.Draft}
 	if d.Description != "" {
 		body["body"] = d.Description
 	}
 	var w wirePull
 	path := repoPath(d.Project) + "/pulls"
-	err := c.send(ctx, http.MethodPost, path, body, &w)
+	err = c.send(ctx, http.MethodPost, path, body, &w)
 	if isStatus(err, http.StatusUnprocessableEntity) && strings.Contains(err.Error(), "No commits between") {
 		if cerr := c.emptyCommit(ctx, d.Project, d.Source, commitmsg.Apply(d.CommitPrefix, "Start work: "+d.Title)); cerr != nil {
 			return forge.MR{}, fmt.Errorf("github: %s has no commits yet and an empty start commit failed: %w", d.Source, cerr)
@@ -297,7 +301,31 @@ func (c *Client) CreateMR(ctx context.Context, d forge.MRDraft) (forge.MR, error
 			return mr, fmt.Errorf("labelling %s: %w", mr.Ref, err)
 		}
 	}
+	if teamSlug != "" {
+		in := map[string]any{"team_reviewers": []string{teamSlug}}
+		if err := c.send(ctx, http.MethodPost, pullPath(mr.Ref)+"/requested_reviewers", in, nil); err != nil {
+			return mr, fmt.Errorf("github: requesting review from team %s on %s: %w: %w", d.ReviewerTeam, mr.Ref, forge.ErrReviewersNotRequested, err)
+		}
+	}
 	return mr, nil
+}
+
+// reviewerTeamSlug splits "org/team-slug" and checks that org owns project:
+// GitHub requests a team of the repository's own organisation. Empty team is
+// no request.
+func reviewerTeamSlug(project, team string) (string, error) {
+	if team == "" {
+		return "", nil
+	}
+	org, slug, ok := strings.Cut(team, "/")
+	owner, _, _ := strings.Cut(project, "/")
+	switch {
+	case !ok || org == "" || slug == "" || strings.Contains(slug, "/"):
+		return "", fmt.Errorf("github: reviewer team %q: want org/team-slug", team)
+	case !strings.EqualFold(org, owner):
+		return "", fmt.Errorf("github: reviewer team %q is in %s, but %s belongs to %s: GitHub only requests teams of the repository's organisation", team, org, project, owner)
+	}
+	return slug, nil
 }
 
 // emptyCommit advances branch by one commit that changes nothing.

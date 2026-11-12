@@ -205,6 +205,10 @@ type MRConv struct {
 	Draft    *bool  `toml:"draft"`    // unset: true. A pointer tells "false" from "not said".
 	Closes   string `toml:"closes"`
 	Mention  string `toml:"mention"`
+	// ReviewerGroup is the group or team whose members start work asks to
+	// review the MR: a GitLab group path (subgroups allowed) or, on GitHub,
+	// "org/team-slug". Empty requests nobody.
+	ReviewerGroup string `toml:"reviewer_group"`
 }
 
 // DraftMR reports whether start work opens the MR as a draft: true unless the

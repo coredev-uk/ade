@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/coredev-uk/ade/internal/commitmsg"
 )
@@ -557,6 +558,11 @@ func (v *manifestValidator) checkConventions() {
 	if s := m.Conventions.MR.Create; !oneOf(s, "", "ask", "always", "never") {
 		v.errorf("conventions.mr.create", "unknown value %q: want ask, always or never", s)
 	}
+	if g := m.Conventions.MR.ReviewerGroup; g != "" {
+		if err := checkReviewerGroup(g); err != nil {
+			v.errorf("conventions.mr.reviewer_group", "%v", err)
+		}
+	}
 	if s := m.Tracker.Iterations.Source; !oneOf(s, "", "auto", "gitlab-iterations", "milestones", "labels", "github-project", "cadence") {
 		v.errorf("tracker.iterations.source", "unknown source %q: want auto, gitlab-iterations, milestones, labels, github-project or cadence", s)
 	}
@@ -589,6 +595,21 @@ func (v *manifestValidator) checkDotfiles() {
 			v.errorf("dotfiles.install", "%q must be a path inside the dotfiles repo", d.Install)
 		}
 	}
+}
+
+// checkReviewerGroup rejects values that cannot be a group path: whitespace, a
+// leading "@" (the manifest names the group, not a mention), and empty path
+// segments from a leading, trailing or doubled "/".
+func checkReviewerGroup(g string) error {
+	switch {
+	case strings.ContainsFunc(g, unicode.IsSpace):
+		return fmt.Errorf("%q must not contain whitespace", g)
+	case strings.HasPrefix(g, "@"):
+		return fmt.Errorf("%q: write the group path without the leading @ (e.g. \"acme/reviewers\")", g)
+	case slices.Contains(strings.Split(g, "/"), ""):
+		return fmt.Errorf("%q must be a group path like \"acme/reviewers\", without a leading, trailing or doubled /", g)
+	}
+	return nil
 }
 
 // --- cycles ---------------------------------------------------------------

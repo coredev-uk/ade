@@ -307,6 +307,69 @@ func TestCreateMR(t *testing.T) {
 	})
 }
 
+func TestCreateMRRequestsReviewerTeam(t *testing.T) {
+	c, srv := newClient(t)
+	ctx := context.Background()
+	srv.AddTeam("reviewers")
+	newBranch := func(name string) {
+		t.Helper()
+		if _, err := c.CreateBranch(ctx, apiProj, name, "main"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("the team of the repository's organisation", func(t *testing.T) {
+		newBranch("team-ok")
+		mr, err := c.CreateMR(ctx, forge.MRDraft{
+			Project: apiProj, Source: "team-ok", Target: "main", Title: "Team", ReviewerTeam: "Ade-Demo/reviewers",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := srv.RequestedTeams(mr.Ref); !slices.Equal(got, []string{"reviewers"}) {
+			t.Errorf("requested teams = %v", got)
+		}
+	})
+
+	t.Run("another organisation creates nothing", func(t *testing.T) {
+		newBranch("team-other-org")
+		_, err := c.CreateMR(ctx, forge.MRDraft{
+			Project: apiProj, Source: "team-other-org", Target: "main", Title: "Team", ReviewerTeam: "other/reviewers",
+		})
+		if err == nil || !strings.Contains(err.Error(), "other") {
+			t.Fatalf("err = %v, want the organisation mismatch", err)
+		}
+		if found, _ := c.ListMRs(ctx, forge.MRQuery{Project: apiProj, SourceBranch: "team-other-org"}); len(found) != 0 {
+			t.Errorf("a PR was opened despite the bad team: %+v", found)
+		}
+	})
+
+	t.Run("a team without a slug", func(t *testing.T) {
+		newBranch("team-bad")
+		if _, err := c.CreateMR(ctx, forge.MRDraft{
+			Project: apiProj, Source: "team-bad", Target: "main", Title: "Team", ReviewerTeam: "ade-demo",
+		}); err == nil {
+			t.Error("a team without org/slug was accepted")
+		}
+	})
+
+	t.Run("an unknown team leaves the PR open and says so", func(t *testing.T) {
+		newBranch("team-unknown")
+		mr, err := c.CreateMR(ctx, forge.MRDraft{
+			Project: apiProj, Source: "team-unknown", Target: "main", Title: "Team", ReviewerTeam: "ade-demo/ghosts",
+		})
+		if !errors.Is(err, forge.ErrReviewersNotRequested) {
+			t.Fatalf("err = %v, want ErrReviewersNotRequested", err)
+		}
+		if mr.Ref.IID == 0 {
+			t.Errorf("the created PR is not returned: %+v", mr)
+		}
+		if got, _ := srv.RequestedTeams(mr.Ref); len(got) != 0 {
+			t.Errorf("requested teams = %v", got)
+		}
+	})
+}
+
 // headCommitMessage reads a commit's message from the fake over REST.
 func headCommitMessage(t *testing.T, srv *fake.Server, project, sha string) string {
 	t.Helper()

@@ -16,6 +16,7 @@ func (s *Server) pullRoutes(mux *http.ServeMux) {
 	s.handle(mux, "GET "+r+"/pulls/{n}", s.getPull)
 	s.handle(mux, "GET "+r+"/pulls/{n}/files", s.listPullFiles)
 	s.handle(mux, "PUT "+r+"/pulls/{n}/merge", s.mergePull)
+	s.handle(mux, "POST "+r+"/pulls/{n}/requested_reviewers", s.requestReviewers)
 }
 
 // pullOf resolves {owner}/{repo}/pulls/{n}; an issue number is a 404 here.
@@ -223,4 +224,43 @@ func (s *Server) mergedFiles(rp *repo, p *pull) map[string]string {
 func atoi64(s string) int64 {
 	n, _ := strconv.ParseInt(s, 10, 64)
 	return n
+}
+
+// requestReviewers adds team reviewers. Like GitHub it refuses a team the
+// organisation does not have (see AddTeam).
+func (s *Server) requestReviewers(w http.ResponseWriter, r *http.Request) {
+	rp, it := s.pullOf(w, r)
+	if it == nil {
+		return
+	}
+	var in struct {
+		Reviewers     []string `json:"reviewers"`
+		TeamReviewers []string `json:"team_reviewers"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	if len(in.Reviewers)+len(in.TeamReviewers) == 0 {
+		validation(w, fieldError{Resource: "PullRequest", Field: "reviewers", Code: "missing"})
+		return
+	}
+	for _, slug := range in.TeamReviewers {
+		if !slices.Contains(s.st.teams, slug) {
+			custom(w, "PullRequest", "Reviews may only be requested from collaborators. One or more of the teams you specified is not a collaborator of the repository.")
+			return
+		}
+	}
+	p := it.PR
+	for _, slug := range in.TeamReviewers {
+		if !slices.Contains(p.RequestedTeams, slug) {
+			p.RequestedTeams = append(p.RequestedTeams, slug)
+		}
+	}
+	for _, login := range in.Reviewers {
+		if !slices.Contains(p.Reviewers, login) {
+			p.Reviewers = append(p.Reviewers, login)
+		}
+	}
+	it.Updated = s.st.now()
+	writeJSON(w, http.StatusCreated, s.renderPull(rp, it, true))
 }

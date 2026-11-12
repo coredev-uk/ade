@@ -8,13 +8,17 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/coredev-uk/ade/internal/forge"
 )
 
-var _ forge.IssueWriter = (*Client)(nil)
+var (
+	_ forge.IssueWriter         = (*Client)(nil)
+	_ forge.ReviewerGroupReader = (*Client)(nil)
+)
 
 // setIterationMutation is validated against schema.graphql with the other
 // documents in queries/. REST has no iteration write.
@@ -205,11 +209,44 @@ func (c *Client) CreateMR(ctx context.Context, d forge.MRDraft) (forge.MR, error
 	if len(d.Labels) > 0 {
 		body["labels"] = strings.Join(d.Labels, ",")
 	}
+	if len(d.ReviewerIDs) > 0 {
+		body["reviewer_ids"] = d.ReviewerIDs
+	}
 	var w wireMR
 	if err := c.send(ctx, http.MethodPost, projectPath(d.Project)+"/merge_requests", body, &w); err != nil {
 		return forge.MR{}, existsError(err, "already exists")
 	}
 	return w.mr(d.Project), nil
+}
+
+type wireGroupMember struct {
+	wireUser
+	State           string `json:"state"`
+	MembershipState string `json:"membership_state"`
+	Bot             bool   `json:"bot"`
+}
+
+// ReviewerGroupMembers implements forge.ReviewerGroupReader
+// (GET /groups/:id/members/all, which includes members inherited from parent
+// groups). Blocked and deactivated users, invitations still awaiting
+// acceptance and bots are left out.
+func (c *Client) ReviewerGroupMembers(ctx context.Context, group string) ([]forge.User, error) {
+	if group == "" {
+		return nil, errors.New("gitlab: ReviewerGroupMembers needs a group")
+	}
+	raw, err := getAll[wireGroupMember](ctx, c, groupPath(group)+"/members/all", nil, false)
+	if err != nil {
+		return nil, err
+	}
+	var out []forge.User
+	for _, m := range raw {
+		if m.Bot || (m.State != "" && m.State != "active") || (m.MembershipState != "" && m.MembershipState != "active") {
+			continue
+		}
+		out = append(out, m.user())
+	}
+	slices.SortFunc(out, func(a, b forge.User) int { return strings.Compare(a.Username, b.Username) })
+	return slices.CompactFunc(out, func(a, b forge.User) bool { return a.ID == b.ID }), nil
 }
 
 // existsError maps GitLab's 400/409 "already exists" answers to forge.ErrExists.

@@ -189,6 +189,13 @@ type Found struct {
 	TemplateName string   `json:"template_name,omitempty"`
 	TemplateBody string   `json:"template_body,omitempty"`
 	Warnings     []string `json:"warnings,omitempty"`
+	// ReviewerMembers are the active members of conventions.mr.reviewer_group,
+	// for forges whose MRs take reviewers as users. ReviewerTeam says the
+	// forge requests the group as a team instead, so no members are listed.
+	// Both are empty when the MR exists, the manifest names no group, or the
+	// group could not be read (Warnings says why).
+	ReviewerMembers []forge.User `json:"reviewer_members,omitempty"`
+	ReviewerTeam    bool         `json:"reviewer_team,omitempty"`
 }
 
 // PlanInput is everything Plan needs.
@@ -246,16 +253,45 @@ type ChildSpec struct {
 
 // MRSpec describes the MR of one target.
 type MRSpec struct {
-	Title        string        `json:"title"`
-	Draft        bool          `json:"draft"`
-	Target       string        `json:"target"`
-	Template     string        `json:"template,omitempty"`
-	Actions      []QuickAction `json:"actions,omitempty"` // quick actions of the template
-	Stripped     []string      `json:"stripped,omitempty"`
-	closes       string        // conventions.mr.closes
-	mention      string        // conventions.mr.mention
-	templateBody string
-	override     string
+	Title    string        `json:"title"`
+	Draft    bool          `json:"draft"`
+	Target   string        `json:"target"`
+	Template string        `json:"template,omitempty"`
+	Actions  []QuickAction `json:"actions,omitempty"` // quick actions of the template
+	Stripped []string      `json:"stripped,omitempty"`
+	// ReviewerGroup is conventions.mr.reviewer_group when the MR will ask it
+	// for review. ReviewerUsers are the members asked, you excluded;
+	// ReviewerMembers is the group's size. On a forge that requests the group
+	// as a team (GitHub) the members are not listed and both are zero.
+	ReviewerGroup   string       `json:"reviewer_group,omitempty"`
+	ReviewerUsers   []forge.User `json:"reviewer_users,omitempty"`
+	ReviewerMembers int          `json:"reviewer_members,omitempty"`
+	closes          string       // conventions.mr.closes
+	mention         string       // conventions.mr.mention
+	templateBody    string
+	override        string
+}
+
+// reviewText is the confirm-screen tail of the MR step: who the MR asks for
+// review, or "" when it asks nobody.
+func (s MRSpec) reviewText() string {
+	switch {
+	case s.ReviewerGroup == "":
+		return ""
+	case s.ReviewerMembers == 0:
+		return ", request review from team " + s.ReviewerGroup
+	case len(s.ReviewerUsers) == 0:
+		return fmt.Sprintf(", no review request: you are the only member of %s", s.ReviewerGroup)
+	}
+	names := make([]string, len(s.ReviewerUsers))
+	for i, u := range s.ReviewerUsers {
+		names[i] = u.Username
+	}
+	note := fmt.Sprintf("%d members", s.ReviewerMembers)
+	if len(s.ReviewerUsers) < s.ReviewerMembers {
+		note += ", you excluded"
+	}
+	return fmt.Sprintf(", request review from %s: %s (%s)", s.ReviewerGroup, strings.Join(names, ", "), note)
 }
 
 // WorkflowMove is the tracker label change of the move step.
@@ -488,6 +524,15 @@ func planTarget(in PlanInput, t Target) TargetPlan {
 	}
 	if f.TemplateBody != "" {
 		tp.MR.Actions = ParseQuickActions(f.TemplateBody)
+	}
+	if group := conv.ReviewerGroup; group != "" && (f.ReviewerTeam || f.ReviewerMembers != nil) {
+		tp.MR.ReviewerGroup = group
+		if !f.ReviewerTeam {
+			tp.MR.ReviewerMembers = len(f.ReviewerMembers)
+			tp.MR.ReviewerUsers = slices.DeleteFunc(slices.Clone(f.ReviewerMembers), func(u forge.User) bool {
+				return u.ID == in.Me.ID
+			})
+		}
 	}
 	return tp
 }
@@ -733,6 +778,7 @@ func mrStep(tp TargetPlan) Step {
 	if tp.MR.Template != "" {
 		text += " from template " + tp.MR.Template
 	}
+	text += tp.MR.reviewText()
 	return Step{Kind: StepMR, Repo: tp.Target.Name, Write: true, Text: text}
 }
 

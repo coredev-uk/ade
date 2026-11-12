@@ -2,6 +2,7 @@ package gitlab_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -275,6 +276,86 @@ func TestCreateMRRunsQuickActions(t *testing.T) {
 			t.Error("incomplete draft was accepted")
 		}
 	})
+}
+
+func TestReviewerGroupMembers(t *testing.T) {
+	forEachTier(t, func(t *testing.T, _ fake.Tier, c *gitlab.Client, srv *fake.Server) {
+		ctx := context.Background()
+		for _, u := range []string{"zed", "alice", "carol", "invited", "ci-bot"} {
+			srv.AddUser(u, u)
+		}
+		srv.AddGroup("acme/platform/reviewers",
+			fake.GroupMember{Username: "zed"}, fake.GroupMember{Username: "alice"},
+			fake.GroupMember{Username: "carol", State: "blocked"},
+			fake.GroupMember{Username: "invited", State: "active", Awaiting: true},
+			fake.GroupMember{Username: "ci-bot", Bot: true},
+		)
+		got, err := c.ReviewerGroupMembers(ctx, "acme/platform/reviewers")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var names []string
+		for _, u := range got {
+			names = append(names, u.Username)
+			if u.ID == 0 {
+				t.Errorf("%s has no id", u.Username)
+			}
+		}
+		if want := []string{"alice", "zed"}; !slices.Equal(names, want) {
+			t.Errorf("members = %v, want only the active humans %v", names, want)
+		}
+		if _, err := c.ReviewerGroupMembers(ctx, "acme/nope"); !errors.Is(err, forge.ErrNotFound) {
+			t.Errorf("unknown group err = %v, want ErrNotFound", err)
+		}
+	})
+}
+
+func TestCreateMRSetsReviewers(t *testing.T) {
+	forEachTier(t, func(t *testing.T, _ fake.Tier, c *gitlab.Client, srv *fake.Server) {
+		ctx := context.Background()
+		alice, bob := srv.AddUser("alice", "Alice"), srv.AddUser("bob", "Bob")
+		if _, err := c.CreateBranch(ctx, apiProj, "2-work", "main"); err != nil {
+			t.Fatal(err)
+		}
+		mr, err := c.CreateMR(ctx, forge.MRDraft{
+			Project: apiProj, Source: "2-work", Target: "main", Title: "Do work", ReviewerIDs: []int64{alice, bob},
+			// The team is GitHub's; GitLab ignores it.
+			ReviewerTeam: "acme/reviewers",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rev, _ := srv.MRReviewers(mr.Ref); !slices.Equal(rev, []string{"alice", "bob"}) {
+			t.Errorf("reviewers = %v", rev)
+		}
+	})
+}
+
+func TestCreateMRSendsReviewerIDs(t *testing.T) {
+	var got map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Error(err)
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"iid": 7, "title": "x", "state": "opened"}`))
+	}))
+	t.Cleanup(ts.Close)
+	c := gitlab.New(ts.URL, "tok")
+	draft := forge.MRDraft{Project: apiProj, Source: "s", Target: "main", Title: "x"}
+	if _, err := c.CreateMR(context.Background(), draft); err != nil {
+		t.Fatal(err)
+	}
+	if _, has := got["reviewer_ids"]; has {
+		t.Errorf("body without reviewers has reviewer_ids: %v", got)
+	}
+	draft.ReviewerIDs = []int64{11, 12}
+	if _, err := c.CreateMR(context.Background(), draft); err != nil {
+		t.Fatal(err)
+	}
+	if ids, _ := got["reviewer_ids"].([]any); !slices.Equal(ids, []any{11.0, 12.0}) {
+		t.Errorf("reviewer_ids = %v, want [11 12]", got["reviewer_ids"])
+	}
 }
 
 func TestSetMilestone(t *testing.T) {

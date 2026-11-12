@@ -169,7 +169,7 @@ child_title = "{parent_title}"
 child_body  = "templates/child.md"       # relative to the manifest
 link        = ["relates_to", "description"]
 child_issue = "auto"                      # auto | always | never
-mr          = { create = "ask", template = "Default", draft = true, closes = "child", mention = "parent" }
+mr          = { create = "ask", template = "Default", draft = true, closes = "child", mention = "parent", reviewer_group = "acme/reviewers" }
 ```
 
 - `child_issue`: `auto` creates a child issue in the code repo when the tracker is a different project, and none
@@ -197,6 +197,19 @@ mr          = { create = "ask", template = "Default", draft = true, closes = "ch
   `.gitlab/merge_request_templates/<name>.md`, GitHub `.github/pull_request_template.md`). ADE shows the
   rendered body, and lists any quick actions in it (`/assign`, `/label`, ...) so they can be kept or stripped
   before anything is sent.
+- `mr.reviewer_group`: the group whose members review the MR, so it does not depend on each repo's template
+  carrying `/assign_reviewer @group`. On GitLab it is a group path (`acme/reviewers`, subgroups allowed, no
+  leading `@`); ADE reads the group's active members (inherited ones included; blocked users, pending invitations
+  and bots are left out), drops you, and creates the MR with them as reviewers. GitLab Free keeps one reviewer
+  per MR, Premium takes several; ADE does not probe the tier, so on Free GitLab decides which one stays. On
+  GitHub it is `org/team-slug`, the org must be the repository's owner, and ADE requests the team after the
+  pull request is created (ADE does not read team members there, so the confirm screen names the team
+  only). The dry run and the confirm screen show the request ("request review from acme/reviewers: alice, bob (3
+  members, you excluded)"), and the `forge.mr.create` audit entry records the group and the usernames. A group
+  that cannot be read (missing, not visible, no active members, another GitHub org) is a warning and the MR is
+  opened without that request. A template's `/assign_reviewer` keeps working; both apply. An MR that already
+  exists is not touched. Without the key nothing changes. A value with whitespace, a leading `@` or an empty path
+  segment (`/acme`, `acme//x`) is an error (`conventions.mr.reviewer_group`).
 - `commit_prefix`: a prefix for the first commit of the MR (and a squash merge message), e.g.
   `"GL-{parent}"`. See [Commit prefix](#commit-prefix).
 

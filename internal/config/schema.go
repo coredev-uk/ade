@@ -262,6 +262,9 @@ var schemaDocs = map[string]string{
 	"manifest:workspaces":                 "Named workspaces: a layout and the run group to bring up.",
 	"manifest:workspaces.*.layout":        "Zellij tab layout.",
 	"manifest:workspaces.*.services":      "background (default) starts the run group's services in a tab of their own, after the install hooks, when the workspace first opens; manual keeps them in the workspace tab's strip, each waiting for Enter.",
+
+	// Its own alignment block: the longer key would realign the whole table.
+	"manifest:conventions.mr.reviewer_group": "Group whose members start work asks to review the MR: a GitLab group path (acme/reviewers) or, on GitHub, org/team-slug of the repository's owner. Empty requests nobody.",
 }
 
 // schemaHasKey reports whether the schema of the kind in key ("config:a.b.*")

@@ -105,9 +105,11 @@ type pull struct {
 	HeadSHA   string
 	BaseSHA   string
 	Reviewers []string
-	Files     []*prFile
-	Reviews   []*review
-	Threads   []*thread
+	// RequestedTeams are the team slugs asked to review.
+	RequestedTeams []string
+	Files          []*prFile
+	Reviews        []*review
+	Threads        []*thread
 
 	AutoMerge   *autoMerge
 	MergeParams map[string]any
@@ -224,6 +226,7 @@ type state struct {
 	owner  string
 	users  []*user
 	repos  []*repo
+	teams  []string // team slugs of the owner organisation
 }
 
 // now is the fake clock: the configured time plus one second per call, so

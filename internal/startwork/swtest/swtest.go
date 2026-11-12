@@ -187,3 +187,13 @@ func (m *Mirror) SetParent(ctx context.Context, child, parent forge.Ref) error {
 	}
 	return pr.SetParent(ctx, child, parent)
 }
+
+// ReviewerGroupMembers forwards to the wrapped forge, which the embedded
+// interface would otherwise hide; ErrUnavailable when it has none.
+func (m *Mirror) ReviewerGroupMembers(ctx context.Context, group string) ([]forge.User, error) {
+	rg, ok := m.Forge.(forge.ReviewerGroupReader)
+	if !ok {
+		return nil, forge.ErrUnavailable
+	}
+	return rg.ReviewerGroupMembers(ctx, group)
+}

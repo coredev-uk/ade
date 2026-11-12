@@ -187,3 +187,24 @@ func (s *Server) Milestones(project string) []Milestone {
 	}
 	return out
 }
+
+// AddTeam creates a team of the owner organisation, which pull requests can
+// then request for review.
+func (s *Server) AddTeam(slug string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !slices.Contains(s.st.teams, slug) {
+		s.st.teams = append(s.st.teams, slug)
+	}
+}
+
+// RequestedTeams are the team slugs asked to review the PR.
+func (s *Server) RequestedTeams(ref forge.Ref) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, err := s.pull(ref)
+	if err != nil {
+		return nil, err
+	}
+	return slices.Clone(p.RequestedTeams), nil
+}

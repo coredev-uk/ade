@@ -246,7 +246,7 @@ func (s *Server) renderPull(rp *repo, it *item, single bool) map[string]any {
 		"title":     it.Title, "body": strOrNil(it.Body), "state": it.State, "draft": p.Draft, "locked": false,
 		"user": s.renderUser(it.Author), "labels": s.renderLabels(rp, it.Labels),
 		"assignees": s.renderUsers(it.Assignees), "assignee": nil, "milestone": nil,
-		"requested_reviewers": s.renderUsers(p.Reviewers), "requested_teams": []any{},
+		"requested_reviewers": s.renderUsers(p.Reviewers), "requested_teams": s.renderTeams(p.RequestedTeams),
 		"head": repoRef(p.Head, p.HeadSHA), "base": repoRef(p.Base, p.BaseSHA),
 		"created_at": iso(it.Created), "updated_at": iso(it.Updated),
 		"closed_at": isoOrNil(it.Closed), "merged_at": isoOrNil(p.MergedAt),
@@ -380,3 +380,11 @@ func (s *Server) renderCheckRun(rp *repo, r *run, j *job) map[string]any {
 
 func itoa(n int) string  { return strconv.Itoa(n) }
 func i64(n int64) string { return strconv.FormatInt(n, 10) }
+
+func (s *Server) renderTeams(slugs []string) []any {
+	out := make([]any, 0, len(slugs))
+	for _, slug := range slugs {
+		out = append(out, map[string]any{"slug": slug, "name": slug, "id": nodeID("Team", int64(len(out)+1))})
+	}
+	return out
+}
