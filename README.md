@@ -18,6 +18,7 @@ curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix 
 # 2. Try ADE without installing, or keep it
 nix run github:coredev-uk/ade -- version
 nix profile install github:coredev-uk/ade
+# (no Nix? static binaries for linux/macOS: https://github.com/coredev-uk/ade/releases)
 
 # 3. Put zellij, lazygit and git on PATH (nix profile install nixpkgs#zellij nixpkgs#lazygit nixpkgs#git), then:
 export GITLAB_TOKEN=...            # PAT with api, read_repository, write_repository

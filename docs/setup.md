@@ -45,7 +45,16 @@ nix develop                # shell with Go and every tool below
 go run ./cmd/ade --help
 ```
 
-**Release binaries.** `.goreleaser.yaml` builds static `ade_<version>_<os>_<arch>.tar.gz` archives (linux and darwin, amd64 and arm64) for GitHub releases, but no release has been published yet: use Nix for now. Once a tag is released, the archive is the only thing you need besides the tools in the next section. Maintainers can try the build locally with `goreleaser build --snapshot --clean --single-target` (in `nix develop`).
+**Release binaries.** Each [GitHub release](https://github.com/coredev-uk/ade/releases) has static `ade_<version>_<os>_<arch>.tar.gz` archives (linux and darwin, amd64 and arm64) and `checksums.txt`. Without Nix:
+
+```sh
+v=0.1.0; os=linux; arch=amd64   # or darwin / arm64
+curl -LO https://github.com/coredev-uk/ade/releases/download/v$v/ade_${v}_${os}_${arch}.tar.gz
+tar xzf ade_${v}_${os}_${arch}.tar.gz && install -m 0755 ade ~/.local/bin/ade
+ade version
+```
+
+The archive is the only thing you need besides the tools in the next section. A release is cut by pushing a `v*` tag; `.github/workflows/release.yml` runs goreleaser. Maintainers can try the build locally with `goreleaser build --snapshot --clean --single-target` (in `nix develop`).
 
 ## 3. Tools ADE uses
 
