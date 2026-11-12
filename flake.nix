@@ -106,6 +106,7 @@
               customRC = "luafile ${./editors/ade-nvim/init.lua}";
               packages.ade.start = [
                 plugin
+                pkgs.vimPlugins.snacks-nvim # picker, explorer, lazygit (the file/grep keys)
                 pkgs.vimPlugins.mini-nvim
                 pkgs.vimPlugins.nvim-treesitter.withAllGrammars
                 pkgs.vimPlugins.nvim-lspconfig
@@ -118,6 +119,9 @@
           runtimeInputs = [
             (ade pkgs)
             pkgs.git
+            pkgs.fd # snacks.picker files
+            pkgs.ripgrep # snacks.picker grep
+            pkgs.lazygit # <Leader>gg
           ];
           text = ''
             export NVIM_APPNAME=ade-nvim

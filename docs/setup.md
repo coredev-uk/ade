@@ -58,7 +58,7 @@ go run ./cmd/ade --help
 | `lazygit` | the git pane of dev tabs | that pane has nothing to run | `nix profile install nixpkgs#lazygit` |
 | `omp` | AI summaries, agent plan/run/review (optional; `ai.mode = "off"` disables AI) | no AI features; the rest is unaffected | see the omp project; ADE only needs the `omp` command on `PATH` |
 | `code` (VS Code) | `v` opens a multi-root workspace; `host.editor = "code"` | use nvim or `$EDITOR` instead | install VS Code and run "Shell Command: Install 'code' command in PATH"; check with `ade doctor --vscode`, which also prints recommended `settings.json` entries so VS Code does not swallow ADE's keys |
-| Neovim | default editor | falls back to `$EDITOR` | `nix profile install nixpkgs#neovim`, or ADE's preconfigured one: `nix run github:coredev-uk/ade#ade-nvim` (a pinned, isolated config under `NVIM_APPNAME=ade-nvim`; set `host.editor = "ade-nvim"`) |
+| Neovim | default editor | falls back to `$EDITOR` | `nix profile install nixpkgs#neovim`, or ADE's preconfigured one: `nix run github:coredev-uk/ade#ade-nvim` (a pinned, isolated config under `NVIM_APPNAME=ade-nvim`; set `host.editor = "ade-nvim"`). It ships the snacks.nvim picker: `<space><space>` smart find, `<space>ff` files, `<space>fg` grep, `<space>fb` buffers, `<space>fr` recent, `<space>e` explorer, `<space>gg` lazygit, `<space>ai` ADE items; the full list is in PLAN.md §6.7 |
 | `delta` | coloured diffs in review tabs (optional) | plain `git diff` | `nix profile install nixpkgs#delta` |
 | `gh` / `glab` | optional; `gh auth token` can supply the GitHub token | none | `nix profile install nixpkgs#gh nixpkgs#glab` |
 

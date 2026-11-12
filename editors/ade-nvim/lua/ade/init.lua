@@ -1,5 +1,5 @@
--- ade-nvim core. No dependencies: pickers use vim.ui.select, so mini.pick (or any
--- plugin that replaces vim.ui.select) upgrades them for free.
+-- ade-nvim core. No dependencies: pickers use vim.ui.select, so the snacks.nvim picker
+-- in the ade-nvim distribution (or any plugin that replaces vim.ui.select) upgrades them.
 local M = {}
 
 M.config = { cmd = "ade" }

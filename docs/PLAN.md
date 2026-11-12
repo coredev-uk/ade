@@ -705,7 +705,7 @@ VS Code specifics:
 - `editor=auto` opens files in the surrounding VS Code window even from a zellij pane.
 - Browser terminals get the same zellij session.
 
-**ade-nvim** (Phase 3): a Nix‑wrapped Neovim (`nix run .#ade-nvim`) with `NVIM_APPNAME=ade-nvim`, so it never touches an existing config. Plugins are pinned from nixpkgs with no runtime downloads: mini.nvim (pick, files, diff, git, clue, statusline, completion), nvim‑treesitter with prebuilt grammars, and nvim‑lspconfig with native `vim.lsp`. Language servers come from each project's devshell. The target is a fast startup and a keymap that mirrors the ADE keys.
+**ade-nvim** (Phase 3): a Nix‑wrapped Neovim (`nix run .#ade-nvim`) with `NVIM_APPNAME=ade-nvim`, so it never touches an existing config. Plugins are pinned from nixpkgs with no runtime downloads: snacks.nvim (picker, explorer, lazygit; the picker also serves `vim.ui.select`, so ADE's own lists use it), mini.nvim (diff, git, clue, statusline, completion), nvim‑treesitter with prebuilt grammars, and nvim‑lspconfig with native `vim.lsp`; fd, ripgrep and lazygit come on its PATH. Language servers come from each project's devshell. Keys: space leader; `<leader><leader>` smart find, `<leader>f…` pickers (`ff` files, `fg` grep, `fb` buffers, `fr` recent, `fw` word, `fs` symbols, `fd` diagnostics, `fR` resume, …), `<leader>e` explorer, `<leader>g…` git (`gg` lazygit, `gs` status, `gl` log, `gb` branches, `gd` diff, `gB` browse), `<leader>l…` LSP (`la` action, `ln` rename, `lf` format), `gd`/`gr`/`gI`/`gy` through the picker, and ADE under `<leader>a` (`ai` items, `aw` worktree, `ar` review).
 
 ### 6.8 Notifications
 
