@@ -187,10 +187,11 @@ ade                       # attach to (or create) the zellij session "ade" with 
 1. **Home** shows your issues and MRs by stage. Move with the arrow keys or `j`/`k`; `?` lists every key; `/` searches.
 2. **`s` start work** on an item: pick repos, branch/MR mode, child issue behaviour (`b` on a repo row names its branch when a sibling repo carries a second set of changes). ADE creates the branch, a worktree and a zellij tab.
 3. **The tab** has your main pane (editor, or an `omp` agent, depending on `host.layout`), the item's live overview, lazygit, a shell, and one pane per task of the workspace itself. Task panes wait: press **Enter** in a pane to start it; Ctrl-C stops it. The first time a workspace opens, ADE also creates an unfocused `<tab> · services` tab: it installs the repos' dependencies first (`hooks.install`), then starts the services in dependency order, each waiting for what it requires (a service others require, with a `port`, counts as ready once the port accepts connections). A waiting pane reports every 30 seconds, stops with the reason if what it waits for failed, and gives up after 10 minutes. `hooks.install` commands run with ADE's environment inside the dev shell, with the trust of `post_worktree`. `services = "manual"` on the workspace skips that tab and keeps the services in the strip, waiting for Enter. `ade ws restart <node>` restarts one with its dependents.
-4. **`N`** leaves a dated note on the item (what blocks it, what you did last); the side panel shows the newest ones and a blocked item is marked on its row. `ade note <ref> <text> [--blocked]` does the same from a shell. Notes stay on your machine.
-5. **`v`** opens a multi-root VS Code workspace for the item (all repos of the project).
-6. **Enter** on an MR opens the MR page: threads, diff, CI; reply, resolve, approve, mark ready, merge. `ade review <group/project!N>` opens someone else's MR in a review tab; collected line comments go out as one review batch.
-7. **Clean up** with `ade gc`, which removes worktrees of merged or closed MRs when they are clean and pushed.
+4. **`cd "$(ade cd 412)"`** takes a shell to the item's worktree (`ade cd 412 --repo web` for another repo, `ade cd api` for a repo's baseline). As a shell function that cds only when `ade cd` succeeded (a bare `cd ""` succeeds, so `cd "$(ade cd 412)"` alone stays put on failure): `adecd() { d=$(ade cd "$@") && cd "$d"; }`.
+5. **`N`** leaves a dated note on the item (what blocks it, what you did last); the side panel shows the newest ones and a blocked item is marked on its row. `ade note <ref> <text> [--blocked]` does the same from a shell. Notes stay on your machine.
+6. **`v`** opens a multi-root VS Code workspace for the item (all repos of the project).
+7. **Enter** on an MR opens the MR page: threads, diff, CI; reply, resolve, approve, mark ready, merge. `ade review <group/project!N>` opens someone else's MR in a review tab; collected line comments go out as one review batch.
+8. **Clean up** with `ade gc`, which removes worktrees of merged or closed MRs when they are clean and pushed.
 
 ### Moving work from another tool
 

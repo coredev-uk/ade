@@ -3,7 +3,10 @@ package workspace
 import (
 	"context"
 	"fmt"
+	"maps"
+	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -11,6 +14,7 @@ import (
 	"github.com/coredev-uk/ade/internal/domain"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/git"
+	"github.com/coredev-uk/ade/internal/project"
 )
 
 // Target is a worktree to open a workspace on, with the work item's own trees
@@ -218,4 +222,94 @@ func ItemFor(ctx context.Context, items []ItemRef, loc Location) (ItemRef, bool)
 		}
 	}
 	return ItemRef{}, false
+}
+
+// ItemWorktree is the work item's own worktree in one repo.
+type ItemWorktree struct {
+	Repo    string `json:"repo"`
+	Path    string `json:"path"`
+	Branch  string `json:"branch"`
+	Primary bool   `json:"primary"`
+}
+
+// ItemWorktrees lists the work item's worktrees, the primary one first: the
+// repos the item routes to in their order, then the other repos by name, the
+// order TargetForItem opens in. Repos without a worktree are left out.
+func ItemWorktrees(ctx context.Context, root string, m *config.Manifest, wi domain.WorkItem) []ItemWorktree {
+	trees, branches := ItemTrees(ctx, root, m, wi)
+	var out []ItemWorktree
+	for _, repo := range append(slices.Clone(wi.Repos), m.RepoNames()...) {
+		if p, ok := trees[repo]; ok && !slices.ContainsFunc(out, func(w ItemWorktree) bool { return w.Repo == repo }) {
+			out = append(out, ItemWorktree{Repo: repo, Path: p, Branch: branches[repo], Primary: len(out) == 0})
+		}
+	}
+	return out
+}
+
+// RepoBaseline is a repo's baseline worktree (the default branch's tree) and
+// the branch it is on.
+func RepoBaseline(ctx context.Context, root string, m *config.Manifest, repo string) (ItemWorktree, error) {
+	projectDir := filepath.Join(root, m.Name)
+	path, err := baseline(ctx, projectDir, m, repo)
+	if err != nil {
+		return ItemWorktree{}, err
+	}
+	w := ItemWorktree{Repo: repo, Path: path, Branch: filepath.Base(path), Primary: true}
+	if wts, err := worktreesOf(ctx, projectDir, repo); err == nil {
+		for _, t := range wts {
+			if filepath.Clean(t.Path) == filepath.Clean(path) && t.Branch != "" {
+				w.Branch = t.Branch
+			}
+		}
+	}
+	return w, nil
+}
+
+// FindRepo resolves a repo named by arg among the projects cloned under root:
+// "<repo>" when exactly one project has it, "<project>/<repo>" for any. The
+// error says what the choices are.
+func FindRepo(root, arg string) (*config.Manifest, string, error) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, "", fmt.Errorf("projects root: %w", err)
+	}
+	manifests := map[string]*config.Manifest{}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if m, err := project.LoadManifest(filepath.Join(root, e.Name())); err == nil {
+			manifests[e.Name()] = m
+		}
+	}
+	if proj, repo, ok := strings.Cut(arg, "/"); ok {
+		m, have := manifests[proj]
+		if !have {
+			return nil, "", fmt.Errorf("no project %q under %s", proj, root)
+		}
+		if _, ok := m.Repos[repo]; !ok {
+			return nil, "", fmt.Errorf("project %s has no repo %q (repos: %s)", proj, repo, strings.Join(m.RepoNames(), ", "))
+		}
+		return m, repo, nil
+	}
+	var found []string
+	var all []string
+	for _, name := range slices.Sorted(maps.Keys(manifests)) {
+		for _, repo := range manifests[name].RepoNames() {
+			all = append(all, name+"/"+repo)
+			if repo == arg {
+				found = append(found, name)
+			}
+		}
+	}
+	switch len(found) {
+	case 0:
+		return nil, "", fmt.Errorf("%q is neither a work item ref nor a repo (repos: %s)", arg, strings.Join(all, ", "))
+	case 1:
+		return manifests[found[0]], arg, nil
+	}
+	for i, name := range found {
+		found[i] = name + "/" + arg
+	}
+	return nil, "", fmt.Errorf("repo %q is in several projects: use %s", arg, strings.Join(found, " or "))
 }

@@ -246,3 +246,22 @@ func CachedManifest(ctx context.Context, a *app.App, ref config.ProjectRef) (*co
 	m, _, err := s.fetchParsed(ctx, canon)
 	return m, err
 }
+
+// SnapshotManifest reads the last good manifest snapshot of a registered
+// project from disk. It never touches the network, not even for a source that
+// was never fetched: such a project has no snapshot and is an error.
+func SnapshotManifest(a *app.App, ref config.ProjectRef) (*config.Manifest, error) {
+	s := New(a, "")
+	canon, err := s.canonical(ref.Source)
+	if err != nil {
+		return nil, err
+	}
+	_, sn, err := findSnapshot(a.Root, canon)
+	if err != nil {
+		return nil, err
+	}
+	if sn == nil {
+		return nil, fmt.Errorf("project %s is not cloned: run `ade update`", ref.Source)
+	}
+	return sn.parse()
+}
