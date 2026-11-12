@@ -47,7 +47,7 @@ exists after a fetch (gc fetches each such repo, with --prune, to find out). The
 baseline tree and worktrees whose branch has an open merge request or none are
 never touched.
 
---dry-run only reports. Without --yes it asks first (and refuses to run unattended).
+--dry-run only reports: it touches no worktree or branch, but still fetches. Without --yes it asks first (and refuses to run unattended).
 Exits 2 when a removal failed.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -97,7 +97,7 @@ Exits 2 when a removal failed.`,
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "report what would be removed and why the rest stays; change nothing")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "report what would be removed and why the rest stays; no worktree or branch is touched, but remote-tracking refs are refreshed (fetch --prune)")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "remove without asking")
 	cmd.Flags().StringVar(&only, "project", "", "only this project")
 	return cmd

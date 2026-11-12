@@ -233,3 +233,27 @@ func TestEventsTitlesNameTheMR(t *testing.T) {
 		}
 	}
 }
+
+// With labels.workflow.sync unset (ask), a stage change is reported and the
+// board is left alone.
+func TestSyncReportsUnmovedWorkflowLabel(t *testing.T) {
+	g := newGLEnv(t, fake.Free)
+	g.must(g.srv.MergeMRAs(ref(apiMR1), rae))
+	before := len(g.srv.Requests())
+	res := g.h.sync()
+	if res[0].Err != "" {
+		t.Fatalf("sync: %s", res[0].Err)
+	}
+	var warned bool
+	for _, w := range res[0].Warnings {
+		warned = warned || strings.HasPrefix(w, "workflow label not moved: ade-demo-env/tracker#1")
+	}
+	if !warned {
+		t.Errorf("warnings = %q, want one saying tracker#1's workflow label was not moved", res[0].Warnings)
+	}
+	for _, r := range g.srv.Requests()[before:] {
+		if r.Method != "GET" && r.Path != "/api/graphql" {
+			t.Errorf("sync wrote with ask: %s %s", r.Method, r.Path)
+		}
+	}
+}

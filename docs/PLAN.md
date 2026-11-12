@@ -364,9 +364,9 @@ stateDiagram-v2
 - **Labels:** three facets, each described by a pattern in the manifest (2):
   - **type** (story, bug, …): shown as a glyph and word on every row, and used for filters.
   - **app**: the routing signal. Every `app` value on a tracker issue maps to the repos that list it. More than one value means a cross‑repo work item, and Start work offers a child in each.
-  - **workflow**: the team's board column. ADE derives the stage from forge facts (child, branch, MR, CI, approvals) and, with `sync = "auto"` (the default), moves the label to match.
+  - **workflow**: the team's board column. ADE derives the stage from forge facts (child, branch, MR, CI, approvals) and moves the label to match when `sync = "auto"`. Unset means `ask`: `ade start` moves it with `--move-label` (or the start dialog's `l` toggle), and a background sync only reports the change as a warning and an inbox event.
     - Every move removes the old workflow label explicitly, because `::` labels are not exclusive on Free (verified) and ADE can't rely on scoped‑label exclusivity. Each move is audited.
-    - Moves are edge‑triggered: they happen only when the derived stage *changes*. A label someone sets by hand stays until the next transition, and meanwhile any contradiction shows as drift (`label: in review · MR still draft`). `ask` confirms each move; `off` only shows drift.
+    - Moves are edge‑triggered: they happen only when the derived stage *changes*. A label someone sets by hand stays until the next transition, and meanwhile any contradiction shows as drift (`label: in review · MR still draft`). `ask` moves a label only when `ade start` is told to (`--move-label` or the dialog toggle); `off` only shows drift.
     - **Done but kept open:** some teams leave sprint work open until the sprint review and mark it finished with a workflow label instead. With `labels.workflow.done` set, an open tracker carrying that value (and no open MR) is done: hidden from active Home rows, counted in done weight and sprint review, court `nobody · done · issue kept open`, never nagged to close. A merged item without the label asks for it (`you · set workflow::done`), and `sync = "auto"` applies it when `stage.merged` maps to the same value. The done value outranks other workflow labels that coexist on Free. A done label on an item whose MR is still open is ahead of the work: the item keeps its real stage and shows drift.
   - **Unmatched issues:** issues missing a type or app label appear in a "needs triage" filter. `c` (classify) suggests the missing labels, deterministically from title and description keywords, or with AI when it is enabled. Labels are applied only on confirm.
 - **Epics:** teams differ, so nothing is assumed. Where tracker issues have a parent epic (GitLab group‑level epics, Premium), ADE shows the epic title on the row and preview, and can group sprint review by it. It reads the epic through the work‑item hierarchy widget and gates it by capability. ADE never creates or edits epics.
@@ -599,7 +599,7 @@ sequenceDiagram
   A-->>U: preview: child issue, link, branch, draft MR, worktree, tab
   U->>A: confirm (edit any field)
   A->>F: create child issue in acme/api (assignee, type label copied; iteration via GraphQL issueSetIteration)
-  A->>F: move tracker workflow label → "in progress" (if labels.workflow.sync)
+  A->>F: move tracker workflow label → "in progress" (if labels.workflow.sync is auto, or --move-label / the dialog toggle under ask)
   A->>F: relates_to link + "Parent:" reference
   A->>F: create branch 412-rate-limit-export + draft MR (Closes #412, mentions parent)
   A->>G: fetch, worktree add --track ~/ade/acme/api/412-rate-limit-export, post_worktree hooks

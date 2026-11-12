@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/url"
 	"strconv"
 
@@ -87,21 +88,29 @@ func (c *Client) isUserNamespace(ctx context.Context, path string) (bool, error)
 
 // userCapabilities probes a user namespace through its tracker project. The
 // licence shows on the project's own issues and merge requests, so no sample
-// means false rather than a guess from iterations.
+// means false rather than a guess from iterations. A project with issues or
+// merge requests turned off answers 403/404 to the sample, which is the same.
 func (c *Client) userCapabilities(ctx context.Context, caps forge.Caps, project string) (forge.Caps, error) {
 	caps.UserNamespace = true
 	if project == "" {
 		return caps, nil
 	}
 	var err error
-	if caps.Weight, err = c.probeWeight(ctx, projectPath(project), false); err != nil {
+	if caps.Weight, err = c.probeWeight(ctx, projectPath(project), false); err != nil && !noSample(err) {
 		return forge.Caps{}, err
 	}
-	if caps.ApprovalRules, err = c.probeApprovalRules(ctx, projectPath(project), false); err != nil {
+	if caps.ApprovalRules, err = c.probeApprovalRules(ctx, projectPath(project), false); err != nil && !noSample(err) {
 		return forge.Caps{}, err
 	}
 	caps.BlocksLinks = caps.ApprovalRules
 	return caps, nil
+}
+
+// noSample reports whether err says the project offers nothing to sample
+// (feature disabled or hidden), as opposed to a failing token or transport.
+func noSample(err error) bool {
+	var api *APIError
+	return errors.As(err, &api) && (api.Status == http.StatusForbidden || api.Status == http.StatusNotFound)
 }
 
 // probe reports whether a gated GET answered at all. Only 403/404 mean

@@ -516,6 +516,10 @@ func BranchName(m *config.Manifest, title string, item domain.WorkItem, workIID 
 	})
 }
 
+// MoveLabelHint ends the note of a label move left alone by sync = ask. It
+// words the CLI's way to confirm; the dialog swaps it for its own key.
+const MoveLabelHint = "pass --move-label to apply"
+
 // planWorkflow decides the tracker label move, or nil when labels.workflow
 // maps nothing for `started`, sync is off, or the label is further along. The
 // note says why a mapped label is not written: it is set for nil and for a
@@ -561,7 +565,7 @@ func planWorkflow(in PlanInput) (*WorkflowMove, string) {
 	case in.Choices.NoMoveLabel:
 		return mv, fmt.Sprintf("workflow label: would %s (--no-move-label: not applied)", workflowText(mv))
 	default:
-		return mv, fmt.Sprintf("workflow label: would %s (sync = ask: pass --move-label to apply)", workflowText(mv))
+		return mv, fmt.Sprintf("workflow label: would %s (sync = ask: %s)", workflowText(mv), MoveLabelHint)
 	}
 }
 

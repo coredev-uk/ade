@@ -239,6 +239,13 @@ func TestGCBranchWithoutUpstream(t *testing.T) {
 		}
 		wantKept(t, g.one(answer(mrOf("merged", ""))), "never pushed")
 	})
+	t.Run("a local branch as upstream does not count as pushed", func(t *testing.T) {
+		g := newGCEnv(t)
+		g.noUpstreamTree()
+		// The tree's only commit is ahead of local main, which is no evidence about the remote.
+		gitCmd(t, g.tree, "branch", "--set-upstream-to=main")
+		wantKept(t, g.one(answer(mrOf("merged", ""))), "never pushed")
+	})
 	t.Run("a failed fetch cannot vouch for the commits", func(t *testing.T) {
 		g := newGCEnv(t)
 		g.noUpstreamTree()
@@ -263,18 +270,19 @@ func TestTreeOfFindsTheWorktreeAMergedMRCameFrom(t *testing.T) {
 	g := newGCEnv(t)
 	mr := mrOf("merged", "")
 	mr.SourceBranch = "feature/x"
-	tr, ok, err := g.svc.TreeOf(context.Background(), "demo", mr)
+	fetch := g.svc.NewFetcher()
+	tr, ok, err := g.svc.TreeOf(context.Background(), "demo", mr, fetch)
 	if err != nil || !ok || !tr.Removable() || tr.Path != g.tree {
 		t.Fatalf("TreeOf = %+v %v %v", tr, ok, err)
 	}
 	other := mr
 	other.SourceBranch = "feature/else"
-	if _, ok, err := g.svc.TreeOf(context.Background(), "demo", other); err != nil || ok {
+	if _, ok, err := g.svc.TreeOf(context.Background(), "demo", other, fetch); err != nil || ok {
 		t.Errorf("a branch with no worktree: %v %v", ok, err)
 	}
 	other = mr
 	other.Ref.Project = "grp/web"
-	if _, ok, err := g.svc.TreeOf(context.Background(), "demo", other); err != nil || ok {
+	if _, ok, err := g.svc.TreeOf(context.Background(), "demo", other, fetch); err != nil || ok {
 		t.Errorf("another repo's MR: %v %v", ok, err)
 	}
 }

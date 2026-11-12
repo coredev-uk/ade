@@ -99,7 +99,9 @@ type Run struct {
 	Project string `json:"project"`
 	// Tracker is the work item the record belongs to.
 	Tracker forge.Ref `json:"tracker"`
-	Repo    string    `json:"repo"`
+	// Child is the code-repo issue start work created; commit_prefix may name it.
+	Child *forge.Ref `json:"child,omitempty"`
+	Repo  string     `json:"repo"`
 	// Worktree is the start-work tree the run edits; Branch its branch.
 	Worktree string     `json:"worktree"`
 	Branch   string     `json:"branch"`

@@ -1068,6 +1068,7 @@ func (m model) swDoneView(d *startDialog, inner int) []string {
 		l = append(l, ansi.Truncate(stFaint.Render(g.Vertical)+" "+strings.Join(parts, stFaint.Render(" "+g.Sep+" ")), inner, m.g.Ell))
 	}
 	for _, n := range d.result.Notes {
+		n = strings.Replace(n, startwork.MoveLabelHint, "press l in the start dialog to apply", 1)
 		l = append(l, m.swNote(n, inner)...)
 	}
 	if d.err != nil {

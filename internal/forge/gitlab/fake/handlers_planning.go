@@ -12,6 +12,7 @@ func (s *Server) planningRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v4/groups/{id}/iterations", s.groupIterations)
 	mux.HandleFunc("GET /api/v4/projects/{id}/approval_rules", s.approvalRules)
 	mux.HandleFunc("GET /api/v4/groups/{id}/projects", s.groupProjects)
+	mux.HandleFunc("GET /api/v4/users/{id}/projects", s.userProjects)
 	mux.HandleFunc("GET /api/v4/namespaces/{id}", s.namespace)
 }
 
@@ -127,6 +128,21 @@ func (s *Server) groupProjects(w http.ResponseWriter, r *http.Request) {
 		notFound(w)
 		return
 	}
+	s.writeProjects(w, r)
+}
+
+// userProjects serves the projects of the user whose namespace the fake is.
+func (s *Server) userProjects(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.st.userNamespace || !s.st.hasNamespace(r.PathValue("id")) {
+		notFound(w)
+		return
+	}
+	s.writeProjects(w, r)
+}
+
+func (s *Server) writeProjects(w http.ResponseWriter, r *http.Request) {
 	paged(s, w, r, s.st.projects, func(p *project) any {
 		name := p.Path[strings.LastIndex(p.Path, "/")+1:]
 		return object{

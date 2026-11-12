@@ -97,7 +97,9 @@ done    = "done"               # optional, see below
     would set. A background sync never moves the label: it lists each stage change as a warning in `ade sync` and
     in the inbox, naming the label and the item. Set the label on the board, or set `sync = "auto"`.
   - `off`: ADE never moves the label; the board column only shows as drift.
-  `ade start --dry-run` lists the label move as a forge write when it would run, and otherwise says why it will not.
+  `ade start --dry-run` lists the label move as a forge write when it would run. When it would not, a note
+  says why: `ask` without `--move-label`, `off`, `--no-move-label`, or a label already further along. Browse mode
+  and a manifest that maps no `started` stage never touch the label and print no note.
 - `workflow.done`: some teams leave sprint work open until the sprint review and mark it finished with a label.
   With `done = "done"`, an open tracker issue carrying that value (and no open MR) counts as done and is never
   nagged to close. Leave it out if your team closes issues when work finishes.

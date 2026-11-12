@@ -40,5 +40,23 @@ func CachedCaps(ctx context.Context, a *app.App, forgeName, group, project strin
 	if err != nil {
 		return fetch()
 	}
-	return store.Cached(st, CapsKey(forgeName, group), CacheTTL, time.Now(), fetch)
+	return CachedCapsIn(st, forgeName, group, time.Now(), fetch)
+}
+
+// CachedCapsIn is CachedCaps over an open store. A user namespace without the
+// weight field is not stored: it may only mean the tracker had no issue to
+// sample yet, and a day-long cache would hide the field once one exists.
+func CachedCapsIn(st *store.Store, forgeName, group string, now time.Time, fetch func() (forge.Caps, error)) (forge.Caps, error) {
+	key := CapsKey(forgeName, group)
+	if caps, ok := store.Peek[forge.Caps](st, key, CacheTTL, now); ok {
+		return caps, nil
+	}
+	caps, err := fetch()
+	if err != nil {
+		return forge.Caps{}, err
+	}
+	if !caps.UserNamespace || caps.Weight {
+		store.Put(st, key, now, caps)
+	}
+	return caps, nil
 }

@@ -290,7 +290,7 @@ func (d *Draft) fillLabels(f Facets, used map[string]int) {
 		return
 	}
 	wf := MapWorkflow(f.Workflow.Values, workflowUse(f.Workflow, used))
-	l.Workflow = config.WorkflowFacet{Pattern: f.Workflow.Pattern, Stage: wf.Stage, Sync: "auto", Done: wf.Done}
+	l.Workflow = config.WorkflowFacet{Pattern: f.Workflow.Pattern, Stage: wf.Stage, Sync: "ask", Done: wf.Done}
 	d.WorkflowWhy = append(d.WorkflowWhy, "values found: "+strings.Join(f.Workflow.Values, ", ")+".")
 	if wf.Blocked != "" {
 		d.WorkflowWhy = append(d.WorkflowWhy, fmt.Sprintf("%q is left unmapped: ADE reads it as blocked.", wf.Blocked))
@@ -331,7 +331,8 @@ func capValues(vs []string, n int) []string {
 func (d *Draft) fillPlanning(ctx context.Context, f Forge, o Options, facets Facets, weighted bool) error {
 	var caps forge.Caps
 	if f.Kind() == "gitlab" {
-		c, err := f.Capabilities(ctx, o.Group, "")
+		// A user namespace is sampled through the tracker project.
+		c, err := f.Capabilities(ctx, o.Group, d.Tracker.Path)
 		switch {
 		case errors.Is(err, forge.ErrNotFound):
 			d.Notes = append(d.Notes, o.Group+" is not a group: iterations and weights are read as on a free account")
@@ -350,7 +351,7 @@ func (d *Draft) fillPlanning(ctx context.Context, f Forge, o Options, facets Fac
 		}
 	}
 	if !done {
-		if err := d.milestoneIterations(ctx, f, o, caps.Iterations); err != nil {
+		if err := d.milestoneIterations(ctx, f, o, caps); err != nil {
 			return err
 		}
 	}
@@ -359,10 +360,11 @@ func (d *Draft) fillPlanning(ctx context.Context, f Forge, o Options, facets Fac
 }
 
 // milestoneIterations uses milestones as sprints: a GitLab group's, or the
-// tracker repo's on GitHub (milestones are per repo there).
-func (d *Draft) milestoneIterations(ctx context.Context, f Forge, o Options, licensed bool) error {
+// tracker repo's on GitHub or in a GitLab user namespace (milestones are per
+// project there).
+func (d *Draft) milestoneIterations(ctx context.Context, f Forge, o Options, caps forge.Caps) error {
 	scope := o.Group
-	if f.Kind() == "github" {
+	if f.Kind() == "github" || caps.UserNamespace {
 		scope = d.Tracker.Path
 	}
 	ms, err := f.Milestones(ctx, scope)
@@ -375,7 +377,7 @@ func (d *Draft) milestoneIterations(ctx context.Context, f Forge, o Options, lic
 		return nil
 	}
 	d.Manifest.Tracker.Iterations = config.IterationsSource{Source: "milestones"}
-	d.IterationsWhy = []string{milestoneWhy(ms, licensed)}
+	d.IterationsWhy = []string{milestoneWhy(ms, caps.Iterations)}
 	return nil
 }
 

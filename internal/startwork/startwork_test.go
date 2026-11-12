@@ -329,18 +329,19 @@ func TestDryRunWritesNothing(t *testing.T) {
 
 func TestDryRunAccountsForTheWorkflowLabel(t *testing.T) {
 	for _, tc := range []struct {
+		name     string
 		sync     string
 		choose   func(*startwork.Choices)
 		wantStep bool
 		wantNote string
 	}{
-		{"auto", nil, true, ""},
-		{"", nil, false, "would set workflow::in progress on " + tracker + "#3 (sync = ask: pass --move-label to apply)"},
-		{"ask", func(c *startwork.Choices) { c.MoveLabel = true }, true, ""},
-		{"auto", func(c *startwork.Choices) { c.NoMoveLabel = true }, false, "--no-move-label: not applied"},
-		{"off", nil, false, "not moved (sync = off)"},
+		{"auto", "auto", nil, true, ""},
+		{"unset is ask", "", nil, false, "would set workflow::in progress on " + tracker + "#3 (sync = ask: pass --move-label to apply)"},
+		{"ask with --move-label", "ask", func(c *startwork.Choices) { c.MoveLabel = true }, true, ""},
+		{"auto with --no-move-label", "auto", func(c *startwork.Choices) { c.NoMoveLabel = true }, false, "--no-move-label: not applied"},
+		{"off", "off", nil, false, "not moved (sync = off)"},
 	} {
-		t.Run(tc.sync, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t, fake.Free)
 			h.m.Labels.Workflow.Sync = tc.sync
 			r := h.resolve(3)
@@ -490,23 +491,23 @@ func TestWorkflowLabelMoves(t *testing.T) {
 		choice func(*startwork.Choices)
 		want   []string // workflow labels after
 	}{
-		{"none → in progress", nil, "", nil, []string{"workflow::in progress"}},
-		{"removes the old label explicitly", []string{"workflow::backlog"}, "", nil, []string{"workflow::in progress"}},
-		{"removes every other workflow label (Free keeps them all)", []string{"workflow::backlog", "workflow::blocked"}, "", nil, []string{"workflow::in progress"}},
-		{"already there is untouched", []string{"workflow::in progress"}, "", nil, []string{"workflow::in progress"}},
-		{"further along is never moved back", []string{"workflow::in review"}, "", nil, []string{"workflow::in review"}},
-		{"done stays done", []string{"workflow::done"}, "", nil, []string{"workflow::done"}},
+		{"none → in progress", nil, "auto", nil, []string{"workflow::in progress"}},
+		{"removes the old label explicitly", []string{"workflow::backlog"}, "auto", nil, []string{"workflow::in progress"}},
+		{"removes every other workflow label (Free keeps them all)", []string{"workflow::backlog", "workflow::blocked"}, "auto", nil, []string{"workflow::in progress"}},
+		{"already there is untouched", []string{"workflow::in progress"}, "auto", nil, []string{"workflow::in progress"}},
+		{"further along is never moved back", []string{"workflow::in review"}, "auto", nil, []string{"workflow::in review"}},
+		{"done stays done", []string{"workflow::done"}, "auto", nil, []string{"workflow::done"}},
 		{"off does nothing", []string{"workflow::backlog"}, "off", nil, []string{"workflow::backlog"}},
+		{"unset is ask: nothing without confirmation", []string{"workflow::backlog"}, "", nil, []string{"workflow::backlog"}},
+		{"unset with confirmation moves", []string{"workflow::backlog"}, "", func(c *startwork.Choices) { c.MoveLabel = true }, []string{"workflow::in progress"}},
 		{"ask without confirmation does nothing", []string{"workflow::backlog"}, "ask", nil, []string{"workflow::backlog"}},
 		{"ask with confirmation moves", []string{"workflow::backlog"}, "ask", func(c *startwork.Choices) { c.MoveLabel = true }, []string{"workflow::in progress"}},
-		{"auto declined in the dialog", []string{"workflow::backlog"}, "", func(c *startwork.Choices) { c.NoMoveLabel = true }, []string{"workflow::backlog"}},
+		{"auto declined with --no-move-label or in the dialog", []string{"workflow::backlog"}, "auto", func(c *startwork.Choices) { c.NoMoveLabel = true }, []string{"workflow::backlog"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t, fake.Free)
-			if tc.sync != "" {
-				h.m.Labels.Workflow.Sync = tc.sync
-			}
+			h.m.Labels.Workflow.Sync = tc.sync
 			if len(tc.labels) > 0 {
 				if err := h.forge.SetLabels(context.Background(), issueRef(tracker, 3), tc.labels, nil); err != nil {
 					t.Fatal(err)

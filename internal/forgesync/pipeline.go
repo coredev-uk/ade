@@ -84,8 +84,7 @@ func (p *pipeline) me(ctx context.Context) (forge.User, error) {
 
 func (p *pipeline) caps(ctx context.Context) (forge.Caps, error) {
 	group := forge.Group(p.m.Tracker.Project)
-	key := startwork.CapsKey(p.forgeName, group)
-	return store.Cached(p.st, key, startwork.CacheTTL, p.now, func() (forge.Caps, error) {
+	return startwork.CachedCapsIn(p.st, p.forgeName, group, p.now, func() (forge.Caps, error) {
 		return p.f.Capabilities(ctx, group, p.m.Tracker.Project)
 	})
 }

@@ -28,8 +28,10 @@ type Target struct {
 	AddDirs  []string   `json:"add_dirs,omitempty"`
 	// CommitPrefix is the expanded commit prefix of the item ("" when the
 	// project sets none). It is not stored with the run: the Manager fills it
-	// in when it builds a prompt.
+	// in when it builds a prompt. PrefixKnown is false when the Manager could
+	// not tell, and then the prompt says nothing about a prefix.
 	CommitPrefix string `json:"commit_prefix,omitempty"`
+	PrefixKnown  bool   `json:"-"`
 }
 
 // Thread is an unresolved merge request discussion.
@@ -157,10 +159,13 @@ func targetBlock(b *strings.Builder, t Target) {
 		fmt.Fprintf(b, "These directories are required repos you may read but must not change: %s.\n", strings.Join(t.AddDirs, ", "))
 	}
 	b.WriteString("Never run git commit, git push or anything that changes remotes: the user reviews the diff, then ADE commits and pushes.\n")
-	if t.CommitPrefix != "" {
-		fmt.Fprintf(b, "Commit messages start with the prefix %q (ADE adds it to the first commit).\n\n", t.CommitPrefix)
-	} else {
+	switch {
+	case t.CommitPrefix != "":
+		fmt.Fprintf(b, "ADE adds the prefix %q to the MR's first commit when it commits; do not add it yourself.\n\n", t.CommitPrefix)
+	case t.PrefixKnown:
 		b.WriteString("The project sets no commit prefix.\n\n")
+	default:
+		b.WriteString("\n")
 	}
 }
 

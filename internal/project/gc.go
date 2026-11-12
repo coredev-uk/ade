@@ -63,7 +63,7 @@ func (s *Service) Trees(ctx context.Context, name string, lookup MRLookup) ([]Tr
 		return nil, err
 	}
 	var out []Tree
-	fetch := s.fetcher()
+	fetch := s.NewFetcher()
 	for _, ps := range sts {
 		m, err := LoadManifest(ps.Dir)
 		if err != nil {
@@ -82,9 +82,12 @@ func (s *Service) Trees(ctx context.Context, name string, lookup MRLookup) ([]Tr
 	return out, nil
 }
 
-// fetcher returns a function that runs `git fetch --prune` in a bare clone
-// with the forge's credentials, once per clone and run.
-func (s *Service) fetcher() func(ctx context.Context, forgeName, bare string) error {
+// Fetcher runs `git fetch --prune` in a bare clone.
+type Fetcher func(ctx context.Context, forgeName, bare string) error
+
+// NewFetcher returns a Fetcher that uses the forge's credentials and fetches
+// each clone once, however often it is called.
+func (s *Service) NewFetcher() Fetcher {
 	done := map[string]error{}
 	return func(ctx context.Context, forgeName, bare string) error {
 		if err, ok := done[bare]; ok {
@@ -100,7 +103,7 @@ func (s *Service) fetcher() func(ctx context.Context, forgeName, bare string) er
 }
 
 // judge fills t.Keep, t.MR and t.Pushed.
-func (s *Service) judge(ctx context.Context, t *Tree, ts TreeStatus, m *config.Manifest, lookup MRLookup, fetch func(ctx context.Context, forgeName, bare string) error) {
+func (s *Service) judge(ctx context.Context, t *Tree, ts TreeStatus, m *config.Manifest, lookup MRLookup, fetch Fetcher) {
 	if ts.Branch == "" {
 		t.Keep = append(t.Keep, "detached HEAD: no branch to match a merge request to")
 		return
@@ -120,7 +123,11 @@ func (s *Service) judge(ctx context.Context, t *Tree, ts TreeStatus, m *config.M
 			t.Keep = append(t.Keep, why)
 		}
 	}
-	ev := pushEvidence{heads: heads, refresh: func(ctx context.Context) error { return fetch(ctx, m.Forge, t.Bare) }}
+	ev := pushEvidence{heads: heads}
+	if len(t.Keep) == 0 {
+		// A tree already kept needs no proof, so skip the fetch.
+		ev.refresh = func(ctx context.Context) error { return fetch(ctx, m.Forge, t.Bare) }
+	}
 	keep, pushed := localGuard(ctx, git.Client{}, ts, ev)
 	t.Keep = append(t.Keep, keep...)
 	if len(t.Keep) == 0 {
@@ -203,10 +210,11 @@ func localGuard(ctx context.Context, c git.Client, ts TreeStatus, ev pushEvidenc
 
 // unpushed explains why the tree's commits are not all on the remote, or ""
 // with the proof that they are. A branch with an upstream is pushed when it is
-// not ahead of it. Without one, HEAD must be the head of one of the branch's
+// not ahead of it, when that is a remote-tracking branch (a local branch says
+// nothing about the remote). Without one, HEAD must be the head of one of the branch's
 // merge requests or sit on a remote-tracking ref that survives a fetch --prune.
 func unpushed(ctx context.Context, c git.Client, ts TreeStatus, ev pushEvidence) (why, proof string) {
-	if ts.HasUpstream {
+	if ts.HasUpstream && remoteUpstream(ctx, c, ts.Path) {
 		if ts.Ahead > 0 {
 			return fmt.Sprintf("%d %s not pushed", ts.Ahead, commits(ts.Ahead)), ""
 		}
@@ -243,6 +251,14 @@ func unpushed(ctx context.Context, c git.Client, ts TreeStatus, ev pushEvidence)
 	return "commits not on any remote branch (never pushed)", ""
 }
 
+// remoteUpstream reports whether the upstream of the tree's branch is a
+// remote-tracking ref. An unreadable upstream counts as not, which sends the
+// tree through the stricter no-upstream checks.
+func remoteUpstream(ctx context.Context, c git.Client, tree string) bool {
+	full, err := c.Run(ctx, tree, "rev-parse", "--symbolic-full-name", "@{u}")
+	return err == nil && strings.HasPrefix(strings.TrimSpace(full), "refs/remotes/")
+}
+
 func commits(n int) string {
 	if n == 1 {
 		return "commit"
@@ -277,9 +293,10 @@ func (s *Service) RemoveTree(ctx context.Context, t Tree) (branchKept bool, err 
 }
 
 // TreeOf finds the worktree a merge request was made from, judged as Trees
-// does with mr taken as the branch's one merge request. ok is false when
-// the project has no such worktree on disk.
-func (s *Service) TreeOf(ctx context.Context, name string, mr forge.MR) (t Tree, ok bool, err error) {
+// does with mr taken as the branch's one merge request. fetch comes from
+// NewFetcher, which callers share across calls to fetch each repo once. ok is
+// false when the project has no such worktree on disk.
+func (s *Service) TreeOf(ctx context.Context, name string, mr forge.MR, fetch Fetcher) (t Tree, ok bool, err error) {
 	sts, err := s.Status(ctx, name)
 	if err != nil {
 		return Tree{}, false, err
@@ -287,7 +304,6 @@ func (s *Service) TreeOf(ctx context.Context, name string, mr forge.MR) (t Tree,
 	known := func(context.Context, *config.Manifest, string, string) ([]forge.MR, error) {
 		return []forge.MR{mr}, nil
 	}
-	fetch := s.fetcher()
 	for _, ps := range sts {
 		m, err := LoadManifest(ps.Dir)
 		if err != nil {

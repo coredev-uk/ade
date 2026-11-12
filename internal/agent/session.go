@@ -8,6 +8,7 @@ import (
 
 	"github.com/coredev-uk/ade/internal/ai"
 	"github.com/coredev-uk/ade/internal/app"
+	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/git"
 	"github.com/coredev-uk/ade/internal/project"
@@ -74,12 +75,21 @@ func ResolveTarget(ctx context.Context, a *app.App, open startwork.OpenFunc, ref
 		mr := f.MR.Ref
 		t.MR = &mr
 	}
+	t.AddDirs = requiredDirs(ctx, filepath.Join(a.Root, r.Project), r.Manifest, required, found)
+	return t, r.Forge, nil
+}
+
+// requiredDirs are the trees of the required repos: the item's own worktree
+// where it has one, else the repo's baseline tree. A repo with neither is left
+// out.
+func requiredDirs(ctx context.Context, projectDir string, m *config.Manifest, required []string, found map[string]startwork.Found) []string {
+	var dirs []string
 	for _, req := range required {
 		if w := found[req].Worktree; w != "" {
-			t.AddDirs = append(t.AddDirs, w)
-		} else if base, err := workspace.BaselineDir(ctx, filepath.Join(a.Root, r.Project), r.Manifest, req); err == nil {
-			t.AddDirs = append(t.AddDirs, base)
+			dirs = append(dirs, w)
+		} else if base, err := workspace.BaselineDir(ctx, projectDir, m, req); err == nil {
+			dirs = append(dirs, base)
 		}
 	}
-	return t, r.Forge, nil
+	return dirs
 }

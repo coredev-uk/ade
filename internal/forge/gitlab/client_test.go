@@ -3,6 +3,9 @@ package gitlab_test
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -718,6 +721,66 @@ func TestCapabilitiesUserNamespace(t *testing.T) {
 				t.Errorf("caps without a project = %+v\nwant   %+v", caps, want)
 			}
 		})
+	}
+}
+
+// userNamespaceStub answers /namespaces/:id as a user's namespace and every
+// other path with status[path], or 200 [] when it has none.
+func userNamespaceStub(t *testing.T, wantNamespace string, status map[string]int) *gitlab.Client {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch p := r.URL.EscapedPath(); {
+		case p == "/api/v4/namespaces/"+wantNamespace:
+			io.WriteString(w, `{"kind":"user"}`)
+		case status[p] != 0:
+			w.WriteHeader(status[p])
+			io.WriteString(w, `{"message":"nope"}`)
+		case strings.HasPrefix(p, "/api/v4/namespaces/"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			io.WriteString(w, `[]`)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return gitlab.New(srv.URL, fake.Token, gitlab.WithClock(func() time.Time { return clock }))
+}
+
+// A tracker project with issues or merge requests turned off answers 403 or
+// 404 to the sample: nothing to sample, not a failed probe.
+func TestCapabilitiesUserNamespaceProjectWithoutSamples(t *testing.T) {
+	for _, status := range []int{http.StatusForbidden, http.StatusNotFound} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			c := userNamespaceStub(t, "me", map[string]int{
+				"/api/v4/projects/me%2Ftracker/issues":         status,
+				"/api/v4/projects/me%2Ftracker/merge_requests": status,
+			})
+			caps, err := c.Capabilities(context.Background(), "me", "me/tracker")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := (forge.Caps{UserNamespace: true, ProbedAt: clock}); caps != want {
+				t.Errorf("caps = %+v\nwant   %+v", caps, want)
+			}
+		})
+	}
+	t.Run("a rejected token still fails", func(t *testing.T) {
+		c := userNamespaceStub(t, "me", map[string]int{"/api/v4/projects/me%2Ftracker/issues": http.StatusUnauthorized})
+		if _, err := c.Capabilities(context.Background(), "me", "me/tracker"); !errors.Is(err, forge.ErrAuth) {
+			t.Errorf("err = %v, want ErrAuth", err)
+		}
+	})
+}
+
+// A namespace path with a slash is looked up escaped, like a group path.
+func TestCapabilitiesUserNamespaceLookupEscapesSubgroupPaths(t *testing.T) {
+	c := userNamespaceStub(t, "a%2Fb", nil)
+	caps, err := c.Capabilities(context.Background(), "a/b", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !caps.UserNamespace {
+		t.Errorf("caps = %+v, want a user namespace", caps)
 	}
 }
 
