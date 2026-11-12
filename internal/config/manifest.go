@@ -34,6 +34,7 @@ type Manifest struct {
 	Name        string               `toml:"name"`
 	Forge       string               `toml:"forge"` // key into Config.Forges
 	Tracker     Tracker              `toml:"tracker"`
+	Project     ProjectSetup         `toml:"project"`
 	Labels      Labels               `toml:"labels"`
 	Repos       map[string]Repo      `toml:"repos"`
 	Services    map[string]Task      `toml:"services"`
@@ -48,6 +49,21 @@ type Manifest struct {
 	// Overlay is the local override merged into this manifest, when ReadManifestFile
 	// or the project service applied one.
 	Overlay string `toml:"-"`
+}
+
+// ProjectSetup is the manifest's [project] table: setup that belongs to the
+// project as a whole rather than to one repo. ADE generates files from it
+// under <root>/<project>/ on every `ade project add` and `ade update`.
+type ProjectSetup struct {
+	// Agents is the project's agent guidance, a file relative to the manifest;
+	// ADE writes it as <root>/<project>/AGENTS.md.
+	Agents string `toml:"agents"`
+	// Packages are nixpkgs attributes put on PATH for every pane, task and
+	// service of the project (<root>/<project>/.ade/shell).
+	Packages []string `toml:"packages"`
+	// Nixpkgs is the flake reference Packages come from; empty is the
+	// registry's "nixpkgs".
+	Nixpkgs string `toml:"nixpkgs"`
 }
 
 type Tracker struct {

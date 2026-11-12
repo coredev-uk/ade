@@ -293,3 +293,45 @@ func TestHasErrors(t *testing.T) {
 		t.Error("error not detected")
 	}
 }
+
+func TestProjectSetupValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want []string
+	}{
+		{"complete", header + `[project]
+agents = "docs/AGENTS.md"
+packages = ["nodejs_22", "pnpm", "python3Packages.pip"]
+nixpkgs = "github:NixOS/nixpkgs/nixos-25.05"
+`, nil},
+		{"agents escapes the manifest", header + "[project]\nagents = \"../AGENTS.md\"\n", []string{"error: project.agents"}},
+		{"agents absolute", header + "[project]\nagents = \"/etc/passwd\"\n", []string{"error: project.agents"}},
+		{"package with a space", header + "[project]\npackages = [\"node js\"]\n", []string{"error: project.packages[0]"}},
+		{"package starting with a dash", header + "[project]\npackages = [\"-v\"]\n", []string{"error: project.packages[0]"}},
+		{"nixpkgs with whitespace", header + "[project]\npackages = [\"go\"]\nnixpkgs = \"github:NixOS/nixpkgs foo\"\n", []string{"error: project.nixpkgs"}},
+		{"nixpkgs without packages", header + "[project]\nnixpkgs = \"nixpkgs\"\n", []string{"warn: project.nixpkgs"}},
+		{"unknown key", header + "[project]\nshell = \"x\"\n", []string{"warn: project.shell: unknown key"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertIssues(t, mustManifest(t, tt.src).Validate(testCfg), tt.want...)
+		})
+	}
+}
+
+func TestProjectAgentsNeedsAFileBesideTheManifest(t *testing.T) {
+	m, err := ParseManifest([]byte(header+"[project]\nagents = \"AGENTS.md\"\n"), "https://example.com/acme/p.ade.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertIssues(t, m.Validate(testCfg), "warn: project.agents: cannot be read from an https manifest source")
+}
+
+// The generated files live next to the repos, so a repo may not take their names.
+func TestReservedRepoNames(t *testing.T) {
+	for _, name := range []string{".ade", "AGENTS.md"} {
+		m := mustManifest(t, header+"[repos.\""+name+"\"]\nurl = \"https://example.com/a.git\"\n")
+		assertIssues(t, m.Validate(testCfg), "error: repos."+name+": invalid repo name")
+	}
+}

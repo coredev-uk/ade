@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/coredev-uk/ade/internal/forge"
+	"github.com/coredev-uk/ade/internal/project"
 )
 
 // Target is where an agent works: a start-work worktree and what it belongs
@@ -50,6 +51,8 @@ type Context struct {
 	Comments []forge.Note `json:"comments,omitempty"`
 	Threads  []Thread     `json:"threads,omitempty"`
 	Agents   string       `json:"agents,omitempty"` // AGENTS.md of the worktree
+	// ProjectAgents is the project's AGENTS.md (the manifest's project.agents).
+	ProjectAgents string `json:"project_agents,omitempty"`
 	// Notes are the user's own notes on the item (records.ReadNotes), when
 	// they are included in the prompt.
 	Notes string `json:"notes,omitempty"`
@@ -100,6 +103,8 @@ func Gather(ctx context.Context, f forge.Forge, t Target) (Context, error) {
 		}
 	}
 	c.Agents = readAgents(t.Worktree)
+	// The worktree is <root>/<project>/<repo>/<tree>.
+	c.ProjectAgents = boundAgents(project.ReadAgents(filepath.Dir(filepath.Dir(t.Worktree))))
 	return c, nil
 }
 
@@ -108,10 +113,15 @@ func readAgents(dir string) string {
 	if err != nil {
 		return ""
 	}
-	if len(b) > maxAgentsBytes {
-		b = append(b[:maxAgentsBytes:maxAgentsBytes], []byte("\n[truncated]")...)
+	return boundAgents(string(b))
+}
+
+// boundAgents cuts guidance text at maxAgentsBytes.
+func boundAgents(s string) string {
+	if len(s) > maxAgentsBytes {
+		return s[:maxAgentsBytes] + "\n[truncated]"
 	}
-	return string(b)
+	return s
 }
 
 func (c Context) write(dir string) error {
@@ -147,6 +157,9 @@ func (c Context) issueBlock(b *strings.Builder) {
 		for _, n := range c.Comments {
 			fmt.Fprintf(b, "\n%s (%s):\n%s\n", n.Author.Username, n.CreatedAt.Format("2006-01-02"), strings.TrimSpace(n.Body))
 		}
+	}
+	if c.ProjectAgents != "" {
+		fmt.Fprintf(b, "\n## Project guidance (AGENTS.md of the project)\n\n%s\n", strings.TrimSpace(c.ProjectAgents))
 	}
 	if c.Agents != "" {
 		fmt.Fprintf(b, "\n## Repository guidance (AGENTS.md)\n\n%s\n", strings.TrimSpace(c.Agents))

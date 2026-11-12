@@ -36,7 +36,8 @@ type Instance struct {
 	Tree Tree   // the tree serving the node; services use the project directory
 	Dir  string // working directory
 	// Devshell is how the command enters the tree's dev shell (direnv, nix
-	// develop), or the zero shell for services outside any repo.
+	// develop) inside the project shell; the zero shell for services outside
+	// any repo in a project without packages.
 	Devshell devshell.Shell
 	Port     int    // 0 when the node declares none
 	State    string // directory for the node's data ({state})
@@ -141,9 +142,12 @@ func (m *Manager) bind(ctx context.Context, loc Location, tr *treeResolver, n *N
 		in.Tree = t
 	}
 	in.Dir = in.Tree.Path
+	// The project shell wraps every node, services outside any repo included
+	// (that is where e.g. postgres comes from); a repo's own shell goes inside it.
 	if n.Repo != "" {
 		in.Devshell = m.Devshell.Detect(in.Dir, loc.Manifest.Repos[n.Repo].Devshell)
 	}
+	in.Devshell = m.Devshell.WithProject(in.Devshell, loc.ProjectDir, loc.Manifest.Project)
 	in.ID = n.ID + "@" + in.Tree.Path
 	slug := slugOf(in.ID)
 	in.State = filepath.Join(m.StateDir, slug)

@@ -3,6 +3,8 @@ package cli
 import (
 	"fmt"
 	"io"
+	"path/filepath"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -126,6 +128,7 @@ func newProjectStatusCmd() *cobra.Command {
 
 func printProjectStatus(w io.Writer, p project.ProjectStatus) {
 	fmt.Fprintf(w, "%s  %s\n", p.Name, p.Dir)
+	printSetupStatus(w, p.Setup)
 	for _, r := range p.Repos {
 		switch {
 		case !r.Present:
@@ -158,4 +161,31 @@ func treeLine(t project.TreeStatus) string {
 		sync = fmt.Sprintf("↑%d ↓%d", t.Ahead, t.Behind)
 	}
 	return fmt.Sprintf("%s  %s  %s  %s", t.Name, t.Branch, state, sync)
+}
+
+// printSetupStatus prints the project-wide part of `ade project status`.
+func printSetupStatus(w io.Writer, st *project.SetupStatus) {
+	if st == nil {
+		return
+	}
+	if a := st.Agents; a != nil {
+		state := "written"
+		switch {
+		case a.Note != "":
+			state = a.Note
+		case !a.Written:
+			state = "not written yet (run `ade update`)"
+		}
+		fmt.Fprintf(w, "  agents    %s -> %s: %s\n", a.Source, filepath.Base(a.File), state)
+	}
+	if sh := st.Shell; sh != nil {
+		state := "written"
+		switch {
+		case !sh.Written:
+			state = "not written yet (run `ade update`)"
+		case sh.Note != "":
+			state = sh.Note
+		}
+		fmt.Fprintf(w, "  shell     %s: %s\n", strings.Join(sh.Packages, " "), state)
+	}
 }

@@ -156,8 +156,10 @@ func unregisteredSources(cfg *config.Config, flagged []string) ([]string, error)
 	return out, nil
 }
 
-// warmShells pre-builds the dev shell of every repo's baseline worktree.
+// warmShells pre-builds the dev shell of every repo's baseline worktree, and
+// the project shell (`[project] packages`) once per project.
 func warmShells(ctx context.Context, say io.Writer, a *app.App, res *setupResult) {
+	warmProjectShells(ctx, say, a, res)
 	var dirs []string
 	sts, _ := project.New(a, "ade:setup").Status(ctx, "")
 	for _, ps := range sts {
@@ -204,6 +206,40 @@ func warmShells(ctx context.Context, say io.Writer, a *app.App, res *setupResult
 		} else {
 			w.Status = "warmed"
 			step(say, "warm", "%s (%s): ready", rel, string(sh.Kind))
+		}
+		res.Warm = append(res.Warm, w)
+	}
+}
+
+// warmProjectShells realises every generated project shell with `.ade/shell true`.
+func warmProjectShells(ctx context.Context, say io.Writer, a *app.App, res *setupResult) {
+	scripts, _ := filepath.Glob(devshell.ProjectShellPath(filepath.Join(a.Root, "*")))
+	for _, script := range scripts {
+		projectDir := filepath.Dir(filepath.Dir(script))
+		w := setupWarm{Dir: projectDir, Kind: "project"}
+		rel, _ := filepath.Rel(a.Root, projectDir)
+		if _, err := exec.LookPath("nix"); err != nil {
+			w.Status = "skipped"
+			res.Warm = append(res.Warm, w)
+			step(say, "warm", "%s (project): skipped, nix is not on PATH", rel)
+			continue
+		}
+		argv := devshell.WarmProjectArgv(projectDir)
+		wctx, cancel := context.WithTimeout(ctx, warmTimeout)
+		cmd := exec.CommandContext(wctx, argv[0], argv[1:]...)
+		cmd.Dir = projectDir
+		out, err := cmd.CombinedOutput()
+		cancel()
+		if err != nil {
+			w.Status, w.Error = "failed", strings.TrimSpace(tail(string(out), 300))
+			if w.Error == "" {
+				w.Error = err.Error()
+			}
+			step(say, "warm", "%s (project): FAILED: %s", rel, w.Error)
+			res.problem(exitSetupPartial, "warm %s (project): %s", rel, w.Error)
+		} else {
+			w.Status = "warmed"
+			step(say, "warm", "%s (project): ready", rel)
 		}
 		res.Warm = append(res.Warm, w)
 	}

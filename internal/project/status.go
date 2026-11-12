@@ -50,6 +50,33 @@ type ProjectStatus struct {
 	Dir        string       `json:"dir"`
 	LastUpdate time.Time    `json:"last_update,omitzero"`
 	Repos      []RepoStatus `json:"repos"`
+	// Setup is the project-wide part (`[project]`); nil when the manifest sets none.
+	Setup *SetupStatus `json:"setup,omitempty"`
+}
+
+// SetupStatus is the state of the project-wide setup on disk.
+type SetupStatus struct {
+	Agents *AgentsStatus `json:"agents,omitempty"`
+	Shell  *ShellStatus  `json:"shell,omitempty"`
+}
+
+// AgentsStatus is the generated project AGENTS.md.
+type AgentsStatus struct {
+	Source  string `json:"source"` // project.agents as written in the manifest
+	File    string `json:"file"`
+	Written bool   `json:"written"`
+	// Note says why it cannot be written ("an https manifest source has no file beside it").
+	Note string `json:"note,omitempty"`
+}
+
+// ShellStatus is the generated project shell wrapper.
+type ShellStatus struct {
+	File     string   `json:"file"`
+	Packages []string `json:"packages"`
+	Nixpkgs  string   `json:"nixpkgs,omitempty"`
+	Written  bool     `json:"written"`
+	// Note is set when the packages are not applied: nix is not on PATH.
+	Note string `json:"note,omitempty"`
 }
 
 // List returns every project registered in the user config.
@@ -124,7 +151,7 @@ func (s *Service) projectStatus(ctx context.Context, name string, sn *snapshot) 
 		_, inManifest := m.Repos[names[i]]
 		repos[i] = repoStatus(ctx, filepath.Join(dir, names[i]), names[i], inManifest)
 	})
-	return ProjectStatus{Name: name, Source: sn.Source, Dir: dir, LastUpdate: sn.LastUpdate, Repos: repos}, nil
+	return ProjectStatus{Name: name, Source: sn.Source, Dir: dir, LastUpdate: sn.LastUpdate, Repos: repos, Setup: setupStatus(dir, sn.Source, m)}, nil
 }
 
 // repoDirs is the manifest's repos plus any other directory holding a bare clone.

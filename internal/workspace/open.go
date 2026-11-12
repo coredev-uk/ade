@@ -21,6 +21,7 @@ import (
 	"github.com/coredev-uk/ade/internal/editor"
 	"github.com/coredev-uk/ade/internal/host"
 	"github.com/coredev-uk/ade/internal/host/zellij"
+	"github.com/coredev-uk/ade/internal/project"
 	"github.com/coredev-uk/ade/internal/records"
 )
 
@@ -279,6 +280,7 @@ func agentFor(ctx context.Context, a *app.App, p *prepared) *agentFiles {
 		}
 	}
 	in.AgentsMD, in.AgentsPath = agentsDoc(loc.Tree)
+	in.ProjectGuidance = project.ReadAgents(loc.ProjectDir)
 	if rec, err := records.New(a.RecordsDir).Read(it.Forge, it.Item.Ref); err == nil {
 		in.Notes = rec.Notes
 	}
@@ -500,7 +502,8 @@ func openTab(ctx context.Context, run zellijRunner, session, tab, layoutFile str
 // run-graph node.
 func layoutSpec(ctx context.Context, p *prepared) LayoutSpec {
 	spec := LayoutSpec{Layout: p.res.Layout, Tab: p.res.Tab, Dir: p.loc.Tree, Tools: DetectTools(p.ade, p.editor, p.loc.Tree), BaseRef: p.cfg.baseRef}
-	spec.Devshell = p.cfg.devshell.Detect(p.loc.Tree, p.loc.Manifest.Repos[p.loc.Repo].Devshell)
+	spec.Devshell = p.cfg.devshell.WithProject(
+		p.cfg.devshell.Detect(p.loc.Tree, p.loc.Manifest.Repos[p.loc.Repo].Devshell), p.loc.ProjectDir, p.loc.Manifest.Project)
 	if p.item != nil {
 		spec.Overview = []string{"item", p.item.Item.Ref.String(), "--watch"}
 	}

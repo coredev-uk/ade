@@ -164,6 +164,29 @@
       "description": "Project name; becomes the directory under the projects root.",
       "type": "string"
     },
+    "project": {
+      "additionalProperties": false,
+      "description": "Project-wide setup ADE generates under <root>/<project>/ on every add and update: agent guidance, a nix shell wrapper.",
+      "properties": {
+        "agents": {
+          "description": "File relative to the manifest, written as <root>/<project>/AGENTS.md (the project's agent guidance). Needs a local or git+ manifest source.",
+          "type": "string"
+        },
+        "nixpkgs": {
+          "description": "Flake reference the packages come from (default: the registry's \"nixpkgs\").",
+          "type": "string"
+        },
+        "packages": {
+          "description": "nixpkgs attributes put on PATH for every pane, task and service of the project through <root>/<project>/.ade/shell (needs nix on PATH).",
+          "items": {
+            "description": "nixpkgs attributes put on PATH for every pane, task and service of the project through <root>/<project>/.ade/shell (needs nix on PATH).",
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
     "repos": {
       "additionalProperties": {
         "additionalProperties": false,

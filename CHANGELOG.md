@@ -36,6 +36,7 @@
 - **`commit_prefix` `{child}` without a child issue** uses the leading number of the branch (`57-fix-export` → 57) before falling back to the tracker iid, for MRs opened in a code repo without a child issue; applies to agent commits, start work, the worktree's `ade.commitPrefix` and squash messages.
 - **`ade cd <ref|repo> [--repo <name>]`** prints the item's worktree path (or a repo's baseline) and nothing else on stdout, offline, for `adecd() { d=$(ade cd "$@") && cd "$d"; }`.
 - **`conventions.mr.reviewer_group`** requests review from a group when start work opens the MR: the GitLab group's active members (you excluded; GitLab Free keeps one) or a GitHub team. The dry run and the start dialog show who, and a group that cannot be read only warns.
+- **Project-wide setup (`[project]` in the manifest):** `agents` writes `<root>/<project>/AGENTS.md` and adds it to the implement skill and agent prompts; `packages` (+ `nixpkgs`) generates `.ade/shell` and puts the packages on PATH around every pane, task and service of the project. `ade project status` shows them and `ade setup --warm` pre-builds the shell.
 
 ## v0.1.0
 

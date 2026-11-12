@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -139,6 +140,7 @@ func (v *manifestValidator) run() []Issue {
 	v.checkHeader()
 	v.checkIterations()
 	v.checkRepos()
+	v.checkProjectSetup()
 	v.collectNodes()
 	v.checkNodes()
 	v.checkGroups()
@@ -240,6 +242,35 @@ func (v *manifestValidator) checkRepos() {
 	}
 	for _, c := range findCycles(repoNames, edges) {
 		v.errorf(fmt.Sprintf("repos.%s.requires[%d]", c.from, c.idx), "checkout dependency cycle: %s", strings.Join(c.path, " → "))
+	}
+}
+
+// nixAttr is a nixpkgs attribute path: one package or a dotted set member.
+var nixAttr = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_+.-]*$`)
+
+// checkProjectSetup validates the [project] table.
+func (v *manifestValidator) checkProjectSetup() {
+	p := v.m.Project
+	if p.Agents != "" {
+		if !filepath.IsLocal(filepath.FromSlash(p.Agents)) {
+			v.errorf("project.agents", "%q must be a path relative to the manifest, without \"..\" or a leading \"/\"", p.Agents)
+		}
+		if src := v.m.Source; strings.HasPrefix(src, "https://") || strings.HasPrefix(src, "http://") {
+			v.warnf("project.agents", "cannot be read from an https manifest source (no file beside it): AGENTS.md is not written; use a local or git+ source")
+		}
+	}
+	for i, pkg := range p.Packages {
+		if !nixAttr.MatchString(pkg) {
+			v.errorf(fmt.Sprintf("project.packages[%d]", i), "%q is not a nixpkgs attribute path: use letters, digits, '_', '+', '.' or '-'", pkg)
+		}
+	}
+	if p.Nixpkgs != "" {
+		switch {
+		case strings.ContainsFunc(p.Nixpkgs, unicode.IsSpace) || strings.ContainsAny(p.Nixpkgs, "#'\"") || strings.HasPrefix(p.Nixpkgs, "-"):
+			v.errorf("project.nixpkgs", "%q is not a flake reference: no whitespace, quotes or '#', and it must not start with '-'", p.Nixpkgs)
+		case len(p.Packages) == 0:
+			v.warnf("project.nixpkgs", "has no effect without project.packages")
+		}
 	}
 }
 
