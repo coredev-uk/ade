@@ -207,8 +207,13 @@ mr          = { create = "ask", template = "Default", draft = true, closes = "ch
 commit_prefix = "GL-{parent}"   # GL-412 Rate-limit the export endpoint
 ```
 
-Placeholders: `{parent}` is the tracker issue's iid, `{child}` the child issue's iid in the code repo (the
-parent's when the item has none) and `{project}` the ADE project name. Unknown placeholders, a multi-line value
+Placeholders: `{parent}` is the tracker issue's iid, `{child}` the child issue's iid in the code repo
+(when the item has none there: the branch's leading number, else the parent's) and `{project}` the ADE project
+name. The branch's leading number is the run of digits at the start of the branch name when it ends the name or is
+followed by `-`, `_`, `/` or `.` (`57-fix-export`, `57_fix`, `57/fix` and `57` give 57; `fix-57` and `v2-x` give
+none; any leading number counts, so `2024-cleanup` gives 2024). That is the repo issue number a team's history uses
+when the MR closes the tracker issue directly (`child_issue = "never"`) or the branch was made by hand. The branch
+is the worktree's, the MR's source branch, or the one start work creates. Unknown placeholders, a multi-line value
 or leading/trailing whitespace are errors (`conventions.commit_prefix`); ADE adds the separating space itself.
 Without the key nothing changes.
 

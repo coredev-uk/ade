@@ -123,7 +123,7 @@ func Open(ctx context.Context, a *app.App, project, repo, worktree string, opts 
 	if p.item != nil {
 		// The worktree tells commit-msg hooks and the user's own git what the ticket is.
 		target := commitprefix.TargetBranch(ctx, p.item.Item, loc.Manifest.Repos[loc.Repo].Path, loc.Tree)
-		cfgErr := commitprefix.WriteWorktreeConfig(ctx, loc.Tree, p.item.Item.Ref.IID, commitprefix.ExpandPrefix(loc.Manifest, p.item.Item, loc.Repo), target)
+		cfgErr := commitprefix.WriteWorktreeConfig(ctx, loc.Tree, p.item.Item.Ref.IID, commitprefix.ExpandPrefix(loc.Manifest, p.item.Item, loc.Repo, BranchOf(ctx, loc)), target)
 		if cfgErr != nil {
 			res.Warnings = append(res.Warnings, "worktree git config: "+cfgErr.Error())
 		}
@@ -267,10 +267,11 @@ func prepare(ctx context.Context, a *app.App, project, repo, worktree string, op
 // agentFor gathers what the implement skill says about the item.
 func agentFor(ctx context.Context, a *app.App, p *prepared) *agentFiles {
 	loc, it := p.loc, *p.item
+	branch := BranchOf(ctx, loc)
 	in := SkillInput{
-		Item: it, Manifest: loc.Manifest, Repo: loc.Repo, Branch: BranchOf(ctx, loc), Worktree: loc.Tree,
+		Item: it, Manifest: loc.Manifest, Repo: loc.Repo, Branch: branch, Worktree: loc.Tree,
 		OtherTrees:   map[string]string{},
-		CommitPrefix: commitprefix.ExpandPrefix(loc.Manifest, it.Item, loc.Repo),
+		CommitPrefix: commitprefix.ExpandPrefix(loc.Manifest, it.Item, loc.Repo, branch),
 	}
 	for repo, tree := range p.cfg.trees.ItemTrees {
 		if repo != loc.Repo {

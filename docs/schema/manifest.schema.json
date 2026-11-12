@@ -25,7 +25,7 @@
           "type": "string"
         },
         "commit_prefix": {
-          "description": "Prefix for the first commit of an MR (and a squash merge message) that ADE makes, e.g. \"GL-{parent}\". Placeholders: {parent} (tracker issue iid), {child} (child issue iid, the parent's if none), {project}.",
+          "description": "Prefix for the first commit of an MR (and a squash merge message) that ADE makes, e.g. \"GL-{parent}\". Placeholders: {parent} (tracker issue iid), {child} (child issue iid, else the branch's leading number, else the parent's), {project}.",
           "type": "string"
         },
         "link": {

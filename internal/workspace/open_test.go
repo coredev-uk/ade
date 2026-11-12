@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/coredev-uk/ade/internal/app"
 	"github.com/coredev-uk/ade/internal/audit"
+	"github.com/coredev-uk/ade/internal/commitprefix"
 	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/events"
 	"github.com/coredev-uk/ade/internal/paths"
@@ -177,5 +179,40 @@ func TestRenderLayoutOfAReviewTabRunsNothing(t *testing.T) {
 	}
 	if strings.Contains(kdl, `"task"`) || strings.Contains(kdl, "overview") || !strings.Contains(kdl, `name="diff"`) || !strings.Contains(kdl, `tab name="web/review-7"`) {
 		t.Fatalf("a review tab shows the diff and starts nothing:\n%s", kdl)
+	}
+}
+
+// onlyGitOnPath leaves git, and nothing else (no `code`, no `zellij`), on PATH.
+func onlyGitOnPath(t *testing.T) {
+	t.Helper()
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git is not installed")
+	}
+	bin := t.TempDir()
+	if err := os.Symlink(git, filepath.Join(bin, "git")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+}
+
+// An item with no child issue in the repo gets {child} from the branch it is
+// on: Open writes ade.commitPrefix into a worktree on a 57-... branch.
+func TestOpenWritesTheBranchNumberCommitPrefix(t *testing.T) {
+	f := newFixture(t, gitManifest+"[conventions]\ncommit_prefix = \"GL-{child}\"\n")
+	gitRepo(t, filepath.Join(f.root, "demo", "api"), "57-x")
+	gitRepo(t, filepath.Join(f.root, "demo", "web"))
+	a := newApp(t, f, "plain")
+	onlyGitOnPath(t)
+	tree := filepath.Join(f.root, "demo", "api", "57-x")
+	item := ItemRef{Project: "demo", Forge: "sandbox", Item: workItem([]string{"api"}, nil)}
+	res, err := Open(context.Background(), a, "demo", "api", tree, WithItem(item))
+	if err != nil || len(res.Warnings) != 0 {
+		t.Fatalf("open: %v %+v", err, res)
+	}
+	if got := commitprefix.Read(context.Background(), tree); got != "GL-57" {
+		t.Errorf("ade.commitPrefix = %q, want GL-57 (not the tracker iid 7)", got)
 	}
 }

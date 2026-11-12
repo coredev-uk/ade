@@ -33,6 +33,7 @@
 - **Read and write tokens per forge:** `read_token_env` / `read_token_cmd` name a read-only token. Syncs, dashboards, AI context, `doctor --probe` and git clone/fetch use it; forge writes and `git push` use `token_env` / `token_cmd`, resolved only on the first write (a forge with only a read token is read-only through the API). Agent runs and the work tab's agent pane start without the write token's variable. `ade doctor` checks both tokens, warns when the read token can write and fails when the two belong to different accounts; `ade init` and `ade setup` take `--read-token-env` / `--read-token-cmd`.
 - **`ade config check --manifest` without a user config:** a manifest can be validated before `ade init` or `ade setup` ran; its `forge` name, which only a user config resolves, is a warning instead of an error, and a user config that fails to load is reported as a warning.
 - **`ade setup` registers new `--project` / `ADE_SETUP_PROJECT` manifests** when a config already exists (appended like `ade project add`, only after the token check), so a manifest added to a Coder template reaches existing workspaces; `--json` lists them as `registered`.
+- **`commit_prefix` `{child}` without a child issue** uses the leading number of the branch (`57-fix-export` → 57) before falling back to the tracker iid, for MRs opened in a code repo without a child issue; applies to agent commits, start work, the worktree's `ade.commitPrefix` and squash messages.
 
 ## v0.1.0
 

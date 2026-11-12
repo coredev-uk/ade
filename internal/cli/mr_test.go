@@ -457,6 +457,13 @@ func TestReviewRemove(t *testing.T) {
 // manifest snapshot with commit_prefix = "GL-{parent}".
 func (e *cliEnv) seedPrefixedItem(t *testing.T, tmpl string) {
 	t.Helper()
+	e.seedPrefixedItemOnBranch(t, tmpl, "")
+}
+
+// seedPrefixedItemOnBranch is seedPrefixedItem with the MR's source branch
+// set; the item has no child issue in the code repo.
+func (e *cliEnv) seedPrefixedItemOnBranch(t *testing.T, tmpl, sourceBranch string) {
+	t.Helper()
 	root := t.TempDir()
 	e.app.Root = root
 	dir := filepath.Join(root, "acme")
@@ -471,7 +478,7 @@ func (e *cliEnv) seedPrefixedItem(t *testing.T, tmpl string) {
 	}
 	wi := domain.WorkItem{
 		Ref: forge.Ref{Project: fake.GroupPath + "/tracker", IID: 7, Kind: forge.KindIssue},
-		MRs: []forge.MR{{Ref: ref(rateMR)}},
+		MRs: []forge.MR{{Ref: ref(rateMR), SourceBranch: sourceBranch}},
 	}
 	raw, err := json.Marshal(wi)
 	if err != nil {
@@ -514,6 +521,18 @@ func TestMRMergeCommitPrefix(t *testing.T) {
 	}
 	if params["squash_commit_message"] != title {
 		t.Errorf("squash_commit_message = %v, want %q", params["squash_commit_message"], title)
+	}
+}
+
+// With no child issue in the code repo, {child} is the leading number of the
+// MR's source branch, not the tracker iid.
+func TestMRMergeSquashPrefixUsesTheSourceBranchNumber(t *testing.T) {
+	e := newCLIEnv(t)
+	e.seedPrefixedItemOnBranch(t, "GL-{child}", "57-x")
+	e.mustMR("merge", rateMR, "--yes", "--squash")
+	_, _, params, _ := e.srv.MergeState(ref(rateMR))
+	if want := "GL-57 Rate-limit the export endpoint"; params["squash_commit_message"] != want {
+		t.Errorf("squash_commit_message = %v, want %q", params["squash_commit_message"], want)
 	}
 }
 

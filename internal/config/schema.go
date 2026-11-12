@@ -255,7 +255,7 @@ var schemaDocs = map[string]string{
 	"manifest:services":                   "Shared infrastructure nodes that are not repos.",
 	"manifest:conventions.branch":         "Branch name template, e.g. {child_iid}-{slug}.",
 	"manifest:conventions.child_issue":    "auto creates a child issue when the tracker project differs from the code repo.",
-	"manifest:conventions.commit_prefix":  "Prefix for the first commit of an MR (and a squash merge message) that ADE makes, e.g. \"GL-{parent}\". Placeholders: {parent} (tracker issue iid), {child} (child issue iid, the parent's if none), {project}.",
+	"manifest:conventions.commit_prefix":  "Prefix for the first commit of an MR (and a squash merge message) that ADE makes, e.g. \"GL-{parent}\". Placeholders: {parent} (tracker issue iid), {child} (child issue iid, else the branch's leading number, else the parent's), {project}.",
 	"manifest:conventions.mr.create":      "Whether start work creates the MR: ask, always or never.",
 	"manifest:conventions.mr.draft":       "Open the MR as a draft. Unset means true.",
 	"manifest:groups":                     "Named lists of nodes that workspaces run.",

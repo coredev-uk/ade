@@ -395,7 +395,7 @@ func (e *Env) createMR(ctx context.Context, p Plan, m *config.Manifest, rt *runt
 	d := forge.MRDraft{
 		Project: rt.tp.Target.Project, Source: rt.branch, Target: rt.tp.Base, Title: rt.tp.MR.Title,
 		Description: rt.tp.MRBody(rt.child, p.Item), Draft: rt.tp.MR.Draft,
-		CommitPrefix: commitprefix.ForIssues(m, p.Item.IID, rt.child.IID),
+		CommitPrefix: commitprefix.ForBranch(m, p.Item.IID, rt.child.IID, rt.branch),
 	}
 	mr, err := e.Forge.CreateMR(ctx, d)
 	if errors.Is(err, forge.ErrExists) {
@@ -484,7 +484,7 @@ func (e *Env) recordWorktree(ctx context.Context, p Plan, m *config.Manifest, rt
 	if browse {
 		return
 	}
-	prefix := commitprefix.ForIssues(m, p.Item.IID, rt.child.IID)
+	prefix := commitprefix.ForBranch(m, p.Item.IID, rt.child.IID, rt.branch)
 	if err := commitprefix.WriteWorktreeConfig(ctx, rt.worktree, p.Item.IID, prefix, rt.tp.Base); err != nil {
 		e.audit(p, "git.worktree.config", rt.worktree, nil, "", err)
 	}
