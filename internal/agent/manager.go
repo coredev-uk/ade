@@ -39,7 +39,7 @@ type Manager struct {
 	AI *ai.Service
 	// Reviews receives an address run's drafted replies; optional.
 	Reviews *review.Store
-	// GitFor returns the git client authorised for the run's remote.
+	// GitFor returns the git client authorised for pushing the run's branch.
 	GitFor func(ctx context.Context, r Run) (git.Client, error)
 	// Open builds the agent driver; tests swap it. Default ForProfile.
 	Open func(p config.AIProfile, override string) (Driver, error)
@@ -788,6 +788,7 @@ func (m *Manager) call(ctx context.Context, r *Run, kind Kind, prompt string) (c
 
 	cmd := drv.Command(spec)
 	cmd.Env = append(cmd.Env, workspace.AgentRunEnv+"=1") // only the child: ADE's own push stays unmarked
+	cmd.Unset = m.Cfg.AgentHiddenEnv()
 	hooks := procHooks{
 		transcript: tf, capUSD: r.CapUSD, spentBefore: spentBefore,
 		onStart: func(pid int) { r.PID = pid; m.saveLive(r) },

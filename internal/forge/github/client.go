@@ -63,12 +63,18 @@ const (
 type Client struct {
 	rest       string // REST base, no trailing slash
 	gql        string // GraphQL endpoint
-	token      string
+	token      string // the read token; also used for writes without a write source
 	hc         *http.Client
 	sem        chan struct{}
 	maxRetries int
 	now        func() time.Time
 	sleep      func(context.Context, time.Duration) error
+
+	// writeSource resolves the write token on the first write (see
+	// writeToken); nil means writes use token.
+	writeSource func(context.Context) (string, error)
+	writeMu     sync.Mutex
+	writeTok    string // the resolved write token, empty until resolved
 
 	mu sync.Mutex
 	// me is the authenticated user, read once: approvals and pending reviews
@@ -108,8 +114,16 @@ func WithSleep(sleep func(context.Context, time.Duration) error) Option {
 // WithMaxRetries sets how many times a rate-limited request is retried.
 func WithMaxRetries(n int) Option { return func(c *Client) { c.maxRetries = n } }
 
+// WithWriteToken sets where writes get their token when it differs from the
+// read token passed to New. src runs on the first write only and a successful
+// answer is kept; a failure fails that write and is retried by the next one.
+func WithWriteToken(src func(context.Context) (string, error)) Option {
+	return func(c *Client) { c.writeSource = src }
+}
+
 // New returns a client for the GitHub instance whose web address is baseURL,
-// authenticating with a personal access token or `gh auth token`. An empty
+// authenticating with a personal access token or `gh auth token`; token is the
+// read token, see WithWriteToken for a separate write token. An empty
 // baseURL or https://github.com selects github.com (api.github.com); any
 // other address is GitHub Enterprise Server (<base>/api/v3, <base>/api/graphql).
 func New(baseURL, token string, opts ...Option) *Client {
@@ -187,6 +201,12 @@ type request struct {
 	body   []byte
 	gated  bool
 	accept string // Accept header override; default application/vnd.github+json
+	read   bool   // a POST that only reads: a GraphQL query
+}
+
+// writes reports whether r changes state, so it needs the write token.
+func (r request) writes() bool {
+	return !r.read && r.method != http.MethodGet && r.method != http.MethodHead
 }
 
 func (r request) label() string {
@@ -226,6 +246,13 @@ func (c *Client) do(ctx context.Context, r request) (*http.Response, error) {
 // once performs a single attempt. The in-flight slot is held until the
 // response body is closed, so streaming bodies count against the cap.
 func (c *Client) once(ctx context.Context, r request) (*http.Response, error) {
+	token := c.token
+	if r.writes() {
+		var err error
+		if token, err = c.writeToken(ctx); err != nil {
+			return nil, fmt.Errorf("github %s %s: write token: %w", r.method, r.label(), err)
+		}
+	}
 	select {
 	case c.sem <- struct{}{}:
 	case <-ctx.Done():
@@ -250,7 +277,7 @@ func (c *Client) once(ctx context.Context, r request) (*http.Response, error) {
 		release()
 		return nil, fmt.Errorf("github %s %s: %w", r.method, r.label(), err)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Authorization", "Bearer "+token)
 	accept := "application/vnd.github+json"
 	if r.accept != "" {
 		accept = r.accept
@@ -268,6 +295,24 @@ func (c *Client) once(ctx context.Context, r request) (*http.Response, error) {
 	}
 	resp.Body = &slotBody{ReadCloser: resp.Body, release: release}
 	return resp, nil
+}
+
+// writeToken returns the token for writes: the one WithWriteToken resolves,
+// once, or the read token when no source was set.
+func (c *Client) writeToken(ctx context.Context) (string, error) {
+	if c.writeSource == nil {
+		return c.token, nil
+	}
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	if c.writeTok == "" {
+		tok, err := c.writeSource(ctx)
+		if err != nil {
+			return "", err
+		}
+		c.writeTok = tok
+	}
+	return c.writeTok, nil
 }
 
 // slotBody frees the in-flight slot when the body is closed.

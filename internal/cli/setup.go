@@ -61,8 +61,10 @@ fast to run on every boot:
   1. config   no user config yet: created like ` + "`ade init --yes`" + ` from flags or
               ADE_SETUP_* variables, or copied from --config-from <path|url>.
               An existing config is validated and never overwritten.
-  2. token    every configured forge's token is checked. A missing or rejected
-              token skips the forge steps (3) and exits 3; setup never waits for input.
+  2. token    every configured forge's token (and read token) is checked. A missing or rejected
+              token skips the forge steps (3) and exits 3; with a read token, a write
+              token that does not resolve exits 3 but the forge steps still run.
+              Setup never waits for input.
   3. projects ` + "`project add`" + ` for each configured project, then ` + "`update`" + `, then ` + "`sync`" + `.
   4. dotfiles each project's [dotfiles] repo (the one used with ` + "`coder dotfiles`" + `) is
               cloned or pulled and its install script run, or its dotfiles are
@@ -74,7 +76,7 @@ fast to run on every boot:
               terminal or web tty only has to attach.
 
 Every flag can be given as an ADE_SETUP_<FLAG> variable (--token-env as
-ADE_SETUP_TOKEN_ENV, --project as ADE_SETUP_PROJECT with entries separated by
+ADE_SETUP_TOKEN_ENV, --read-token-env as ADE_SETUP_READ_TOKEN_ENV, --project as ADE_SETUP_PROJECT with entries separated by
 whitespace), so a Coder template sets the environment instead of a long
 command line. Flags win over variables.
 
@@ -97,6 +99,8 @@ Exit codes: 0 complete, 3 partial (forge steps skipped, or a repo/project failed
 	fl.StringVar(&f.init.host, "host", "", "forge host or URL (default: gitlab.com / github.com)")
 	fl.StringVar(&f.init.tokenEnv, "token-env", "", "environment variable holding the token")
 	fl.StringVar(&f.init.tokenCmd, "token-cmd", "", "command that prints the token")
+	fl.StringVar(&f.init.readTokenEnv, "read-token-env", "", "environment variable holding a read-only token for syncs, dashboards and agents (writes use --token-env/--token-cmd)")
+	fl.StringVar(&f.init.readTokenCmd, "read-token-cmd", "", "command that prints a read-only token for syncs, dashboards and agents (writes use --token-env/--token-cmd)")
 	fl.StringVar(&f.init.caFile, "ca-file", "", "PEM bundle of the certificate authority of a self-hosted forge")
 	fl.IntVar(&f.init.sshPort, "ssh-port", 0, "ssh port of a self-hosted forge when not 22")
 	fl.StringVar(&f.init.gitProtocol, "git-protocol", "", "clone protocol: ssh (default) or https")
@@ -142,6 +146,9 @@ type setupToken struct {
 	Forge string `json:"forge"`
 	User  string `json:"user,omitempty"`
 	Error string `json:"error,omitempty"`
+	// WriteError is set when a forge with a read token has a write token that
+	// does not resolve: reads (and the forge steps) carry on, writes fail.
+	WriteError string `json:"write_error,omitempty"`
 }
 
 type setupSync struct {
@@ -271,7 +278,20 @@ func runSetup(cmd *cobra.Command, f setupFlags) error {
 			step(say, "token", "%s: %v", name, terr)
 			res.problem(exitSetupPartial, "forge %s: %v", name, terr)
 		} else {
-			step(say, "token", "%s: authenticated as %s", name, user)
+			suffix := ""
+			if fg.HasReadToken() && !fg.HasWriteToken() {
+				suffix = " (read-only)"
+			}
+			step(say, "token", "%s: authenticated as %s%s", name, user, suffix)
+			if fg.HasReadToken() && fg.HasWriteToken() {
+				wctx, wcancel := context.WithTimeout(ctx, setupTimeout)
+				if _, werr := fg.Token(wctx); werr != nil {
+					t.WriteError = werr.Error()
+					step(say, "token", "%s: write token: %v (reads work; writes fail until it resolves)", name, werr)
+					res.problem(exitSetupPartial, "forge %s: write token: %v", name, werr)
+				}
+				wcancel()
+			}
 		}
 		res.Tokens = append(res.Tokens, t)
 	}
@@ -445,7 +465,7 @@ func ensureConfig(ctx context.Context, say io.Writer, p paths.Paths, f setupFlag
 	in.yes = true
 	ans, sources, err := gather(nil, in)
 	if err != nil {
-		if in.kind == "" && in.tokenEnv == "" && in.tokenCmd == "" && len(in.projects) == 0 {
+		if in.kind == "" && in.tokenEnv == "" && in.tokenCmd == "" && in.readTokenEnv == "" && in.readTokenCmd == "" && len(in.projects) == 0 {
 			return configOutcome{
 				problem: "no config and nothing to create one from: set ADE_SETUP_FORGE, ADE_SETUP_TOKEN_ENV and ADE_SETUP_PROJECT (or pass --config-from)",
 				code:    exitSetupFailed,

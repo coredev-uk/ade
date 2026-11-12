@@ -36,6 +36,7 @@ type Cmd struct {
 	Stdin string
 	Dir   string
 	Env   []string // appended to the environment
+	Unset []string // variables removed from the inherited environment
 }
 
 // Progress is what a driver's output stream says so far.

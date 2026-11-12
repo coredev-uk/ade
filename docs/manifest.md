@@ -267,8 +267,9 @@ if [ -n "$ADE_AGENT_RUN" ]; then
 fi
 ```
 
-This is a guardrail, not a sandbox. The agent runs as you and still has the forge token in its environment, so it
-can unset the variable or push some other way. It stops the mistake, not a determined agent.
+This is a guardrail, not a sandbox. The agent runs as you and still has the forge token in its environment (only the
+read token, when the forge sets one), so it can unset the variable or push some other way. It stops the mistake, not a
+determined agent.
 
 ## Repos, hooks and run graph
 

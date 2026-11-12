@@ -215,16 +215,24 @@
             "description": "Most API requests in flight to this forge at once (default 4).",
             "type": "integer"
           },
+          "read_token_cmd": {
+            "description": "Command whose stdout is a read-only token (GitLab read_api, read_user, read_repository). With a read token, reads use it and only writes use the token.",
+            "type": "string"
+          },
+          "read_token_env": {
+            "description": "Environment variable holding a read-only token. With a read token, reads use it and only writes use the token.",
+            "type": "string"
+          },
           "ssh_port": {
             "description": "SSH port of a self-hosted forge when not 22; clone URLs become ssh://git@host:port/path.",
             "type": "integer"
           },
           "token_cmd": {
-            "description": "Command whose stdout is the access token. Secrets never live in the config file.",
+            "description": "Command whose stdout is the access token (the write token; it also reads when no read token is set). Secrets never live in the config file.",
             "type": "string"
           },
           "token_env": {
-            "description": "Environment variable holding the access token.",
+            "description": "Environment variable holding the access token (the write token; it also reads when no read token is set). Agents ADE launches do not inherit it when a read token is set.",
             "type": "string"
           },
           "url": {

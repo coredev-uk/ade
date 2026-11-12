@@ -23,16 +23,20 @@ import (
 
 // Answers is everything the user config needs from onboarding.
 type Answers struct {
-	Handle      string
-	ForgeName   string // key under [forges]; must match the manifests' `forge`
-	Kind        string // gitlab | github
-	URL         string // forge base URL; empty means the kind's public host
-	TokenEnv    string
-	TokenCmd    string
-	GitProtocol string // ssh | https
-	CAFile      string // PEM bundle of a self-hosted forge's CA (absolute path)
-	SSHPort     int    // ssh port when not 22
-	Root        string // paths.root
+	Handle    string
+	ForgeName string // key under [forges]; must match the manifests' `forge`
+	Kind      string // gitlab | github
+	URL       string // forge base URL; empty means the kind's public host
+	TokenEnv  string
+	TokenCmd  string
+	// ReadTokenEnv and ReadTokenCmd name an optional read-only token; with one,
+	// the token above is only used for writes and may be absent.
+	ReadTokenEnv string
+	ReadTokenCmd string
+	GitProtocol  string // ssh | https
+	CAFile       string // PEM bundle of a self-hosted forge's CA (absolute path)
+	SSHPort      int    // ssh port when not 22
+	Root         string // paths.root
 	// AI, when set, adds a gateway profile and makes it the active one.
 	AI *AIGateway
 }
@@ -40,7 +44,8 @@ type Answers struct {
 // Forge is the config entry the answers describe.
 func (a Answers) Forge() config.Forge {
 	return config.Forge{
-		Kind: a.Kind, URL: a.URL, TokenEnv: a.TokenEnv, TokenCmd: a.TokenCmd, GitProtocol: a.GitProtocol,
+		Kind: a.Kind, URL: a.URL, TokenEnv: a.TokenEnv, TokenCmd: a.TokenCmd,
+		ReadTokenEnv: a.ReadTokenEnv, ReadTokenCmd: a.ReadTokenCmd, GitProtocol: a.GitProtocol,
 		CAFile: a.CAFile, SSHPort: a.SSHPort,
 	}
 }
@@ -52,8 +57,10 @@ func (a Answers) Validate() error {
 		return fmt.Errorf("forge kind %q: want gitlab or github", a.Kind)
 	case a.ForgeName == "":
 		return errors.New("forge name is empty")
-	case a.TokenEnv == "" && a.TokenCmd == "":
+	case a.TokenEnv == "" && a.TokenCmd == "" && a.ReadTokenEnv == "" && a.ReadTokenCmd == "":
 		return errors.New("no token source: give an environment variable name or a command")
+	case a.ReadTokenEnv != "" && a.ReadTokenEnv == a.TokenEnv, a.ReadTokenCmd != "" && a.ReadTokenCmd == a.TokenCmd:
+		return errors.New("the read token and the write token have the same source: give the read token its own variable or command")
 	case a.GitProtocol != "ssh" && a.GitProtocol != "https":
 		return fmt.Errorf("git protocol %q: want ssh or https", a.GitProtocol)
 	case a.Root == "":
@@ -177,6 +184,9 @@ type fileForge struct {
 	GitProtocol string `toml:"git_protocol"`
 	CAFile      string `toml:"ca_file,omitempty"`
 	SSHPort     int    `toml:"ssh_port,omitempty"`
+
+	ReadTokenEnv string `toml:"read_token_env,omitempty"`
+	ReadTokenCmd string `toml:"read_token_cmd,omitempty"`
 }
 
 type filePaths struct {
@@ -201,7 +211,7 @@ func Render(a Answers) ([]byte, error) {
 		User: fileUser{Handle: a.Handle},
 		Forges: map[string]fileForge{a.ForgeName: {
 			Kind: a.Kind, URL: a.URL, TokenEnv: a.TokenEnv, TokenCmd: a.TokenCmd, GitProtocol: a.GitProtocol,
-			CAFile: a.CAFile, SSHPort: a.SSHPort,
+			CAFile: a.CAFile, SSHPort: a.SSHPort, ReadTokenEnv: a.ReadTokenEnv, ReadTokenCmd: a.ReadTokenCmd,
 		}},
 		Paths: filePaths{Root: a.Root},
 		AI:    a.AI.file(),

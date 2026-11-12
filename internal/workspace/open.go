@@ -189,6 +189,8 @@ type prepared struct {
 	// background says the run group's services start in a tab of their own;
 	// install that the workspace's repos declare install commands to run first.
 	background, install bool
+	// agentUnset are the write-token variables the agent pane must not inherit.
+	agentUnset []string
 }
 
 // agentFiles is the skill and overlay the agent layout's omp loads.
@@ -223,7 +225,7 @@ func prepare(ctx context.Context, a *app.App, project, repo, worktree string, op
 	if !ValidLayout(layout) {
 		return nil, fmt.Errorf("unknown layout %q (want code, agent, review or manual)", layout)
 	}
-	p := &prepared{loc: loc, editor: editor.Resolve(a.Config.Host.Editor, editor.FromOS())}
+	p := &prepared{loc: loc, editor: editor.Resolve(a.Config.Host.Editor, editor.FromOS()), agentUnset: a.Config.AgentHiddenEnv()}
 	if cfg.item != nil {
 		p.item = cfg.item
 	} else if it, ok := ItemFor(ctx, cfg.items, loc); ok {
@@ -501,6 +503,8 @@ func layoutSpec(ctx context.Context, p *prepared) LayoutSpec {
 	if p.item != nil {
 		spec.Overview = []string{"item", p.item.Item.Ref.String(), "--watch"}
 	}
+	// Every agent pane drops the write token, with or without a work item.
+	spec.AgentUnset = p.agentUnset
 	if p.agent != nil {
 		spec.Agent = AgentArgs(p.agent.overlay(), *p.item)
 	}

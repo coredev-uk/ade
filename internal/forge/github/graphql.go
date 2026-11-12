@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"unicode"
 
 	"github.com/coredev-uk/ade/internal/forge"
 )
@@ -127,7 +128,7 @@ func (c *Client) graphql(ctx context.Context, query string, vars map[string]any,
 		return fmt.Errorf("github graphql: encoding request: %w", err)
 	}
 	op := operationName(query)
-	resp, err := c.do(ctx, request{method: http.MethodPost, url: c.gql, path: "graphql " + op, body: body})
+	resp, err := c.do(ctx, request{method: http.MethodPost, url: c.gql, path: "graphql " + op, body: body, read: !isMutation(query)})
 	if err != nil {
 		return err
 	}
@@ -169,6 +170,22 @@ func graphqlError(e GraphQLError) error {
 		return kindedError{e, forge.ErrAuth}
 	}
 	return e
+}
+
+// isMutation reports whether doc is a GraphQL mutation: its first keyword,
+// after whitespace and # comment lines, is "mutation". Queries (including the
+// bare { ... } form) are POSTs that only read.
+func isMutation(doc string) bool {
+	doc = strings.TrimSpace(doc)
+	for strings.HasPrefix(doc, "#") {
+		_, doc, _ = strings.Cut(doc, "\n")
+		doc = strings.TrimSpace(doc)
+	}
+	end := strings.IndexFunc(doc, func(r rune) bool { return !unicode.IsLetter(r) })
+	if end < 0 {
+		end = len(doc)
+	}
+	return doc[:end] == "mutation"
 }
 
 // operationName reads the name after "query" or "mutation".

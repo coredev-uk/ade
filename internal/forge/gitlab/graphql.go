@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"unicode"
 )
 
 // capabilitiesQuery is the only GraphQL document the driver sends. Every
@@ -31,7 +32,7 @@ func (c *Client) graphql(ctx context.Context, query string, vars map[string]any,
 	if err != nil {
 		return fmt.Errorf("gitlab graphql: %w", err)
 	}
-	resp, err := c.do(ctx, request{method: http.MethodPost, path: "/api/graphql", root: true, body: body})
+	resp, err := c.do(ctx, request{method: http.MethodPost, path: "/api/graphql", root: true, body: body, read: !isMutation(query)})
 	if err != nil {
 		return err
 	}
@@ -50,6 +51,22 @@ func (c *Client) graphql(ctx context.Context, query string, vars map[string]any,
 		return fmt.Errorf("gitlab graphql: decoding data: %w", err)
 	}
 	return nil
+}
+
+// isMutation reports whether doc is a GraphQL mutation: its first keyword,
+// after whitespace and # comment lines, is "mutation". Queries (including the
+// bare { ... } form) are POSTs that only read.
+func isMutation(doc string) bool {
+	doc = strings.TrimSpace(doc)
+	for strings.HasPrefix(doc, "#") {
+		_, doc, _ = strings.Cut(doc, "\n")
+		doc = strings.TrimSpace(doc)
+	}
+	end := strings.IndexFunc(doc, func(r rune) bool { return !unicode.IsLetter(r) })
+	if end < 0 {
+		end = len(doc)
+	}
+	return doc[:end] == "mutation"
 }
 
 // graphqlSchemaError is a document the instance's schema rejects: it names a
