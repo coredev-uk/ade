@@ -141,6 +141,7 @@ func (v *manifestValidator) run() []Issue {
 	v.checkIterations()
 	v.checkRepos()
 	v.checkProjectSetup()
+	v.checkRepoGroups()
 	v.collectNodes()
 	v.checkNodes()
 	v.checkGroups()
@@ -270,6 +271,48 @@ func (v *manifestValidator) checkProjectSetup() {
 			v.errorf("project.nixpkgs", "%q is not a flake reference: no whitespace, quotes or '#', and it must not start with '-'", p.Nixpkgs)
 		case len(p.Packages) == 0:
 			v.warnf("project.nixpkgs", "has no effect without project.packages")
+		}
+	}
+}
+
+// checkRepoGroups validates [repo_groups.*].
+func (v *manifestValidator) checkRepoGroups() {
+	owner := map[string]string{} // workspace stem -> group
+	for _, g := range slices.Sorted(maps.Keys(v.m.RepoGroups)) {
+		grp := v.m.RepoGroups[g]
+		p := "repo_groups." + g
+		if !identName.MatchString(g) {
+			v.errorf(p, "invalid group name %q: use letters, digits, '_' or '-'", g)
+		}
+		if len(grp.Repos) == 0 {
+			v.errorf(p+".repos", "must list at least one repo")
+		}
+		seen := map[string]bool{}
+		for i, r := range grp.Repos {
+			rp := fmt.Sprintf("%s.repos[%d]", p, i)
+			switch {
+			case seen[r]:
+				v.errorf(rp, "repo %q is listed twice", r)
+			default:
+				if _, ok := v.m.Repos[r]; !ok {
+					v.errorf(rp, "unknown repo %q", r)
+				}
+			}
+			seen[r] = true
+		}
+		ws := grp.Workspace
+		switch {
+		case ws == "":
+		case !projectName.MatchString(ws):
+			v.errorf(p+".workspace", "%q is not a path-safe file name: use letters, digits, '.', '_' or '-', starting with a letter or digit", ws)
+		default:
+			if _, ok := v.m.Repos[ws]; ok {
+				v.errorf(p+".workspace", "%q collides with the repo of that name", ws)
+			}
+			if first, dup := owner[ws]; dup {
+				v.errorf(p+".workspace", "%q is already the workspace of group %q", ws, first)
+			}
+			owner[ws] = g
 		}
 	}
 }

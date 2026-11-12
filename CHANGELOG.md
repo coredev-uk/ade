@@ -37,6 +37,7 @@
 - **`ade cd <ref|repo> [--repo <name>]`** prints the item's worktree path (or a repo's baseline) and nothing else on stdout, offline, for `adecd() { d=$(ade cd "$@") && cd "$d"; }`.
 - **`conventions.mr.reviewer_group`** requests review from a group when start work opens the MR: the GitLab group's active members (you excluded; GitLab Free keeps one) or a GitHub team. The dry run and the start dialog show who, and a group that cannot be read only warns.
 - **Project-wide setup (`[project]` in the manifest):** `agents` writes `<root>/<project>/AGENTS.md` and adds it to the implement skill and agent prompts; `packages` (+ `nixpkgs`) generates `.ade/shell` and puts the packages on PATH around every pane, task and service of the project. `ade project status` shows them and `ade setup --warm` pre-builds the shell.
+- **Repo groups (`[repo_groups.<name>]`):** display-only groups that `ade project status` lists repos under; a group with `workspace` gets `<root>/<project>/<workspace>.code-workspace` with its repos' baselines, and `ade vscode workspace --group <name>` regenerates it or limits an item's workspace to the group.
 
 ## v0.1.0
 

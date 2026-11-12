@@ -37,6 +37,7 @@ type Manifest struct {
 	Project     ProjectSetup         `toml:"project"`
 	Labels      Labels               `toml:"labels"`
 	Repos       map[string]Repo      `toml:"repos"`
+	RepoGroups  map[string]RepoGroup `toml:"repo_groups"`
 	Services    map[string]Task      `toml:"services"`
 	Conventions Conventions          `toml:"conventions"`
 	Groups      map[string][]string  `toml:"groups"`
@@ -137,6 +138,15 @@ func (d Dotfiles) Configured() bool { return d.Repo != "" }
 
 // SymlinkFallback is Symlink with the default applied.
 func (d Dotfiles) SymlinkFallback() bool { return d.Symlink == nil || *d.Symlink }
+
+// RepoGroup is a display-only set of repos: `ade project status` lists them
+// under the group, and Workspace, when set, names a generated VS Code
+// multi-root workspace file in the project directory. It never changes
+// routing, checkouts or the run graph (see Manifest.Groups for those).
+type RepoGroup struct {
+	Repos     []string `toml:"repos"`
+	Workspace string   `toml:"workspace"` // file stem of <root>/<project>/<workspace>.code-workspace
+}
 
 // Repo is one repository in a project.
 type Repo struct {

@@ -335,3 +335,28 @@ func TestReservedRepoNames(t *testing.T) {
 		assertIssues(t, m.Validate(testCfg), "error: repos."+name+": invalid repo name")
 	}
 }
+
+func TestRepoGroupValidation(t *testing.T) {
+	repos := header + "[repos.web]\nurl = \"https://example.com/web.git\"\n[repos.admin]\nurl = \"https://example.com/admin.git\"\n"
+	tests := []struct {
+		name string
+		src  string
+		want []string
+	}{
+		{"complete", repos + "[repo_groups.frontend]\nrepos = [\"web\", \"admin\"]\nworkspace = \"acme-frontend\"\n[repo_groups.apps]\nrepos = [\"web\"]\n", nil},
+		{"unknown repo", repos + "[repo_groups.frontend]\nrepos = [\"web\", \"nope\"]\n", []string{"error: repo_groups.frontend.repos[1]: unknown repo"}},
+		{"empty repos", repos + "[repo_groups.frontend]\nworkspace = \"fe\"\n", []string{"error: repo_groups.frontend.repos: must list"}},
+		{"repo listed twice", repos + "[repo_groups.frontend]\nrepos = [\"web\", \"web\"]\n", []string{"error: repo_groups.frontend.repos[1]: repo \"web\" is listed twice"}},
+		{"workspace not path-safe", repos + "[repo_groups.frontend]\nrepos = [\"web\"]\nworkspace = \"../fe\"\n", []string{"error: repo_groups.frontend.workspace"}},
+		{"workspace with a space", repos + "[repo_groups.frontend]\nrepos = [\"web\"]\nworkspace = \"my fe\"\n", []string{"error: repo_groups.frontend.workspace"}},
+		{"workspace collides with a repo", repos + "[repo_groups.frontend]\nrepos = [\"web\"]\nworkspace = \"admin\"\n", []string{"error: repo_groups.frontend.workspace: \"admin\" collides"}},
+		{"workspace shared by two groups", repos + "[repo_groups.a]\nrepos = [\"web\"]\nworkspace = \"fe\"\n[repo_groups.b]\nrepos = [\"admin\"]\nworkspace = \"fe\"\n", []string{"error: repo_groups.b.workspace: \"fe\" is already the workspace of group \"a\""}},
+		{"group name", repos + "[repo_groups.\"front end\"]\nrepos = [\"web\"]\n", []string{"error: repo_groups.front end: invalid group name"}},
+		{"unknown key", repos + "[repo_groups.frontend]\nrepos = [\"web\"]\nname = \"x\"\n", []string{"warn: repo_groups.frontend.name: unknown key"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertIssues(t, mustManifest(t, tt.src).Validate(testCfg), tt.want...)
+		})
+	}
+}

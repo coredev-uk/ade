@@ -247,7 +247,7 @@ func (s *Service) syncRuns(ctx context.Context, runs []*run, m mode) (Report, er
 	}
 	rep := Report{Results: results}
 	for _, r := range runs {
-		setup := s.syncSetup(r)
+		setup := s.syncSetup(ctx, r)
 		if len(setup.Written)+len(setup.Removed)+len(setup.Warnings) > 0 {
 			rep.Setup = append(rep.Setup, setup)
 		}

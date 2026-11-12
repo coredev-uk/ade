@@ -187,6 +187,28 @@
       },
       "type": "object"
     },
+    "repo_groups": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "repos": {
+            "description": "Repo names in the group; a repo may be in several groups.",
+            "items": {
+              "description": "Repo names in the group; a repo may be in several groups.",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "workspace": {
+            "description": "File stem of <root>/<project>/<workspace>.code-workspace, a VS Code multi-root workspace of the group's repos (baseline worktrees).",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "description": "Display-only repo groups: `ade project status` lists repos under them and each group with a workspace gets a .code-workspace file. They never change routing, checkouts or the run graph.",
+      "type": "object"
+    },
     "repos": {
       "additionalProperties": {
         "additionalProperties": false,

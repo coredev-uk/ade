@@ -129,25 +129,65 @@ func newProjectStatusCmd() *cobra.Command {
 func printProjectStatus(w io.Writer, p project.ProjectStatus) {
 	fmt.Fprintf(w, "%s  %s\n", p.Name, p.Dir)
 	printSetupStatus(w, p.Setup)
+	if len(p.RepoGroups) == 0 {
+		for _, r := range p.Repos {
+			printRepoStatus(w, r, "  ")
+		}
+		return
+	}
+	// Groups are display only: a repo shows under every group it is in, then
+	// the ones in no group.
+	byName := map[string]project.RepoStatus{}
 	for _, r := range p.Repos {
+		byName[r.Name] = r
+	}
+	for _, g := range p.RepoGroups {
+		head := "[" + g.Name + "]"
 		switch {
-		case !r.Present:
-			fmt.Fprintf(w, "  %s  missing (run `ade update`)\n", r.Name)
-			continue
-		case !r.InManifest:
-			fmt.Fprintf(w, "  %s  not in manifest anymore (kept on disk)\n", r.Name)
-		default:
-			fmt.Fprintf(w, "  %s\n", r.Name)
+		case g.File != "" && g.Written:
+			head += "  " + filepath.Base(g.File)
+		case g.File != "":
+			head += "  " + filepath.Base(g.File) + " (not written; run `ade update`)"
 		}
-		if r.Error != "" {
-			fmt.Fprintf(w, "    error: %s\n", r.Error)
+		fmt.Fprintf(w, "  %s\n", head)
+		for _, name := range g.Repos {
+			if r, ok := byName[name]; ok {
+				printRepoStatus(w, r, "    ")
+			}
 		}
-		if r.Baseline != nil {
-			fmt.Fprintf(w, "    %s\n", treeLine(*r.Baseline))
+	}
+	var loose []project.RepoStatus
+	for _, r := range p.Repos {
+		if len(r.Groups) == 0 {
+			loose = append(loose, r)
 		}
-		for _, t := range r.Worktrees {
-			fmt.Fprintf(w, "    %s\n", treeLine(t))
+	}
+	if len(loose) > 0 {
+		fmt.Fprintln(w, "  [ungrouped]")
+		for _, r := range loose {
+			printRepoStatus(w, r, "    ")
 		}
+	}
+}
+
+func printRepoStatus(w io.Writer, r project.RepoStatus, indent string) {
+	switch {
+	case !r.Present:
+		fmt.Fprintf(w, "%s%s  missing (run `ade update`)\n", indent, r.Name)
+		return
+	case !r.InManifest:
+		fmt.Fprintf(w, "%s%s  not in manifest anymore (kept on disk)\n", indent, r.Name)
+	default:
+		fmt.Fprintf(w, "%s%s\n", indent, r.Name)
+	}
+	if r.Error != "" {
+		fmt.Fprintf(w, "%s  error: %s\n", indent, r.Error)
+	}
+	if r.Baseline != nil {
+		fmt.Fprintf(w, "%s  %s\n", indent, treeLine(*r.Baseline))
+	}
+	for _, t := range r.Worktrees {
+		fmt.Fprintf(w, "%s  %s\n", indent, treeLine(t))
 	}
 }
 

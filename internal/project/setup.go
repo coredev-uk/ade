@@ -2,6 +2,7 @@ package project
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -52,12 +53,13 @@ func ReadAgents(projectDir string) string {
 }
 
 // syncSetup generates the project-wide files of one run.
-func (s *Service) syncSetup(r *run) SetupResult {
+func (s *Service) syncSetup(ctx context.Context, r *run) SetupResult {
 	res := SetupResult{Project: r.name}
 	if !r.stale { // the agents file comes from the manifest's source, which failed
 		s.syncAgents(r, &res)
 	}
 	s.syncShell(r, &res)
+	s.syncGroups(ctx, r, &res)
 	return res
 }
 

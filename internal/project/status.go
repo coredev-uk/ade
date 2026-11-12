@@ -3,11 +3,14 @@ package project
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"time"
 
+	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/git"
 )
 
@@ -40,6 +43,7 @@ type RepoStatus struct {
 	DefaultBranch string       `json:"default_branch,omitempty"`
 	Baseline      *TreeStatus  `json:"baseline,omitempty"`
 	Worktrees     []TreeStatus `json:"worktrees,omitempty"`
+	Groups        []string     `json:"groups,omitempty"` // [repo_groups] the repo is in, sorted
 	Error         string       `json:"error,omitempty"`
 }
 
@@ -50,8 +54,19 @@ type ProjectStatus struct {
 	Dir        string       `json:"dir"`
 	LastUpdate time.Time    `json:"last_update,omitzero"`
 	Repos      []RepoStatus `json:"repos"`
+	// RepoGroups are the manifest's display-only [repo_groups], sorted by name.
+	RepoGroups []GroupStatus `json:"repo_groups,omitempty"`
 	// Setup is the project-wide part (`[project]`); nil when the manifest sets none.
 	Setup *SetupStatus `json:"setup,omitempty"`
+}
+
+// GroupStatus is one display-only repo group and its workspace file.
+type GroupStatus struct {
+	Name      string   `json:"name"`
+	Repos     []string `json:"repos"`
+	Workspace string   `json:"workspace,omitempty"` // file stem, as written in the manifest
+	File      string   `json:"file,omitempty"`
+	Written   bool     `json:"written,omitempty"` // File exists and ADE generated it
 }
 
 // SetupStatus is the state of the project-wide setup on disk.
@@ -151,7 +166,33 @@ func (s *Service) projectStatus(ctx context.Context, name string, sn *snapshot) 
 		_, inManifest := m.Repos[names[i]]
 		repos[i] = repoStatus(ctx, filepath.Join(dir, names[i]), names[i], inManifest)
 	})
-	return ProjectStatus{Name: name, Source: sn.Source, Dir: dir, LastUpdate: sn.LastUpdate, Repos: repos, Setup: setupStatus(dir, sn.Source, m)}, nil
+	groups := groupStatuses(dir, m)
+	for i := range repos {
+		for _, g := range groups {
+			if slices.Contains(g.Repos, repos[i].Name) {
+				repos[i].Groups = append(repos[i].Groups, g.Name)
+			}
+		}
+	}
+	return ProjectStatus{Name: name, Source: sn.Source, Dir: dir, LastUpdate: sn.LastUpdate, Repos: repos, RepoGroups: groups, Setup: setupStatus(dir, sn.Source, m)}, nil
+}
+
+// groupStatuses lists the manifest's repo groups sorted by name.
+func groupStatuses(dir string, m *config.Manifest) []GroupStatus {
+	var out []GroupStatus
+	for _, name := range slices.Sorted(maps.Keys(m.RepoGroups)) {
+		g := m.RepoGroups[name]
+		gs := GroupStatus{Name: name, Repos: g.Repos, Workspace: g.Workspace}
+		if g.Workspace != "" {
+			gs.File = GroupWorkspacePath(dir, g)
+			if b, err := os.ReadFile(gs.File); err == nil {
+				g, gerr := generatedGroup(b, filepath.Base(gs.File))
+				gs.Written = gerr == nil && g == name
+			}
+		}
+		out = append(out, gs)
+	}
+	return out
 }
 
 // repoDirs is the manifest's repos plus any other directory holding a bare clone.

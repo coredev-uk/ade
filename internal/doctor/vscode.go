@@ -10,23 +10,14 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/coredev-uk/ade/internal/codews"
 )
 
-// VSCodeSettings is the recommended user settings for running ADE (and zellij
-// inside it) in VS Code's integrated terminal. Entries starting with "-" remove
-// a command from VS Code's default skip-the-shell list, so its key reaches the
-// program in the terminal instead: Ctrl+P and Ctrl+B belong to zellij and
-// Neovim there, Ctrl+J to the shell. Chords (Ctrl+K ...) stay with the terminal
-// program, and Option acts as Meta so Alt bindings work on macOS.
-var VSCodeSettings = map[string]any{
-	"terminal.integrated.commandsToSkipShell": []string{
-		"-workbench.action.quickOpen",
-		"-workbench.action.toggleSidebarVisibility",
-		"-workbench.action.togglePanel",
-	},
-	"terminal.integrated.allowChords":     false,
-	"terminal.integrated.macOptionIsMeta": true,
-}
+// VSCodeSettings is the recommended user settings for running ADE in VS Code's
+// integrated terminal; the definition lives in codews, which cannot import
+// this package (it would cycle through internal/project).
+var VSCodeSettings = codews.UserSettings
 
 // VSCodeSnippet renders VSCodeSettings as the JSON to merge into settings.json.
 func VSCodeSnippet() string {

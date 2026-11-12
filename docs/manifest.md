@@ -383,6 +383,34 @@ default = { layout = "code", run = "dev", services = "background" }   # or "manu
 `services = "manual"` skips the services tab: services and the `services` (start all) pane stay in the strip, each
 waiting for Enter, and `ade ws up --no-zellij` still runs the install hooks first. Strip tasks wait for the install
 too (`--after-install`): run `ade ws install` or `ade ws up` first, or the pane says so and waits.
+### Repo groups
+
+```toml
+[repo_groups.frontend]
+repos     = ["web", "admin"]
+workspace = "acme-frontend"     # optional: <root>/<project>/acme-frontend.code-workspace
+```
+
+Repo groups are **display only**: they never change routing, checkouts, the run graph or what `ade start` does (the
+run-graph `[groups]` above is a different table). `ade project status` lists repos under their group headings, sorted
+by group name, then the repos in no group; a repo may be in several groups; `--json` adds `groups` to each repo and a
+`repo_groups` list to the project.
+
+A group with `workspace` also gets a VS Code multi-root workspace file, written by `ade project add` and every
+`ade update` when its content changed: one folder per repo of the group, each at its baseline worktree (named after
+the default branch) as an absolute path, with the same `settings` as the per-item workspace of `ade vscode workspace`
+(`.bare` hidden, git limited to the folders, the `commandsToSkipShell` list). Regeneration keeps the other top-level
+keys (extensions, launch) and your own settings. The file carries an `"ade": {"repo_group": "<name>", "file":
+"<file name>"}` key; ADE only rewrites or removes a file that has it under that same name, so a file of your own with
+that name, or a copy of the generated one saved under another name, is left alone (the first with a warning), and the
+file goes away when the group or its `workspace` key does. VS Code allows comments in the file, ADE's merge does not:
+a generated file you added comments to is reported and left as it is. A group whose repos are not all cloned yet gets
+no file (a warning names the missing baseline) until they are. `ade vscode workspace --group frontend [--open]`
+regenerates and prints it by hand.
+
+Validation: every repo of a group must exist and be listed once, `repos` must not be empty, `workspace` must be a
+path-safe file name (letters, digits, `.`, `_`, `-`), unique across groups and not the name of a repo, and a group
+name uses letters, digits, `_` and `-`.
 
 ### Dev shell per repo
 

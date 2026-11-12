@@ -1,7 +1,6 @@
 package workspace
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,8 +14,8 @@ import (
 
 	"github.com/coredev-uk/ade/internal/app"
 	"github.com/coredev-uk/ade/internal/audit"
+	"github.com/coredev-uk/ade/internal/codews"
 	"github.com/coredev-uk/ade/internal/config"
-	"github.com/coredev-uk/ade/internal/doctor"
 	"github.com/coredev-uk/ade/internal/editor"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/project"
@@ -35,9 +34,7 @@ const (
 )
 
 const (
-	codeWorkspaceExt = ".code-workspace"
-	// folderNameMax bounds the tree name shown in a folder's label.
-	folderNameMax = 24
+	codeWorkspaceExt = codews.Ext
 	// slugMax bounds the title part of the file name.
 	slugMax = 40
 )
@@ -58,6 +55,7 @@ type CodeInput struct {
 	Loc       *Location        // anchor worktree; nil: the item's own (or its repo's baseline)
 	Dir       string           // directory the file is written to
 	Workspace string           // [workspaces.<name>] whose run group becomes the tasks; default "default"
+	Group     string           // [repo_groups.<name>]: limit the folders to its repos; empty: every repo
 	Ade       string           // the ade executable the tasks run
 }
 
@@ -98,7 +96,7 @@ func (m *Manager) CodeWorkspace(ctx context.Context, in CodeInput) (CodeResult, 
 		anchor = *in.Loc
 	}
 
-	folders, err := codeFolders(ctx, projectDir, mf, anchor, itemTrees)
+	folders, err := codeFolders(ctx, projectDir, mf, anchor, itemTrees, in.Group)
 	if err != nil {
 		return CodeResult{}, err
 	}
@@ -113,6 +111,9 @@ func (m *Manager) CodeWorkspace(ctx context.Context, in CodeInput) (CodeResult, 
 	}
 
 	name := codeFileName(ctx, in.Item, anchor)
+	if in.Group != "" {
+		name += "-" + in.Group
+	}
 	path := filepath.Join(in.Dir, name+codeWorkspaceExt)
 	existing, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -135,10 +136,18 @@ func (m *Manager) CodeWorkspace(ctx context.Context, in CodeInput) (CodeResult, 
 	return CodeResult{Path: path, Folders: folders, Tasks: len(tasks)}, nil
 }
 
-// codeFolders lists every repo of the project, the anchor's repo first and the
-// rest in manifest order (sorted names).
-func codeFolders(ctx context.Context, projectDir string, mf *config.Manifest, anchor Location, itemTrees map[string]string) ([]CodeFolder, error) {
+// codeFolders lists every repo of the project (or of the repo group, when
+// group is set), the anchor's repo first and the rest in manifest order
+// (sorted names).
+func codeFolders(ctx context.Context, projectDir string, mf *config.Manifest, anchor Location, itemTrees map[string]string, group string) ([]CodeFolder, error) {
 	repos := mf.RepoNames()
+	if group != "" {
+		g, ok := mf.RepoGroups[group]
+		if !ok {
+			return nil, fmt.Errorf("no repo group %q in the manifest", group)
+		}
+		repos = slices.DeleteFunc(repos, func(r string) bool { return !slices.Contains(g.Repos, r) })
+	}
 	if i := slices.Index(repos, anchor.Repo); i > 0 {
 		repos = slices.Insert(slices.Delete(repos, i, i+1), 0, anchor.Repo)
 	}
@@ -160,19 +169,10 @@ func codeFolders(ctx context.Context, projectDir string, mf *config.Manifest, an
 		default:
 			f.Path, f.Source = base, FolderBaseline
 		}
-		f.Name = repo + " (" + truncateName(filepath.Base(f.Path), folderNameMax) + ")"
+		f.Name = codews.FolderName(repo, f.Path)
 		out = append(out, f)
 	}
 	return out, nil
-}
-
-// truncateName cuts s to at most n runes, ending in … when it was cut.
-func truncateName(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n-1]) + "…"
 }
 
 // codeFileName is the stable file name (without extension): the parent issue's
@@ -218,84 +218,22 @@ func fileSlug(s string, max int) string {
 	return out
 }
 
-// codeSettings are the workspace settings ADE sets: bare repos and their
-// worktree metadata stay out of the explorer, search and file watcher; git
-// only looks for repositories in the folders themselves (the project's repo
-// directories hold a bare clone, not a checkout, so parents never apply); and
-// the terminal hands Ctrl+P/B/J to zellij and the shell, as `ade doctor
-// --vscode` recommends.
-func codeSettings() map[string]any {
-	return map[string]any{
-		"files.exclude":                           map[string]bool{"**/.bare": true},
-		"search.exclude":                          map[string]bool{"**/.bare": true},
-		"files.watcherExclude":                    map[string]bool{"**/.bare/**": true},
-		"git.autoRepositoryDetection":             "subFolders",
-		"git.openRepositoryInParentFolders":       "never",
-		"terminal.integrated.commandsToSkipShell": doctor.VSCodeSettings["terminal.integrated.commandsToSkipShell"],
-	}
-}
-
-type codeFolderJSON struct {
-	Name string `json:"name"`
-	Path string `json:"path"`
-}
-
 // MergeCodeWorkspace returns the .code-workspace content for folders and
 // tasks on top of an existing file (nil for none). A file that is not plain
 // JSON (VS Code allows comments) is an error rather than being overwritten.
 func MergeCodeWorkspace(existing []byte, folders []CodeFolder, tasks []VSTask) ([]byte, error) {
-	rest := map[string]json.RawMessage{}
-	if len(bytes.TrimSpace(existing)) > 0 {
-		if err := json.Unmarshal(existing, &rest); err != nil {
-			return nil, fmt.Errorf("existing workspace file is not plain JSON (comments?): %w", err)
-		}
-	}
-	roots := make([]codeFolderJSON, len(folders))
+	roots := make([]codews.Folder, len(folders))
 	for i, f := range folders {
-		roots[i] = codeFolderJSON{Name: f.Name, Path: f.Path}
+		roots[i] = codews.Folder{Name: f.Name, Path: f.Path}
 	}
-	if err := setRaw(rest, "folders", roots); err != nil {
-		return nil, err
-	}
-
-	settings := map[string]json.RawMessage{}
-	if raw, ok := rest["settings"]; ok {
-		if err := json.Unmarshal(raw, &settings); err != nil {
-			return nil, fmt.Errorf("existing workspace file: settings: %w", err)
+	return codews.Merge(existing, roots, func(rest map[string]json.RawMessage) error {
+		merged, err := MergeTasks(rest["tasks"], tasks)
+		if err != nil {
+			return fmt.Errorf("existing workspace file: tasks: %w", err)
 		}
-	}
-	for k, v := range codeSettings() {
-		if err := setRaw(settings, k, v); err != nil {
-			return nil, err
-		}
-	}
-	if err := setRaw(rest, "settings", settings); err != nil {
-		return nil, err
-	}
-
-	merged, err := MergeTasks(rest["tasks"], tasks)
-	if err != nil {
-		return nil, fmt.Errorf("existing workspace file: tasks: %w", err)
-	}
-	rest["tasks"] = merged
-
-	var out bytes.Buffer
-	enc := json.NewEncoder(&out)
-	enc.SetEscapeHTML(false)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(rest); err != nil {
-		return nil, err
-	}
-	return out.Bytes(), nil
-}
-
-func setRaw(m map[string]json.RawMessage, key string, v any) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	m[key] = b
-	return nil
+		rest["tasks"] = merged
+		return nil
+	})
 }
 
 // FindItem returns the cached work item that ref names: its tracker issue, one
@@ -329,6 +267,7 @@ type CodeRequest struct {
 	Item      *ItemRef // the work item, when known
 	Worktree  string   // anchor worktree: the plan runs from it (with an item, one of its trees)
 	Workspace string
+	Group     string // limit the folders to this [repo_groups] entry
 	Open      bool
 }
 
@@ -399,7 +338,7 @@ func codeWorkspaceFor(ctx context.Context, a *app.App, req CodeRequest) (out Cod
 		return out, projectName, target, fmt.Errorf("locate ade executable: %w", err)
 	}
 	res, err := mgr.CodeWorkspace(ctx, CodeInput{
-		Root: root, Manifest: mf, Item: req.Item, Loc: loc, Dir: dir, Workspace: req.Workspace, Ade: ade,
+		Root: root, Manifest: mf, Item: req.Item, Loc: loc, Dir: dir, Workspace: req.Workspace, Group: req.Group, Ade: ade,
 	})
 	if err != nil {
 		return out, projectName, target, err
