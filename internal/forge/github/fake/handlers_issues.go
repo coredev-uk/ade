@@ -341,9 +341,31 @@ func (s *Server) updateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	var in struct {
 		Milestone json.RawMessage `json:"milestone"`
+		Assignees *[]string       `json:"assignees"`
 	}
 	if !decode(w, r, &in) {
 		return
+	}
+	if in.Assignees != nil {
+		at := s.st.now()
+		var logins []string
+		for _, a := range *in.Assignees { // unknown logins are dropped, as on GitHub
+			if u := s.st.user(a); u != nil && u.Type != "Organization" && !slices.Contains(logins, u.Login) {
+				logins = append(logins, u.Login)
+			}
+		}
+		for _, old := range it.Assignees {
+			if !slices.Contains(logins, old) {
+				s.st.addEvent(it, "unassigned", viewer, at).Assignee = old
+			}
+		}
+		for _, l := range logins {
+			if !slices.Contains(it.Assignees, l) {
+				s.st.addEvent(it, "assigned", viewer, at).Assignee = l
+			}
+		}
+		it.Assignees = logins
+		it.Updated = at
 	}
 	if in.Milestone != nil {
 		at := s.st.now()

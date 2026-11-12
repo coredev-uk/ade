@@ -386,3 +386,39 @@ func TestSetMilestone(t *testing.T) {
 		}
 	})
 }
+
+func TestSetAssignees(t *testing.T) {
+	forEachTier(t, func(t *testing.T, _ fake.Tier, c *gitlab.Client, _ *fake.Server) {
+		ctx := context.Background()
+		ref := issueRef(apiProj, 2)
+		me, err := c.Me(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rae := forge.User{ID: 2, Username: "reviewer-rae"}
+		if err := c.SetAssignees(ctx, ref, []forge.User{me, rae}); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := c.Issue(ctx, ref); err != nil || len(got.Assignees) != 2 {
+			t.Errorf("assignees = %+v, %v", got.Assignees, err)
+		}
+		if err := c.SetAssignees(ctx, ref, []forge.User{rae}); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := c.Issue(ctx, ref); len(got.Assignees) != 1 || got.Assignees[0].ID != rae.ID {
+			t.Errorf("after replacing: %+v", got.Assignees)
+		}
+		if err := c.SetAssignees(ctx, ref, nil); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := c.Issue(ctx, ref); len(got.Assignees) != 0 {
+			t.Errorf("after clearing: %+v", got.Assignees)
+		}
+		if err := c.SetAssignees(ctx, ref, []forge.User{{ID: 987654}}); err == nil {
+			t.Error("an unknown user was accepted")
+		}
+		if err := c.SetAssignees(ctx, issueRef(apiProj, 999), nil); !errors.Is(err, forge.ErrNotFound) {
+			t.Errorf("unknown issue: err = %v, want ErrNotFound", err)
+		}
+	})
+}

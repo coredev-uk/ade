@@ -98,6 +98,10 @@ type Choices struct {
 	// OnlyMR plans just the MR (`M` after Branch only): every earlier step
 	// must already be done.
 	OnlyMR bool `json:"only_mr,omitempty"`
+	// OnlyChild plans just the child issue of the tracker issue in each repo,
+	// with its link, hierarchy parent and iteration: no branch, MR, worktree,
+	// workflow move or workspace (`ade issue child`). Mode and Child are ignored.
+	OnlyChild bool `json:"only_child,omitempty"`
 	// Layout is the workspace tab's layout (code, agent or manual: editor, omp
 	// with the ADE skill, or a shell as the main pane). Empty: the default of
 	// host.layout, the manifest's workspace, then code.
@@ -408,10 +412,14 @@ func (p Plan) Writes() int {
 
 // BuildPlan derives the steps. It never touches the forge or the disk.
 func BuildPlan(in PlanInput) (Plan, error) {
-	m, ch := in.Manifest, in.Choices
+	m := in.Manifest
 	if m == nil {
 		return Plan{}, errors.New("startwork: no manifest")
 	}
+	if in.Choices.OnlyChild {
+		in.Choices.Child, in.Choices.Mode = ChildAlways, ModeBranch
+	}
+	ch := in.Choices
 	if _, err := ParseMode(string(ch.Mode)); err != nil {
 		return Plan{}, err
 	}
@@ -430,6 +438,9 @@ func BuildPlan(in PlanInput) (Plan, error) {
 		tp := planTarget(in, t)
 		p.Targets = append(p.Targets, tp)
 		p.Warnings = append(p.Warnings, tp.Found.Warnings...)
+	}
+	if ch.OnlyChild {
+		return onlyChild(p), nil
 	}
 	p.Workflow, p.WorkflowNote = planWorkflow(in)
 	if ch.OnlyMR {
@@ -456,6 +467,15 @@ func onlyMR(p Plan) (Plan, error) {
 		p.Steps = append(p.Steps, mrStep(tp))
 	}
 	return p, nil
+}
+
+// onlyChild narrows p to the steps that make the child issue and tie it to the
+// tracker issue.
+func onlyChild(p Plan) Plan {
+	for _, tp := range p.Targets {
+		p.Steps = append(p.Steps, childSteps(p.in, tp)...)
+	}
+	return p
 }
 
 func resolveTarget(m *config.Manifest, name string) (Target, error) {
@@ -688,28 +708,13 @@ func planSteps(p *Plan) []Step {
 			add(worktreeStep(in, tp, f.Worktree != ""))
 			continue
 		}
-		if tp.UseChild {
-			if f.Child != nil {
-				add(Step{Kind: StepChild, Repo: repo, Done: true, Text: fmt.Sprintf("child issue %s exists", f.Child.Ref)})
-			} else {
-				add(Step{Kind: StepChild, Repo: repo, Write: true, Text: fmt.Sprintf("create child issue in %s: %s", t.Project, tp.Child.Title)})
-			}
+		childAt := len(steps)
+		for _, st := range childSteps(in, tp) {
+			add(st)
 		}
 		if i == 0 && p.Workflow != nil && (workflowDone(in, p.Workflow) || wfWanted(in, p.Workflow)) {
-			add(workflowStep(in, p.Workflow))
-		}
-		if tp.UseChild && contains(in.Manifest.Conventions.Link, "relates_to", true) {
-			add(Step{
-				Kind: StepLink, Repo: repo, Done: f.Child != nil && f.Linked, Write: true,
-				Text: fmt.Sprintf("link %s relates_to the child (and Parent: line)", in.Item.Ref),
-			})
-		}
-		if tp.UseChild && tp.Child.Iteration != nil {
-			done := f.Child != nil && f.Child.Iteration != nil && f.Child.Iteration.ID == tp.Child.Iteration.ID
-			add(Step{
-				Kind: StepIteration, Repo: repo, Done: done, Write: true,
-				Text: "copy iteration " + iterationName(*tp.Child.Iteration) + " to the child",
-			})
+			// The label moves right after the child, before the link.
+			steps = slices.Insert(steps, min(childAt+1, len(steps)), workflowStep(in, p.Workflow))
 		}
 		add(Step{
 			Kind: StepBranch, Repo: repo, Done: f.Branch != "", Write: true,
@@ -725,6 +730,35 @@ func planSteps(p *Plan) []Step {
 	if len(p.Targets) > 0 {
 		repo := p.Targets[0].Target.Name
 		add(Step{Kind: StepWorkspace, Repo: repo, Text: "open workspace for " + repo})
+	}
+	return steps
+}
+
+// childSteps are the steps that create the child issue in a target and tie it
+// to the tracker issue: the issue, the link, the iteration.
+func childSteps(in PlanInput, tp TargetPlan) []Step {
+	t, f, repo := tp.Target, tp.Found, tp.Target.Name
+	if !tp.UseChild {
+		return nil
+	}
+	var steps []Step
+	if f.Child != nil {
+		steps = append(steps, Step{Kind: StepChild, Repo: repo, Done: true, Text: fmt.Sprintf("child issue %s exists", f.Child.Ref)})
+	} else {
+		steps = append(steps, Step{Kind: StepChild, Repo: repo, Write: true, Text: fmt.Sprintf("create child issue in %s: %s", t.Project, tp.Child.Title)})
+	}
+	if contains(in.Manifest.Conventions.Link, "relates_to", true) {
+		steps = append(steps, Step{
+			Kind: StepLink, Repo: repo, Done: f.Child != nil && f.Linked, Write: true,
+			Text: fmt.Sprintf("link %s relates_to the child (and Parent: line)", in.Item.Ref),
+		})
+	}
+	if tp.Child.Iteration != nil {
+		done := f.Child != nil && f.Child.Iteration != nil && f.Child.Iteration.ID == tp.Child.Iteration.ID
+		steps = append(steps, Step{
+			Kind: StepIteration, Repo: repo, Done: done, Write: true,
+			Text: "copy iteration " + iterationName(*tp.Child.Iteration) + " to the child",
+		})
 	}
 	return steps
 }

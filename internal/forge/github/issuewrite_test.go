@@ -413,3 +413,44 @@ func TestSetMilestone(t *testing.T) {
 		t.Errorf("milestone after clearing = %+v", got.Milestone)
 	}
 }
+
+func TestSetAssignees(t *testing.T) {
+	c, _ := newClient(t)
+	ctx := context.Background()
+	ref := forge.Ref{Project: apiProj, IID: 1, Kind: forge.KindIssue}
+	me, err := c.Me(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mate := forge.User{ID: 1002, Username: "teammate"}
+	names := func() []string {
+		is, err := c.Issue(ctx, ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, u := range is.Assignees {
+			out = append(out, u.Username)
+		}
+		slices.Sort(out)
+		return out
+	}
+	if err := c.SetAssignees(ctx, ref, []forge.User{me, mate}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := names(), []string{"teammate", me.Username}; !slices.Equal(got, want) && !slices.Equal(got, []string{me.Username, "teammate"}) {
+		t.Errorf("assignees = %v, want %v", got, want)
+	}
+	if err := c.SetAssignees(ctx, ref, []forge.User{mate}); err != nil {
+		t.Fatal(err)
+	}
+	if got := names(); !slices.Equal(got, []string{"teammate"}) {
+		t.Errorf("after replacing: %v", got)
+	}
+	if err := c.SetAssignees(ctx, ref, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := names(); len(got) != 0 {
+		t.Errorf("after clearing: %v", got)
+	}
+}

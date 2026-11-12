@@ -91,6 +91,21 @@ func (c *Client) SetLabels(ctx context.Context, ref forge.Ref, add, remove []str
 	return c.send(ctx, http.MethodPut, issuePath(ref), body, nil)
 }
 
+var _ forge.AssigneeWriter = (*Client)(nil)
+
+// SetAssignees implements forge.AssigneeWriter: the issue update's
+// assignee_ids replaces the list, and an empty list clears it.
+func (c *Client) SetAssignees(ctx context.Context, ref forge.Ref, assignees []forge.User) error {
+	if err := wantKind(ref, forge.KindIssue); err != nil {
+		return err
+	}
+	ids := make([]int64, len(assignees))
+	for i, u := range assignees {
+		ids[i] = u.ID
+	}
+	return c.send(ctx, http.MethodPut, issuePath(ref), map[string][]int64{"assignee_ids": ids}, nil)
+}
+
 var _ forge.MilestoneWriter = (*Client)(nil)
 
 // SetMilestone implements forge.MilestoneWriter. GitLab's issue update takes
