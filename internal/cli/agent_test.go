@@ -105,3 +105,70 @@ func TestAgentPlanNeedsARegisteredProject(t *testing.T) {
 		t.Errorf("plan with no project: %v", err)
 	}
 }
+
+func TestAgentRunBackgroundStartsADetachedAIBranchRun(t *testing.T) {
+	e := newCLIEnv(t)
+	r, st := e.seedRun("20261111-100000-aaa", agent.StateAwaiting, 0.01)
+	dir := t.TempDir()
+	args := filepath.Join(dir, "args")
+	stub := filepath.Join(dir, "ade")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\necho \"$@\" > "+args+"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := adeExecutable
+	adeExecutable = func() (string, error) { return stub, nil }
+	t.Cleanup(func() { adeExecutable = old })
+
+	// An unapproved plan starts nothing.
+	if _, err := e.agent("run", "aaa", "--background"); err == nil || !strings.Contains(err.Error(), "approve the plan first") {
+		t.Fatalf("background run of an unapproved plan: %v", err)
+	}
+	if _, err := os.Stat(args); err == nil {
+		t.Fatal("a refused background run started a process")
+	}
+
+	if err := os.WriteFile(filepath.Join(st.Dir(r), agent.FilePlan), []byte("# Plan\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.agent("approve", "aaa"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := e.agent("run", "aaa", "--background")
+	if err != nil || !strings.Contains(out, "in the background") || !strings.Contains(out, "7-x-ai") || !strings.Contains(out, "ade agent accept") {
+		t.Fatalf("run --background: %q %v", out, err)
+	}
+	// The child is the same binary asked for an --ai-branch run of this run.
+	var got string
+	for range 100 {
+		if b, err := os.ReadFile(args); err == nil && len(b) > 0 {
+			got = strings.TrimSpace(string(b))
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got != "agent run "+r.ID+" --ai-branch" {
+		t.Fatalf("child args = %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(st.Dir(r), "background.log")); err != nil {
+		t.Fatalf("no background.log: %v", err)
+	}
+}
+
+func TestAgentAcceptAndDiscardNeedAnAIBranchRun(t *testing.T) {
+	e := newCLIEnv(t)
+	_, st := e.seedRun("20261111-100000-aaa", agent.StateReview, 0.01)
+	for _, verb := range []string{"accept", "discard"} {
+		if _, err := e.agent(verb, "aaa"); err == nil || !strings.Contains(err.Error(), "no -ai branch") {
+			t.Errorf("%s on a run without a -ai branch: %v", verb, err)
+		}
+	}
+	// A finished run that still holds a -ai branch stays in the default list.
+	r, _ := st.Get("aaa")
+	r.State, r.AIBranch, r.AIWorktree = agent.StateFailed, "7-x-ai", "/tmp/x-ai"
+	if err := st.Save(r); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := e.agent("list"); err != nil || !strings.Contains(out, "failed (-ai)") {
+		t.Errorf("list must keep a failed run with a pending -ai branch: %q %v", out, err)
+	}
+}

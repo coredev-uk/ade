@@ -85,6 +85,8 @@ func (m *model) mrKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 		return nil, true
 	case "A":
 		return m.aiReviewKey(), true
+	case "B":
+		return m.describeKey(), true
 	}
 	switch p.tab {
 	case tabThreads:
@@ -341,6 +343,12 @@ func (m *model) ciKey(ks string) tea.Cmd {
 		}
 	case "r":
 		return m.actRetry()
+	case "t":
+		return m.triageKey()
+	case "J":
+		p.ovTop++ // the AI triage under the jobs scrolls
+	case "K":
+		p.ovTop = max(0, p.ovTop-1)
 	}
 	return nil
 }
@@ -381,6 +389,12 @@ func (m model) mrFooter(w int) string {
 		}
 	case p.tab == tabCI:
 		tabKeys = []string{"j/k", "job", "l", "log", "r", "retry"}
+		if m.aiOn() {
+			tabKeys = append(tabKeys, "t", "AI triage")
+			if st := p.data.ai[aiKey{kind: aiCITriage}]; st != nil && st.l.st == loadOK {
+				tabKeys = append(tabKeys, "J/K", "scroll")
+			}
+		}
 	case p.tab == tabHistory:
 		tabKeys = []string{"U", "reload"}
 	default:
@@ -391,7 +405,7 @@ func (m model) mrFooter(w int) string {
 	}
 	act := []string{"a", "approve", "R", "ready/draft", "m", "merge", "S", "submit review"}
 	if m.aiOn() {
-		act = append(act, "A", "agent review")
+		act = append(act, "A", "agent review", "B", "AI description")
 	}
 	if p.item != nil {
 		act = append(act, "P", "agents")
@@ -456,6 +470,8 @@ func mrHelpRows(ai bool) [][2]string {
 	if ai {
 		rows = slices.Insert(rows, 8,
 			[2]string{"A", "agent review pass, drafts in Review"},
+			[2]string{"B", "AI draft of the MR description, then apply"},
+			[2]string{"t", "CI: AI triage of the failed jobs"},
 			[2]string{"d s", "Overview: raw/summary, new summary"},
 			[2]string{"d s", "Threads: AI draft reply, summary"})
 	}

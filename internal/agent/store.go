@@ -228,6 +228,9 @@ func renderRunMD(r Run) string {
 	fmt.Fprintf(&b, "# Run %s\n\n", r.ID)
 	fmt.Fprintf(&b, "- item: %s\n- kind: %s\n- state: %s\n- driver: %s (%s)\n", r.Item(), r.Kind, r.State, r.Driver, r.Model)
 	fmt.Fprintf(&b, "- worktree: %s\n- branch: %s\n", r.Worktree, r.Branch)
+	if r.AIBranch != "" {
+		fmt.Fprintf(&b, "- -ai worktree: %s\n- -ai branch: %s (accept or discard it)\n", r.AIWorktree, r.AIBranch)
+	}
 	if r.MR != nil {
 		fmt.Fprintf(&b, "- merge request: %s\n", r.MR)
 	}

@@ -127,6 +127,14 @@ type Run struct {
 	BaseSHA string `json:"base_sha,omitempty"`
 	// Commits are the SHAs ADE committed on push.
 	Commits []string `json:"commits,omitempty"`
+	// AIBranch and AIWorktree are the separate branch (<Branch>-ai) and
+	// worktree an isolated implementation run (ade agent run --ai-branch)
+	// works on, while they exist: set when the run starts implementing, empty
+	// again once the run is accepted (fast-forwarded into Branch) or discarded.
+	AIBranch   string `json:"ai_branch,omitempty"`
+	AIWorktree string `json:"ai_worktree,omitempty"`
+	// AcceptedAt is when the -ai branch was fast-forwarded into Branch.
+	AcceptedAt time.Time `json:"accepted_at,omitempty"`
 
 	Calls   []Call    `json:"calls,omitempty"`
 	Created time.Time `json:"created"`
@@ -135,6 +143,19 @@ type Run struct {
 	// Drafts is how many review drafts an address run left (pending triage).
 	Drafts int `json:"drafts,omitempty"`
 }
+
+// WorkDir is the tree the agent changes: the -ai worktree of an isolated run
+// that has not been accepted or discarded, else the item's worktree.
+func (r Run) WorkDir() string {
+	if r.AIWorktree != "" {
+		return r.AIWorktree
+	}
+	return r.Worktree
+}
+
+// Isolated reports whether the run's changes sit on a separate -ai branch
+// that still waits for accept or discard.
+func (r Run) Isolated() bool { return r.AIBranch != "" }
 
 // Item is the run's work item as shown to people: group/project#N.
 func (r Run) Item() string { return r.Tracker.String() }

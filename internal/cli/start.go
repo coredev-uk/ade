@@ -42,6 +42,7 @@ type startFlags struct {
 	layout      string
 	dryRun      bool
 	session     string // zellij session for the tab; verify scripts only
+	onlyChild   bool   // `ade issue child`: just the child issue and its links
 }
 
 func (f *startFlags) bind(cmd *cobra.Command, withMode bool) {
@@ -122,11 +123,11 @@ func runStart(cmd *cobra.Command, arg string, f startFlags, onlyMR bool) error {
 	if err != nil {
 		return err
 	}
-	ch.OnlyMR = onlyMR
+	ch.OnlyMR, ch.OnlyChild = onlyMR, f.onlyChild
 	if onlyMR {
 		ch.Mode = startwork.ModeDraft
 	}
-	env := newStartEnv(a, f.noWorkspace || onlyMR, f.session)
+	env := newStartEnv(a, f.noWorkspace || onlyMR || f.onlyChild, f.session)
 	env.Forge = r.Forge
 	_, res, err := env.Start(ctx, r, ch, f.dryRun)
 	if !f.dryRun && res.Created() > 0 {

@@ -203,9 +203,15 @@ func (r Run) target() Target {
 	return Target{Forge: r.Forge, Project: r.Project, Tracker: r.Tracker, Child: r.Child, Repo: r.Repo, Worktree: r.Worktree, Branch: r.Branch, MR: r.MR, AddDirs: r.AddDirs}
 }
 
-// targetOf is the run's Target with the commit prefix for its prompt.
+// targetOf is the run's Target with the commit prefix for its prompt. An
+// isolated run's agent is told about its -ai worktree and branch; the prefix
+// is still the item's own.
 func (m *Manager) targetOf(ctx context.Context, r Run) Target {
-	return m.withCommitPrefix(ctx, r.target())
+	t := m.withCommitPrefix(ctx, r.target())
+	if r.Isolated() {
+		t.Worktree, t.Branch = r.AIWorktree, r.AIBranch
+	}
+	return t
 }
 
 // withCommitPrefix sets t.CommitPrefix the way a commit will get it.
@@ -291,21 +297,55 @@ func sha(b []byte) string { h := sha256.Sum256(b); return hex.EncodeToString(h[:
 // Implement executes the approved plan in the worktree: awaiting-approval →
 // running → review. The tree must be clean, so the diff is the agent's alone.
 func (m *Manager) Implement(ctx context.Context, id string) (Run, error) {
+	return m.implement(ctx, id, false)
+}
+
+// ImplementApart is Implement on a separate branch: the run starts a new
+// <branch>-ai branch and worktree at the item's current commit and the agent
+// works there, so the item's own worktree stays yours (it may be dirty, and
+// you may keep committing). Accept fast-forwards the item's branch to the
+// result; Discard throws it away. Nothing is pushed.
+func (m *Manager) ImplementApart(ctx context.Context, id string) (Run, error) {
+	return m.implement(ctx, id, true)
+}
+
+// CanImplement reports why run id cannot be implemented right now (not
+// approved, plan edited since), without starting anything.
+func (m *Manager) CanImplement(id string) error {
+	_, _, err := m.approvedPlan(id)
+	return err
+}
+
+// approvedPlan loads run id and its plan, and insists the plan is the one the
+// user approved.
+func (m *Manager) approvedPlan(id string) (Run, []byte, error) {
 	r, err := m.Store.Get(id)
 	if err != nil {
-		return r, err
+		return r, nil, err
 	}
 	switch {
 	case r.Kind != KindPlan:
-		return r, fmt.Errorf("run %s is an %s run: use address", r.ID, r.Kind)
+		return r, nil, fmt.Errorf("run %s is an %s run: use address", r.ID, r.Kind)
 	case r.State != StateAwaiting || !r.Approved:
-		return r, fmt.Errorf("run %s is %s%s: approve the plan first (ade agent approve %s)", r.ID, r.State, map[bool]string{false: ", not approved"}[r.Approved], r.ID)
+		return r, nil, fmt.Errorf("run %s is %s%s: approve the plan first (ade agent approve %s)", r.ID, r.State, map[bool]string{false: ", not approved"}[r.Approved], r.ID)
 	}
 	b, err := os.ReadFile(filepath.Join(m.Store.Dir(r), FilePlan))
 	if err != nil || sha(b) != r.PlanSHA {
-		return r, fmt.Errorf("plan.md changed after approval: approve run %s again", r.ID)
+		return r, nil, fmt.Errorf("plan.md changed after approval: approve run %s again", r.ID)
 	}
-	if err := m.prepareWrite(ctx, &r); err != nil {
+	return r, b, nil
+}
+
+func (m *Manager) implement(ctx context.Context, id string, apart bool) (Run, error) {
+	r, b, err := m.approvedPlan(id)
+	if err != nil {
+		return r, err
+	}
+	prepare := m.prepareWrite
+	if apart {
+		prepare = m.prepareApart
+	}
+	if err := prepare(ctx, &r); err != nil {
 		return r, err
 	}
 	if err := m.begin(&r, StateRunning); err != nil {
@@ -383,10 +423,50 @@ func (m *Manager) prepareWrite(ctx context.Context, r *Run) error {
 	return nil
 }
 
+// prepareApart is prepareWrite for an isolated run: the item's tree only has
+// to be the start-work worktree (it may be dirty: the agent never sees it),
+// and the -ai branch and worktree are made from its current commit. Both are
+// recorded on the run before anything runs, so a failed run can be discarded.
+func (m *Manager) prepareApart(ctx context.Context, r *Run) error {
+	if err := checkWorktree(ctx, r.Worktree, r.Branch); err != nil {
+		return err
+	}
+	if r.AIBranch != "" {
+		return nil // a further pass on the same sandbox
+	}
+	if r.BaseSHA != "" {
+		return fmt.Errorf("run %s already changed %s itself: it cannot move to a -ai branch", r.ID, r.Worktree)
+	}
+	if r.Branch == "" {
+		return fmt.Errorf("run %s has no branch to base a -ai branch on", r.ID)
+	}
+	aiBranch := r.Branch + AIBranchSuffix
+	dir := filepath.Join(filepath.Dir(r.Worktree), git.BranchDir(aiBranch))
+	if branchExists(ctx, r.Worktree, aiBranch) {
+		return fmt.Errorf("branch %s exists already: accept or discard the run that made it (ade agent list), or delete the branch", aiBranch)
+	}
+	if _, err := os.Lstat(dir); err == nil {
+		return fmt.Errorf("%s exists already: remove it, or accept or discard the run that made it", dir)
+	}
+	base, err := head(ctx, r.Worktree)
+	if err != nil {
+		return err
+	}
+	if err := addSandbox(ctx, r.Worktree, dir, aiBranch, base); err != nil {
+		return err
+	}
+	r.BaseSHA, r.AIBranch, r.AIWorktree = base, aiBranch, dir
+	m.audit(audit.Entry{
+		Actor: "agent:" + r.ID, Action: "agent.isolate", Target: r.Item(), Item: r.Item(), Project: r.Project,
+		Params: map[string]any{"run": r.ID, "branch": r.Branch, "ai_branch": aiBranch, "worktree": dir, "base": short(base)},
+	})
+	return m.Store.Save(*r)
+}
+
 // toReview writes the diff summary and moves running → review. A run that
 // changed nothing fails when requireChange is set.
 func (m *Manager) toReview(ctx context.Context, r Run, requireChange bool) (Run, error) {
-	d, err := worktreeDiff(ctx, r.Worktree, r.BaseSHA, false)
+	d, err := worktreeDiff(ctx, r.WorkDir(), r.BaseSHA, false)
 	if err != nil {
 		return m.fail(r, fmt.Errorf("diff: %w", err))
 	}
@@ -470,7 +550,7 @@ func (m *Manager) Diff(ctx context.Context, id string, patch bool) (DiffSummary,
 	if r.BaseSHA == "" {
 		return DiffSummary{}, r, fmt.Errorf("run %s has not changed anything yet (state %s)", r.ID, r.State)
 	}
-	d, err := worktreeDiff(ctx, r.Worktree, r.BaseSHA, patch)
+	d, err := worktreeDiff(ctx, r.WorkDir(), r.BaseSHA, patch)
 	return d, r, err
 }
 
@@ -490,6 +570,9 @@ func (m *Manager) Push(ctx context.Context, id string, o PushOpts) (Run, error) 
 	if r.State != StateReview {
 		return r, fmt.Errorf("run %s is %s: only a run in review can be pushed", r.ID, r.State)
 	}
+	if r.Isolated() {
+		return r, fmt.Errorf("run %s keeps its changes on %s: ade agent accept %s (or discard) before pushing", r.ID, r.AIBranch, r.ID)
+	}
 	if err := checkWorktree(ctx, r.Worktree, r.Branch); err != nil {
 		return r, err
 	}
@@ -500,29 +583,8 @@ func (m *Manager) Push(ctx context.Context, id string, o PushOpts) (Run, error) 
 	if d.Empty() {
 		return r, errNoChanges
 	}
-	msg := o.Message
-	if msg == "" {
-		msg = m.commitMessage(r)
-	}
-	// Only the MR's first commit carries the prefix.
-	if commitprefix.FirstCommit(ctx, r.Worktree) {
-		prefix, _ := m.commitPrefix(ctx, r)
-		msg = commitmsg.Apply(prefix, msg)
-	}
-	author := AuthorFromGit(ctx, r.Worktree)
-	sha, err := commitAll(ctx, r.Worktree, author, msg)
-	if err != nil {
+	if err := m.commitWork(ctx, &r, r.Worktree, o.Message); err != nil {
 		return r, m.pushFailed(r, "commit", err)
-	}
-	if sha != "" {
-		r.Commits = append(r.Commits, sha)
-		if err := m.Store.Save(r); err != nil {
-			return r, err
-		}
-		m.audit(audit.Entry{
-			Action: "git.commit", Target: r.Worktree, Item: r.Item(),
-			Params: map[string]any{"run": r.ID, "sha": sha, "author": author.Name},
-		})
 	}
 	gc := git.Client{}
 	if m.GitFor != nil {
@@ -543,6 +605,154 @@ func (m *Manager) Push(ctx context.Context, id string, o PushOpts) (Run, error) 
 	if err := m.move(&r, StatePushed); err != nil {
 		return r, err
 	}
+	return r, nil
+}
+
+// commitWork commits everything in dir (the run's worktree, or its -ai
+// worktree) as the synthetic author, with the user's message or the default
+// one, and records the commit on the run. The MR's first commit carries the
+// commit prefix. Nothing to commit is not an error.
+func (m *Manager) commitWork(ctx context.Context, r *Run, dir, message string) error {
+	msg := message
+	if msg == "" {
+		msg = m.commitMessage(*r)
+	}
+	// Only the MR's first commit carries the prefix.
+	if commitprefix.FirstCommit(ctx, r.Worktree) {
+		prefix, _ := m.commitPrefix(ctx, *r)
+		msg = commitmsg.Apply(prefix, msg)
+	}
+	author := AuthorFromGit(ctx, r.Worktree)
+	sha, err := commitAll(ctx, dir, author, msg)
+	if err != nil {
+		return err
+	}
+	if sha == "" {
+		return nil
+	}
+	r.Commits = append(r.Commits, sha)
+	if err := m.Store.Save(*r); err != nil {
+		return err
+	}
+	m.audit(audit.Entry{
+		Action: "git.commit", Target: dir, Item: r.Item(),
+		Params: map[string]any{"run": r.ID, "sha": sha, "author": author.Name},
+	})
+	return nil
+}
+
+// AcceptOpts are the user's words for the commit Accept makes.
+type AcceptOpts struct {
+	Message string // empty: the issue title and the run id
+}
+
+// Accept takes an isolated run's work into the item's branch: everything the
+// agent left in the -ai worktree is committed (synthetic author, as on push),
+// the item's branch is fast-forwarded to it, and the -ai worktree and branch
+// are removed. It refuses, changing nothing on the item's branch, when the
+// branch has moved on since the run began (not a fast-forward). Nothing is
+// pushed: the run stays in review, and `ade agent push` sends the branch.
+func (m *Manager) Accept(ctx context.Context, id string, o AcceptOpts) (Run, error) {
+	r, err := m.Store.Get(id)
+	if err != nil {
+		return r, err
+	}
+	switch {
+	case !r.Isolated():
+		return r, fmt.Errorf("run %s has no -ai branch to accept (it works in the item's worktree: ade agent push %s)", r.ID, r.ID)
+	case r.State != StateReview:
+		return r, fmt.Errorf("run %s is %s: only a run in review can be accepted", r.ID, r.State)
+	}
+	if _, err := os.Stat(r.AIWorktree); err != nil {
+		return r, fmt.Errorf("the -ai worktree %s is gone: ade agent discard %s", r.AIWorktree, r.ID)
+	}
+	if err := checkWorktree(ctx, r.Worktree, r.Branch); err != nil {
+		return r, err
+	}
+	d, err := worktreeDiff(ctx, r.AIWorktree, r.BaseSHA, false)
+	if err != nil {
+		return r, err
+	}
+	if d.Empty() {
+		return r, errNoChanges
+	}
+	// The agent's changes become a commit on the -ai branch first: if the
+	// item's branch cannot be fast-forwarded they are still there to merge or
+	// rebase by hand.
+	if err := m.commitWork(ctx, &r, r.AIWorktree, o.Message); err != nil {
+		return r, m.acceptFailed(r, "commit", err)
+	}
+	if !isAncestor(ctx, r.Worktree, r.Branch, r.AIBranch) {
+		tip, _ := head(ctx, r.Worktree)
+		return r, m.acceptFailed(r, "fast-forward", fmt.Errorf("%w: %s moved from %s to %s since the run began, so %s cannot be fast-forwarded onto it; nothing was changed (the work is committed on %s: rebase or merge it by hand, or ade agent discard %s)",
+			ErrNotFastForward, r.Branch, short(r.BaseSHA), short(tip), r.Branch, r.AIBranch, r.ID))
+	}
+	if err := fastForward(ctx, r.Worktree, r.AIBranch); err != nil {
+		return r, m.acceptFailed(r, "fast-forward", err)
+	}
+	tip, _ := head(ctx, r.Worktree)
+	cleanup := removeSandbox(ctx, r.Worktree, r.AIWorktree, r.AIBranch, false)
+	aiBranch := r.AIBranch
+	r.AIBranch, r.AIWorktree, r.AcceptedAt, r.Error = "", "", m.Now(), ""
+	if err := m.Store.Save(r); err != nil {
+		return r, err
+	}
+	m.audit(audit.Entry{
+		Action: "agent.accept", Actor: "user", Target: r.Item(), Item: r.Item(), Project: r.Project,
+		Params: map[string]any{"run": r.ID, "branch": r.Branch, "ai_branch": aiBranch, "from": short(r.BaseSHA), "to": short(tip)},
+	})
+	m.emit(r, "accepted", events.Success, false, "", "")
+	if cleanup != nil {
+		return r, fmt.Errorf("accepted, but removing the -ai worktree or branch failed: %w", cleanup)
+	}
+	return r, nil
+}
+
+// acceptFailed keeps the run in review with the reason, like pushFailed.
+func (m *Manager) acceptFailed(r Run, what string, err error) error {
+	err = fmt.Errorf("accept: %s: %w", what, err)
+	r.Error, r.Updated = err.Error(), m.Now()
+	_ = m.Store.Save(r)
+	m.audit(audit.Entry{
+		Action: "agent.accept", Actor: "user", Target: r.Item(), Item: r.Item(), Project: r.Project,
+		Params: map[string]any{"run": r.ID, "branch": r.Branch, "ai_branch": r.AIBranch}, Outcome: "error", Error: err.Error(),
+	})
+	return err
+}
+
+// Discard throws an isolated run's changes away: the -ai worktree (with
+// whatever the agent left in it) and the branch are removed, and a run still
+// in review is cancelled. The item's own branch and worktree are untouched.
+// It also cleans up after a run that failed or was cancelled.
+func (m *Manager) Discard(ctx context.Context, id string) (Run, error) {
+	r, err := m.Store.Get(id)
+	if err != nil {
+		return r, err
+	}
+	switch {
+	case !r.Isolated():
+		return r, fmt.Errorf("run %s has no -ai branch to discard (ade agent cancel %s stops a run)", r.ID, r.ID)
+	case r.State.Active():
+		return r, fmt.Errorf("run %s is %s: cancel it first (ade agent cancel %s)", r.ID, r.State, r.ID)
+	}
+	aiBranch, aiTree := r.AIBranch, r.AIWorktree
+	if cleanup := removeSandbox(ctx, r.Worktree, aiTree, aiBranch, true); cleanup != nil {
+		return r, fmt.Errorf("remove %s and %s: %w", aiTree, aiBranch, cleanup)
+	}
+	r.AIBranch, r.AIWorktree, r.Error = "", "", ""
+	if r.State.Terminal() {
+		r.Updated = m.Now()
+		if err := m.Store.Save(r); err != nil {
+			return r, err
+		}
+	} else if err := m.move(&r, StateCancelled); err != nil {
+		return r, err
+	}
+	m.audit(audit.Entry{
+		Action: "agent.discard", Actor: "user", Target: r.Item(), Item: r.Item(), Project: r.Project,
+		Params: map[string]any{"run": r.ID, "branch": r.Branch, "ai_branch": aiBranch, "worktree": aiTree},
+	})
+	m.emit(r, "discarded", events.Info, false, "", "")
 	return r, nil
 }
 
@@ -717,7 +927,7 @@ func (m *Manager) emit(r Run, what string, sev events.Severity, transient bool, 
 		words := map[string]string{
 			"queued": "queued", "planning": "planning", "running": "running", "approved": "plan approved",
 			"awaiting-approval": "plan needs your approval", "review": "ready for review",
-			"pushed": "pushed", "cancelled": "cancelled",
+			"pushed": "pushed", "cancelled": "cancelled", "accepted": "-ai branch accepted", "discarded": "-ai branch discarded",
 		}
 		title = fmt.Sprintf("agent %s: %s", r.Item(), firstNonEmpty(words[what], what))
 	}
@@ -757,7 +967,7 @@ func (m *Manager) call(ctx context.Context, r *Run, kind Kind, prompt string) (c
 	if err := Available(drv); err != nil {
 		return callResult{}, fmt.Errorf("agent driver unavailable: %w", err)
 	}
-	spec := Spec{Kind: kind, Model: r.Model, Dir: r.Worktree, AddDirs: r.AddDirs, Prompt: prompt, Price: priceOf(p, r.Model)}
+	spec := Spec{Kind: kind, Model: r.Model, Dir: r.WorkDir(), AddDirs: r.AddDirs, Prompt: prompt, Price: priceOf(p, r.Model)}
 	if r.CapUSD > 0 {
 		if spec.MaxCostUSD = r.Remaining(); spec.MaxCostUSD <= 0 {
 			return callResult{}, &ai.StopError{Source: "local", Message: fmt.Sprintf("run %s has used its cap of $%.2f", r.ID, r.CapUSD)}
@@ -780,7 +990,7 @@ func (m *Manager) call(ctx context.Context, r *Run, kind Kind, prompt string) (c
 	spentBefore := r.CostUSD
 	m.audit(audit.Entry{
 		Actor: "agent:" + r.ID, Action: "agent.run.start", Target: r.Item(), Item: r.Item(), Project: r.Project,
-		Params: map[string]any{"run": r.ID, "call": string(kind), "driver": drv.Name(), "model": r.Model, "cap_usd": r.CapUSD, "worktree": r.Worktree},
+		Params: map[string]any{"run": r.ID, "call": string(kind), "driver": drv.Name(), "model": r.Model, "cap_usd": r.CapUSD, "worktree": r.WorkDir()},
 	})
 
 	cmd := drv.Command(spec)

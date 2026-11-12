@@ -92,6 +92,9 @@ func LoadChildBody(m *config.Manifest) (body, note string) {
 // reads nothing from the forge.
 func (e *Env) Discover(ctx context.Context, item domain.WorkItem, m *config.Manifest, ch Choices) (map[string]Found, error) {
 	out := map[string]Found{}
+	if ch.OnlyChild {
+		ch.Child, ch.Mode = ChildAlways, ModeBranch
+	}
 	for _, name := range ch.Repos {
 		if _, done := out[name]; done {
 			continue
@@ -387,12 +390,6 @@ const (
 	gitHubTemplateDir  = ".github/PULL_REQUEST_TEMPLATE"
 )
 
-// templateSource says where the forge keeps MR templates: the directory
-// listing them and how a template name maps to a file path.
-func (e *Env) templateSource(ctx context.Context, t Target, f *Found) (names []string, pathOf func(string) string, err error) {
-	return TemplateNames(ctx, e.Forge, t.Project, f.DefaultBranch)
-}
-
 // TemplateNames lists the MR templates project offers at ref, by name, and
 // maps a name to its file path. GitLab keeps them in a directory; GitHub in
 // one well-known file (named "Default") and a directory.
@@ -432,13 +429,36 @@ func TemplateNames(ctx context.Context, fg Forge, project, ref string) (names []
 
 // findTemplate reads the chosen MR template from the repo's default branch.
 func (e *Env) findTemplate(ctx context.Context, m *config.Manifest, ch Choices, t Target, f *Found) error {
-	names, pathOf, err := e.templateSource(ctx, t, f)
+	pick, err := PickTemplate(ctx, e.Forge, m, t.Project, f.DefaultBranch, ch.Template)
 	if err != nil {
-		return fmt.Errorf("templates of %s: %w", t.Project, err)
+		return err
 	}
-	f.Templates = append(f.Templates, names...)
-	slices.Sort(f.Templates)
-	name, explicit := ch.Template, ch.Template != ""
+	f.Templates = pick.Names
+	f.Warnings = append(f.Warnings, pick.Warnings...)
+	f.TemplateName, f.TemplateBody = pick.Name, pick.Body
+	return nil
+}
+
+// Template is the MR template PickTemplate chose; Name and Body are empty when
+// none applies.
+type Template struct {
+	Names    []string // every template the repo offers, sorted
+	Name     string
+	Body     string
+	Warnings []string
+}
+
+// PickTemplate reads the MR template of project from ref: want (a flag), else
+// conventions.mr.template, else "Default", else the repo's only template.
+func PickTemplate(ctx context.Context, fg Forge, m *config.Manifest, project, ref, want string) (Template, error) {
+	var out Template
+	names, pathOf, err := TemplateNames(ctx, fg, project, ref)
+	if err != nil {
+		return out, fmt.Errorf("templates of %s: %w", project, err)
+	}
+	out.Names = append(out.Names, names...)
+	slices.Sort(out.Names)
+	name, explicit := want, want != ""
 	if name == "" {
 		name = m.Conventions.MR.Template
 		explicit = name != ""
@@ -446,29 +466,29 @@ func (e *Env) findTemplate(ctx context.Context, m *config.Manifest, ch Choices, 
 	if name == "" {
 		name = "Default"
 	}
-	if !slices.Contains(f.Templates, name) {
+	if !slices.Contains(out.Names, name) {
 		switch {
 		case explicit:
-			f.Warnings = append(f.Warnings, fmt.Sprintf("%s: MR template %q not found (have: %s)", t.Project, name, strings.Join(f.Templates, ", ")))
-			return nil
-		case len(f.Templates) == 1:
-			name = f.Templates[0]
-		case len(f.Templates) > 1:
-			f.Warnings = append(f.Warnings, fmt.Sprintf("%s: several MR templates (%s): choose one with --template", t.Project, strings.Join(f.Templates, ", ")))
-			return nil
+			out.Warnings = append(out.Warnings, fmt.Sprintf("%s: MR template %q not found (have: %s)", project, name, strings.Join(out.Names, ", ")))
+			return out, nil
+		case len(out.Names) == 1:
+			name = out.Names[0]
+		case len(out.Names) > 1:
+			out.Warnings = append(out.Warnings, fmt.Sprintf("%s: several MR templates (%s): choose one with --template", project, strings.Join(out.Names, ", ")))
+			return out, nil
 		default:
-			return nil
+			return out, nil
 		}
 	}
-	body, err := e.Forge.ReadFile(ctx, t.Project, f.DefaultBranch, pathOf(name))
+	body, err := fg.ReadFile(ctx, project, ref, pathOf(name))
 	if errors.Is(err, forge.ErrNotFound) {
-		return nil
+		return out, nil
 	}
 	if err != nil {
-		return fmt.Errorf("template %s: %w", name, err)
+		return out, fmt.Errorf("template %s: %w", name, err)
 	}
-	f.TemplateName, f.TemplateBody = name, string(body)
-	return nil
+	out.Name, out.Body = name, string(body)
+	return out, nil
 }
 
 func exists(p string) bool {

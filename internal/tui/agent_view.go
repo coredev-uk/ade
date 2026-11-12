@@ -70,6 +70,8 @@ func (m model) agentOverlay(w, h int) string {
 		l, hint = m.agDetailView(d, inner, h)
 	case agConfirm:
 		l, hint = m.agConfirmView(d, inner)
+	case agDiscard:
+		l, hint = m.agDiscardView(d, inner)
 	}
 	if d.busy != "" {
 		l = append(l, "", stFaint.Render(m.g.Sync+" "+d.busy+m.g.Ell))
@@ -178,6 +180,7 @@ func (m model) agPlanView(d *agentDialog, inner, h int) ([]string, string) {
 	enter := "approve"
 	if r.Approved {
 		enter = "run it in the worktree"
+		return l, keys("enter", enter, "i", "run on a -ai branch", "e", "edit plan", "j/k", "scroll", "x", "discard", "esc", "back")
 	}
 	return l, keys("enter", enter, "e", "edit plan", "j/k", "scroll", "x", "discard", "esc", "back")
 }
@@ -188,6 +191,11 @@ func (m model) agDetailView(d *agentDialog, inner, h int) ([]string, string) {
 	row := func(k, v string) { l = append(l, ansi.Truncate(stFaint.Render(pad(m.g, k, 10))+v, inner, m.g.Ell)) }
 	row("state", m.agStateMark(r.State))
 	row("item", r.Item()+" "+stFaint.Render("in "+r.Repo+" on "+r.Branch))
+	if r.Isolated() {
+		row("-ai", r.AIBranch+" "+stFaint.Render(m.g.T("in …/")+filepath.Base(r.AIWorktree)+m.g.T(" · waits for accept or discard")))
+	} else if !r.AcceptedAt.IsZero() {
+		row("accepted", r.AcceptedAt.Local().Format("2 Jan 15:04")+stFaint.Render(m.g.T(" · ")+r.Branch+" fast-forwarded; not pushed yet"))
+	}
 	row("driver", r.Driver+" "+stFaint.Render(r.Model))
 	row("cost", fmt.Sprintf("$%.4f", r.CostUSD)+stFaint.Render(fmt.Sprintf(" of $%.2f cap", r.CapUSD)))
 	row("elapsed", r.Elapsed(time.Now()).Round(time.Second).String())
@@ -225,8 +233,13 @@ func (m model) agDetailView(d *agentDialog, inner, h int) ([]string, string) {
 		}
 	}
 	hint := keys("l", "lazygit", "esc", "back")
-	if r.State == agent.StateReview {
+	switch {
+	case r.State == agent.StateReview && r.Isolated():
+		hint = keys("l", "lazygit", "a", "accept", "D", "discard", "esc", "back")
+	case r.State == agent.StateReview:
 		hint = keys("l", "lazygit", "P", "push", "x", "discard", "esc", "back")
+	case r.Isolated():
+		hint = keys("l", "lazygit", "D", "discard -ai branch", "esc", "back")
 	}
 	if d.plan != "" && r.Kind == agent.KindPlan {
 		hint += "   " + keys("p", "plan")
@@ -245,6 +258,17 @@ func (m model) agConfirmView(d *agentDialog, inner int) ([]string, string) {
 		l = append(l, strings.ReplaceAll(ln, "\x00", " "))
 	}
 	return l, keys("y", "commit and push", "n", "back")
+}
+
+func (m model) agDiscardView(d *agentDialog, inner int) ([]string, string) {
+	g, r := m.g, d.cur
+	l := []string{section("Discard", "the -ai branch", inner, g), ""}
+	if ds := d.diff; ds != nil {
+		l = append(l, fmt.Sprintf(m.g.T("%s · +%d -%d"), countWord(len(ds.Files), "file"), ds.Added(), ds.Removed()))
+		l = append(l, "")
+	}
+	l = append(l, wrap("Removes the worktree "+stBold.Render(r.AIWorktree)+" and the branch "+stBold.Render(r.AIBranch)+" with everything the agent left in them. "+stBold.Render(r.Branch)+" and its worktree are not touched.", inner)...)
+	return l, keys("y", "discard", "n", "back")
 }
 
 // agentOverlayLayer places the dialog at the top, centred in a blank field

@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -30,6 +32,10 @@ func newAgentCmd() *cobra.Command {
 			"  ade agent diff <run>           what changed (--patch for the full diff)\n" +
 			"  ade agent review <run>         lazygit on the worktree\n" +
 			"  ade agent push <run>           commit (synthetic author) and push the branch\n\n" +
+			"`ade agent run <run> --ai-branch` (or --background, detached) implements on a separate\n" +
+			"<branch>-ai branch and worktree instead, so your own worktree stays yours; then\n" +
+			"`ade agent accept <run>` fast-forwards the item's branch to the result (refusing if it\n" +
+			"moved on) and `ade agent discard <run>` throws the -ai branch away. Neither pushes.\n\n" +
 			"`ade agent address <tracker-ref>` takes the MR's unresolved threads, edits code and drafts\n" +
 			"replies into the review drafts: nothing is posted until you triage and submit them.\n\n" +
 			"Every run has a hard cost cap (budget.agent_run_usd, lowered with --max-usd): the agent\n" +
@@ -39,7 +45,7 @@ func newAgentCmd() *cobra.Command {
 	cmd.AddCommand(
 		newAgentPlanCmd(), newAgentApproveCmd(), newAgentRunCmd(), newAgentAddressCmd(),
 		newAgentDiffCmd(), newAgentReviewCmd(), newAgentPushCmd(),
-		newAgentListCmd(), newAgentShowCmd(), newAgentCancelCmd(),
+		newAgentListCmd(), newAgentShowCmd(), newAgentCancelCmd(), newAgentAcceptCmd(), newAgentDiscardCmd(),
 	)
 	return cmd
 }
@@ -193,10 +199,21 @@ func printRun(cmd *cobra.Command, s *agentSession, r agent.Run, stepErr error) e
 		}
 	}
 	if r.State == agent.StateReview {
-		fmt.Fprintf(w, "review with: ade agent diff %s · ade agent review %s · then ade agent push %s\n", r.ID, r.ID, r.ID)
+		switch {
+		case r.Isolated():
+			fmt.Fprintf(w, "the changes are on %s in %s\nreview with: ade agent diff %s · ade agent review %s · then ade agent accept %s (fast-forwards %s) or ade agent discard %s\n",
+				r.AIBranch, r.AIWorktree, r.ID, r.ID, r.ID, r.Branch, r.ID)
+		case !r.AcceptedAt.IsZero():
+			fmt.Fprintf(w, "accepted into %s in %s: nothing is pushed yet · ade agent diff %s · ade agent push %s\n", r.Branch, r.Worktree, r.ID, r.ID)
+		default:
+			fmt.Fprintf(w, "review with: ade agent diff %s · ade agent review %s · then ade agent push %s\n", r.ID, r.ID, r.ID)
+		}
 		if r.Drafts > 0 {
 			fmt.Fprintf(w, "%d reply drafts are pending: ade review list\n", r.Drafts)
 		}
+	}
+	if r.Isolated() && r.State.Terminal() {
+		fmt.Fprintf(w, "the -ai branch %s is kept in %s: ade agent diff %s · ade agent discard %s\n", r.AIBranch, r.AIWorktree, r.ID, r.ID)
 	}
 	if r.Error != "" && stepErr == nil {
 		fmt.Fprintln(w, "error:", r.Error)
@@ -225,20 +242,132 @@ func newAgentApproveCmd() *cobra.Command {
 }
 
 func newAgentRunCmd() *cobra.Command {
-	return &cobra.Command{
+	var apart, background bool
+	cmd := &cobra.Command{
 		Use:   "run <run>",
-		Short: "Implement the approved plan in the item's worktree",
-		Args:  cobra.ExactArgs(1),
+		Short: "Implement the approved plan in the item's worktree (or, with --ai-branch, on a separate branch)",
+		Long: "Implements the approved plan with the agent, in the item's worktree.\n\n" +
+			"--ai-branch starts a new <branch>-ai branch and worktree at the item's current commit and\n" +
+			"lets the agent work there, so your own worktree stays yours: it may be dirty and you may\n" +
+			"keep committing. When the run is in review, `ade agent accept` fast-forwards the item's\n" +
+			"branch to the result (and refuses if the branch has moved on since), `ade agent discard`\n" +
+			"throws the -ai branch away. Nothing is pushed either way. The -ai worktree is a fresh\n" +
+			"checkout: ignored files of your worktree (node_modules, .env) are not in it.\n\n" +
+			"--background starts the run as a detached process (it implies --ai-branch: the agent must\n" +
+			"not share the tree you keep working in) and returns at once. Its output goes to\n" +
+			"background.log in the run's directory, and the inbox reports when it is ready for review.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := newAgentSession(cmd)
 			if err != nil {
 				return err
 			}
 			defer s.stop()
-			r, err := s.m.Implement(cmd.Context(), args[0])
+			if background {
+				return startBackgroundRun(cmd, s, args[0])
+			}
+			implement := s.m.Implement
+			if apart {
+				implement = s.m.ImplementApart
+			}
+			r, err := implement(cmd.Context(), args[0])
 			return printRun(cmd, s, r, err)
 		},
 	}
+	cmd.Flags().BoolVar(&apart, "ai-branch", false, "work on a separate <branch>-ai branch and worktree; accept or discard it afterwards")
+	cmd.Flags().BoolVar(&background, "background", false, "start the run detached and return at once (implies --ai-branch)")
+	return cmd
+}
+
+func newAgentAcceptCmd() *cobra.Command {
+	var msg string
+	cmd := &cobra.Command{
+		Use:   "accept <run>",
+		Short: "Take a --ai-branch run's work into the item's branch (fast-forward only; nothing is pushed)",
+		Long: "Commits what the agent left in the -ai worktree (synthetic author, as `agent push` does),\n" +
+			"fast-forwards the item's branch to that commit and removes the -ai worktree and branch.\n" +
+			"It refuses, changing nothing on the item's branch, when the branch has commits the run did\n" +
+			"not start from: the work stays committed on the -ai branch for you to rebase or merge by\n" +
+			"hand, or to discard. The run stays in review: `ade agent push` sends the branch.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			s, err := newAgentSession(cmd)
+			if err != nil {
+				return err
+			}
+			defer s.stop()
+			r, err := s.m.Accept(cmd.Context(), args[0], agent.AcceptOpts{Message: msg})
+			if err != nil {
+				return err
+			}
+			return printRun(cmd, s, r, nil)
+		},
+	}
+	cmd.Flags().StringVarP(&msg, "message", "m", "", "commit message (default: the issue title and the run id)")
+	return cmd
+}
+
+func newAgentDiscardCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "discard <run>",
+		Short: "Throw a --ai-branch run's work away: removes the -ai worktree and branch",
+		Long: "Removes the -ai worktree (with whatever the agent left in it) and the -ai branch, and\n" +
+			"cancels a run still in review. The item's own branch and worktree are not touched. Also\n" +
+			"cleans up after an --ai-branch run that failed or was cancelled.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			s, err := newAgentSession(cmd)
+			if err != nil {
+				return err
+			}
+			defer s.stop()
+			r, err := s.m.Discard(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			return printRun(cmd, s, r, nil)
+		},
+	}
+}
+
+// adeExecutable is the binary --background starts; tests replace it.
+var adeExecutable = os.Executable
+
+// startBackgroundRun checks the run can be implemented, then starts
+// `ade agent run <id> --ai-branch` in its own session with its output in the
+// run's directory, and returns without waiting for it.
+func startBackgroundRun(cmd *cobra.Command, s *agentSession, id string) error {
+	if err := s.m.CanImplement(id); err != nil {
+		return err
+	}
+	r, err := s.m.Store.Get(id)
+	if err != nil {
+		return err
+	}
+	exe, err := adeExecutable()
+	if err != nil {
+		return err
+	}
+	logPath := filepath.Join(s.m.Store.Dir(r), "background.log")
+	logf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	defer logf.Close()
+	child := exec.Command(exe, "agent", "run", r.ID, "--ai-branch")
+	child.Stdout, child.Stderr = logf, logf
+	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := child.Start(); err != nil {
+		return fmt.Errorf("start %s: %w", exe, err)
+	}
+	pid := child.Process.Pid
+	go child.Wait() //nolint:errcheck // reaps the child if this process outlives it; its state is the run's
+	if jsonOut {
+		return printJSON(cmd.OutOrStdout(), map[string]any{"run": r.ID, "pid": pid, "log": logPath, "background": true, "ai_branch": r.Branch + agent.AIBranchSuffix})
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "run %s implementing in the background (pid %d) on %s%s\nlog: %s\nwatch with: ade agent show %s · the inbox says when it is ready; then ade agent accept %s or ade agent discard %s\n",
+		r.ID, pid, r.Branch, agent.AIBranchSuffix, logPath, r.ID, r.ID, r.ID)
+	return nil
 }
 
 func newAgentDiffCmd() *cobra.Command {
@@ -292,7 +421,7 @@ func newAgentReviewCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			lg := agent.LazygitCmd(r.Worktree, os.Getenv("ZELLIJ") != "")
+			lg := agent.LazygitCmd(r.WorkDir(), os.Getenv("ZELLIJ") != "")
 			lg.Stdin, lg.Stdout, lg.Stderr = os.Stdin, cmd.OutOrStdout(), cmd.ErrOrStderr()
 			if err := lg.Run(); err != nil {
 				return fmt.Errorf("%s: %w", lg.Args[0], err)
@@ -379,6 +508,9 @@ func newAgentShowCmd() *cobra.Command {
 func printRunDetail(w io.Writer, dir string, r agent.Run) {
 	fmt.Fprintf(w, "run %s · %s · %s\n", r.ID, r.Kind, r.State)
 	fmt.Fprintf(w, "  item      %s (%s)\n  worktree  %s on %s\n", r.Item(), r.Repo, r.Worktree, r.Branch)
+	if r.Isolated() {
+		fmt.Fprintf(w, "  -ai       %s in %s (ade agent accept | discard)\n", r.AIBranch, r.AIWorktree)
+	}
 	fmt.Fprintf(w, "  driver    %s · %s\n  cost      $%.4f of $%.2f cap\n  dir       %s\n", r.Driver, r.Model, r.CostUSD, r.CapUSD, dir)
 	for _, c := range r.Calls {
 		fmt.Fprintf(w, "  call      %-8s exit %d · $%.4f · %d turns %s\n", c.Kind, c.Exit, c.CostUSD, c.Turns, c.StoppedBy)
@@ -407,7 +539,7 @@ func newAgentListCmd() *cobra.Command {
 			if !all {
 				live := rs[:0:0]
 				for _, r := range rs {
-					if !r.State.Terminal() {
+					if !r.State.Terminal() || r.Isolated() { // a finished run that still holds a -ai branch needs accept or discard
 						live = append(live, r)
 					}
 				}
@@ -424,7 +556,11 @@ func newAgentListCmd() *cobra.Command {
 			fmt.Fprintln(tw, "RUN\tITEM\tKIND\tSTATE\tCOST\tTIME")
 			now := time.Now()
 			for _, r := range rs {
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t$%.4f/$%.2f\t%s\n", r.ID, r.Item(), r.Kind, r.State, r.CostUSD, r.CapUSD, r.Elapsed(now).Round(time.Second))
+				state := string(r.State)
+				if r.Isolated() {
+					state += " (-ai)"
+				}
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t$%.4f/$%.2f\t%s\n", r.ID, r.Item(), r.Kind, state, r.CostUSD, r.CapUSD, r.Elapsed(now).Round(time.Second))
 			}
 			return tw.Flush()
 		},

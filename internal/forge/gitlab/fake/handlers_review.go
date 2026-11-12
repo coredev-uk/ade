@@ -19,6 +19,7 @@ func (s *Server) reviewRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+mrp+"/versions", s.mrVersions)
 	mux.HandleFunc("GET "+mrp+"/diffs", s.mrDiffs)
 	mux.HandleFunc("PUT "+mrp, s.updateMR)
+	mux.HandleFunc("GET "+mrp+"/commits", s.mrCommits)
 	mux.HandleFunc("POST "+mrp+"/discussions", s.createDiscussion)
 	mux.HandleFunc("POST "+mrp+"/discussions/{did}/notes", s.replyDiscussion)
 	mux.HandleFunc("PUT "+mrp+"/discussions/{did}", s.resolveDiscussion)
@@ -132,12 +133,19 @@ func (s *Server) updateMR(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	_, hasDesc := p["description"]
 	title := str(p, "title")
-	if title == "" {
+	if title == "" && !hasDesc {
 		badRequest(w, "title is empty")
 		return
 	}
-	m.Title, m.Draft, m.Updated = title, hasDraftPrefix(title), s.st.clock
+	if title != "" {
+		m.Title, m.Draft = title, hasDraftPrefix(title)
+	}
+	if hasDesc {
+		m.Desc, m.DescWrites = str(p, "description"), m.DescWrites+1
+	}
+	m.Updated = s.st.clock
 	writeJSON(w, http.StatusOK, s.mrJSON(m, m.Project, true))
 }
 
@@ -513,4 +521,23 @@ func (s *Server) jobTrace(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	notFound(w)
+}
+
+// mrCommits lists the MR's commits newest first, as GitLab does.
+func (s *Server) mrCommits(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m, ok := s.lookupMR(w, r)
+	if !ok {
+		return
+	}
+	out := make([]object, 0, len(m.Commits))
+	for i := len(m.Commits) - 1; i >= 0; i-- {
+		c := m.Commits[i]
+		out = append(out, object{
+			"id": c.SHA, "short_id": c.SHA[:8], "title": c.Title, "message": c.Message,
+			"author_name": c.Author, "created_at": ts(m.Created),
+		})
+	}
+	paged(s, w, r, out, func(o object) any { return o })
 }

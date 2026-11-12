@@ -47,6 +47,9 @@ type Result struct {
 	// Warnings are non-fatal problems (e.g. a record that could not be written).
 	Warnings []string `json:"warnings,omitempty"`
 	Err      string   `json:"err,omitempty"`
+	// StalledAt is when sync.stalled was raised for the current outage; it
+	// stays until a sync succeeds, so one outage raises it once.
+	StalledAt time.Time `json:"stalled_at,omitzero"`
 }
 
 // ReviewFacets are the facets of the issue behind a review request, taken
@@ -139,10 +142,19 @@ func (s *Service) syncProject(ctx context.Context, st *store.Store, ref config.P
 	old, hadPrev := prev[m.Name]
 	fail := func(err error) projectOutcome {
 		res.Err = err.Error()
+		var evs []events.Event
+		// The last good sync is the old state's SyncedAt (saveFailure keeps it);
+		// a project that never synced has no baseline to be stalled against.
+		if hadPrev && old.StalledAt.IsZero() {
+			if e, ok := stalled(m.Name, old.SyncedAt, res.SyncedAt, s.App.Config.Notify.SyncStalledAfter.Duration, res.Err); ok {
+				res.StalledAt = res.SyncedAt
+				evs = append(evs, e)
+			}
+		}
 		if saveErr := saveFailure(st, old, hadPrev, res); saveErr != nil {
 			res.Err += "; " + saveErr.Error()
 		}
-		return projectOutcome{Result: res}
+		return projectOutcome{Result: res, events: evs}
 	}
 
 	f, err := s.openFor(ctx, m)

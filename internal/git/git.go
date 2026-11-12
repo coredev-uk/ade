@@ -290,6 +290,31 @@ func (c Client) Worktrees(ctx context.Context, bare string) ([]Worktree, error) 
 	return trees, nil
 }
 
+// AIBranchSuffix is appended to a work branch to name the separate branch an
+// isolated agent run implements on (ade agent run --ai-branch).
+const AIBranchSuffix = "-ai"
+
+// WithoutSandboxes drops the worktrees of agent sandboxes: a tree on
+// <branch>-ai while another tree is on <branch>. A branch that merely ends in
+// "-ai" (an issue about AI) stays, because nothing else is on the name
+// without it.
+func WithoutSandboxes(trees []Worktree) []Worktree {
+	branches := map[string]bool{}
+	for _, t := range trees {
+		if t.Branch != "" {
+			branches[t.Branch] = true
+		}
+	}
+	out := make([]Worktree, 0, len(trees))
+	for _, t := range trees {
+		if base, ok := strings.CutSuffix(t.Branch, AIBranchSuffix); ok && base != "" && branches[base] {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
 // IsClean reports whether the worktree has no modified or untracked files.
 func (c Client) IsClean(ctx context.Context, tree string) (bool, error) {
 	out, err := c.Run(ctx, tree, "status", "--porcelain")

@@ -12,7 +12,10 @@ import (
 	"github.com/coredev-uk/ade/internal/forge/gitlab/fake"
 )
 
-var _ forge.MRWriter = (*gitlab.Client)(nil)
+var (
+	_ forge.MRWriter     = (*gitlab.Client)(nil)
+	_ forge.MRTextWriter = (*gitlab.Client)(nil)
+)
 
 // pos builds a position on the renamed file of api!2 from its diff.
 func pos(d forge.Diff, oldLine, newLine int) *forge.DiffPosition {
@@ -524,3 +527,40 @@ func TestWritesNeedAMRRef(t *testing.T) {
 }
 
 func second[T any](_ T, err error) error { return err }
+
+func TestMRCommitsAndSetMRDescription(t *testing.T) {
+	forEachTier(t, func(t *testing.T, _ fake.Tier, c *gitlab.Client, srv *fake.Server) {
+		ctx := context.Background()
+		cs, err := c.MRCommits(ctx, mrRef(apiProj, 1))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(cs) != 2 || cs[0].Title != "Add the token bucket" || cs[1].Title != "Expose Burst" || !strings.Contains(cs[0].Message, "One bucket per tenant.") {
+			t.Fatalf("commits should read oldest first with their messages: %+v", cs)
+		}
+		if none, err := c.MRCommits(ctx, mrRef(apiProj, 2)); err != nil || len(none) != 0 {
+			t.Errorf("an MR without commits = %+v, %v", none, err)
+		}
+		if _, err := c.MRCommits(ctx, mrRef(apiProj, 99)); !errors.Is(err, forge.ErrNotFound) {
+			t.Errorf("unknown MR err = %v, want ErrNotFound", err)
+		}
+
+		before, err := srv.Title(mrRef(apiProj, 1))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := c.SetMRDescription(ctx, mrRef(apiProj, 1), "## What\nA token bucket.\n"); err != nil {
+			t.Fatal(err)
+		}
+		desc, writes, _ := srv.Description(mrRef(apiProj, 1))
+		if desc != "## What\nA token bucket.\n" || writes != 1 {
+			t.Errorf("description = %q (%d writes)", desc, writes)
+		}
+		if title, _ := srv.Title(mrRef(apiProj, 1)); title != before {
+			t.Errorf("only the description may change: title %q -> %q", before, title)
+		}
+		if err := c.SetMRDescription(ctx, issueRef(apiProj, 1), "x"); err == nil {
+			t.Error("an issue ref was accepted")
+		}
+	})
+}

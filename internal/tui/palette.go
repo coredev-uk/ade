@@ -145,6 +145,8 @@ func (m model) paletteEntries() []palEntry {
 		pressEntry("Start work", "s", "ade start", true),
 		pressEntry("Create the MR for started work", "M", "ade mr create", true),
 		pressEntry("Classify: suggest type and app labels", "c", "ade ai classify", true),
+		{name: "AI digest of new comments", cli: "ade ai digest <ref>", needHome: true, run: func(m model) (model, tea.Cmd) { return m.openAIText(aiTextDigest) }},
+		{name: "AI stand-in description for an empty issue", cli: "ade ai standin <ref>", needHome: true, run: func(m model) (model, tea.Cmd) { return m.openAIText(aiTextStandIn) }},
 		pressEntry("Agents for this item", "a", "ade agent", true),
 		pressEntry("Agents: every run", "A", "ade agent list", true),
 		pressEntry("Open workspace", "w", "ade ws up", true),
@@ -157,6 +159,9 @@ func (m model) paletteEntries() []palEntry {
 		pressEntry("Add a note", "N", "ade note <ref> <text> [--blocked]", true),
 		pressEntry("Set weight", "=", "ade issue weight <ref> <n>", true),
 		pressEntry("Move to the next sprint", ">", "ade issue move <ref>", true),
+	}
+	if m.aiOn() {
+		home = append(home, pressEntry("Research the issue in the background", "R", "ade ai research <ref> --detach", true))
 	}
 	es = append(home, es...)
 	// Named filters and project choices, directly.

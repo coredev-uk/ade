@@ -56,9 +56,11 @@ func OwnsBranch(wi domain.WorkItem, repoPath, branch string) bool {
 	return false
 }
 
-// worktreesOf lists the branch-bearing worktrees of a repo.
+// worktreesOf lists the branch-bearing worktrees of a repo, without the -ai
+// sandboxes of agent runs: those are not the item's own tree.
 func worktreesOf(ctx context.Context, projectDir, repo string) ([]git.Worktree, error) {
-	return git.Client{}.Worktrees(ctx, filepath.Join(projectDir, repo, ".bare"))
+	trees, err := git.Client{}.Worktrees(ctx, filepath.Join(projectDir, repo, ".bare"))
+	return git.WithoutSandboxes(trees), err
 }
 
 // ItemRef is a cached work item with the project and forge it came from.

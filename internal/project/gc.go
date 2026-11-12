@@ -58,6 +58,21 @@ func shellQuote(s string) string {
 // so does one fetch per repo when a branch without upstream needs its commits
 // checked against the remote.
 func (s *Service) Trees(ctx context.Context, name string, lookup MRLookup) ([]Tree, error) {
+	return s.trees(ctx, name, lookup, nil)
+}
+
+// TreesAt judges only the worktrees at the given paths (an item's), with the
+// same checks as Trees. A path that is no worktree of project name is absent
+// from the result.
+func (s *Service) TreesAt(ctx context.Context, name string, paths []string, lookup MRLookup) ([]Tree, error) {
+	want := map[string]bool{}
+	for _, p := range paths {
+		want[filepath.Clean(p)] = true
+	}
+	return s.trees(ctx, name, lookup, func(ts TreeStatus) bool { return want[filepath.Clean(ts.Path)] })
+}
+
+func (s *Service) trees(ctx context.Context, name string, lookup MRLookup, only func(TreeStatus) bool) ([]Tree, error) {
 	sts, err := s.Status(ctx, name)
 	if err != nil {
 		return nil, err
@@ -72,6 +87,9 @@ func (s *Service) Trees(ctx context.Context, name string, lookup MRLookup) ([]Tr
 		for _, rs := range ps.Repos {
 			bare := filepath.Join(ps.Dir, rs.Name, ".bare")
 			for _, ts := range rs.Worktrees {
+				if only != nil && !only(ts) {
+					continue
+				}
 				t := Tree{Project: ps.Name, Repo: rs.Name, Branch: ts.Branch, Path: ts.Path, Bare: bare}
 				s.judge(ctx, &t, ts, m, lookup, fetch)
 				out = append(out, t)
@@ -271,11 +289,20 @@ func commits(n int) string {
 // refuses a worktree that turned dirty since the judgement. branchKept is true
 // when the branch had to stay.
 func (s *Service) RemoveTree(ctx context.Context, t Tree) (branchKept bool, err error) {
+	if err := s.RemoveWorktree(ctx, t); err != nil {
+		return false, err
+	}
+	return !s.DeleteBranch(ctx, t), nil
+}
+
+// RemoveWorktree removes the worktree of a tree that Trees judged removable,
+// leaving its branch. It never forces.
+func (s *Service) RemoveWorktree(ctx context.Context, t Tree) error {
 	if !t.Removable() {
-		return false, fmt.Errorf("%s is kept: %s", t.Label(), strings.Join(t.Keep, "; "))
+		return fmt.Errorf("%s is kept: %s", t.Label(), strings.Join(t.Keep, "; "))
 	}
 	var c git.Client
-	_, err = c.Run(ctx, t.Bare, "worktree", "remove", t.Path)
+	_, err := c.Run(ctx, t.Bare, "worktree", "remove", t.Path)
 	e := audit.Entry{
 		Action: "worktree.remove", Target: t.Path, Project: t.Project,
 		Params: map[string]any{"repo": t.Repo, "branch": t.Branch, "mr": t.MR}, Outcome: outcome(err),
@@ -283,13 +310,25 @@ func (s *Service) RemoveTree(ctx context.Context, t Tree) (branchKept bool, err 
 	if err != nil {
 		e.Error = git.Reason(err)
 		s.audit(e)
-		return false, fmt.Errorf("remove %s: %s", t.Label(), git.Reason(err))
+		return fmt.Errorf("remove %s: %s", t.Label(), git.Reason(err))
 	}
 	s.audit(e)
-	if _, berr := c.Run(ctx, t.Bare, "branch", "-d", t.Branch); berr != nil {
-		return true, nil
+	return nil
+}
+
+// DeleteBranch deletes the local branch of a removed tree with `git branch
+// -d`, which refuses a branch that is not merged. It reports whether the
+// branch is gone.
+func (s *Service) DeleteBranch(ctx context.Context, t Tree) bool {
+	var c git.Client
+	_, err := c.Run(ctx, t.Bare, "branch", "-d", t.Branch)
+	if err == nil {
+		s.audit(audit.Entry{
+			Action: "git.branch.delete", Target: t.Branch, Project: t.Project,
+			Params: map[string]any{"repo": t.Repo, "mr": t.MR}, Outcome: "ok",
+		})
 	}
-	return false, nil
+	return err == nil
 }
 
 // TreeOf finds the worktree a merge request was made from, judged as Trees

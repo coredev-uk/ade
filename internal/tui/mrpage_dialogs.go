@@ -14,6 +14,7 @@ import (
 
 	"github.com/coredev-uk/ade/internal/commitmsg"
 	"github.com/coredev-uk/ade/internal/forge"
+	"github.com/coredev-uk/ade/internal/joblog"
 	"github.com/coredev-uk/ade/internal/review"
 )
 
@@ -29,6 +30,7 @@ const (
 	modalMerge
 	modalLog
 	modalAI
+	modalDescribe // an AI-drafted MR description, editable, applied on enter
 )
 
 // severities are the choices of a comment, in cycling order. The first, none,
@@ -115,7 +117,7 @@ func (md *mrModal) setLog(msg mrResultMsg) {
 		return
 	}
 	jl, _ := msg.out.(jobLog)
-	lines := cleanLog(jl.text)
+	lines := joblog.Clean(jl.text)
 	md.logView = viewport.New()
 	md.logView.SetContentLines(lines)
 	md.logRaw = lines
@@ -292,6 +294,8 @@ func (m *model) modalKey(k tea.KeyPressMsg) tea.Cmd {
 		return m.mergeKey(md, ks)
 	case modalAI:
 		return m.aiConfirmKey(md, ks)
+	case modalDescribe:
+		return m.describeModalKey(md, k)
 	case modalLog:
 		md.logKey(k)
 	}
@@ -395,6 +399,8 @@ func (m model) mrOverlay(w, h int) string {
 		title, l = m.mergeDialog(md, inner)
 	case modalAI:
 		title, l = m.aiModal(md, inner)
+	case modalDescribe:
+		title, l = m.describeDialog(md, inner, h)
 	}
 	if md.warn != "" {
 		l = append(l, "", stWarn.Render(m.g.Warn+" "+md.warn))
@@ -423,6 +429,8 @@ func (m model) modalHint(md *mrModal) string {
 		return keys("enter", "post reply", "alt+enter", "newline", "esc", "cancel")
 	case modalAI:
 		return keys("enter", "send", "esc", "cancel")
+	case modalDescribe:
+		return keys("enter", "write to the MR", "alt+enter", "newline", "ctrl+r", "new draft", "esc", "discard")
 	case modalComment:
 		return keys("enter", "add draft", "tab", "severity", "alt+enter", "newline", "esc", "cancel")
 	case modalEditDraft:
@@ -531,7 +539,7 @@ func (m model) mergeDialog(md *mrModal, inner int) (string, []string) {
 }
 
 // logScreen is the open job log: the whole screen, a title line, the log and
-// a hint line. The log is plain text in ADE's own ink (cleanLog).
+// a hint line. The log is plain text in ADE's own ink (joblog.Clean).
 func (m model) logScreen(md *mrModal, w, h int) string {
 	g := m.g
 	title := stBold.Render(g.T("Job log · ") + md.job.Name)
@@ -599,60 +607,6 @@ func (m model) logScreen(md *mrModal, w, h int) string {
 	}
 	out = append(out, ansi.Truncate(hint, w, g.Ell))
 	return strings.Join(out, "\n")
-}
-
-// cleanLog turns a raw job trace into the lines to show: ANSI colour is
-// dropped (the log is shown in ADE's own ink), a carriage-return line keeps
-// what its last non-empty segment left on screen, GitLab's section markers
-// become a "── name" header (section_end is dropped), tabs expand to the next
-// multiple of 8 columns and other control characters go. A log with no text
-// has no lines.
-func cleanLog(text string) []string {
-	var lines []string
-	for raw := range strings.SplitSeq(strings.TrimRight(text, "\r\n"), "\n") {
-		var shown string
-		var headers []string
-		marked := false
-		for seg := range strings.SplitSeq(strings.TrimSuffix(raw, "\r"), "\r") {
-			seg = ansi.Strip(seg)
-			switch {
-			case strings.HasPrefix(seg, "section_start:"):
-				marked = true
-				if f := strings.SplitN(seg, ":", 3); len(f) == 3 {
-					name, _, _ := strings.Cut(f[2], "[") // "[collapsed=true]" options
-					headers = append(headers, "── "+strings.TrimSpace(name))
-				}
-			case strings.HasPrefix(seg, "section_end:"):
-				marked = true
-			case strings.TrimSpace(seg) != "":
-				shown = seg
-			}
-		}
-		lines = append(lines, headers...)
-		if shown != "" || !marked {
-			lines = append(lines, plainLine(shown))
-		}
-	}
-	if !slices.ContainsFunc(lines, func(l string) bool { return strings.TrimSpace(l) != "" }) {
-		return nil
-	}
-	return lines
-}
-
-// plainLine expands tabs to the next multiple of 8 columns and drops the
-// other C0 controls, DEL and C1 controls, which a terminal would act on.
-func plainLine(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		switch {
-		case r == '\t':
-			b.WriteString(strings.Repeat(" ", 8-ansi.StringWidth(b.String())%8))
-		case r < 0x20 || r >= 0x7f && r <= 0x9f:
-		default:
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
 }
 
 // spinnerFrame is the progress mark: braille dots, or | / - \ in the ascii

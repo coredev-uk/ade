@@ -37,6 +37,9 @@ func newWsTelemetry(ctx context.Context, a *app.App, loc workspace.Location, ws 
 // recorderFor finds the work item owning the worktree's branch in the sync
 // cache. Baseline trees and unknown branches have no item, so no record.
 func recorderFor(ctx context.Context, a *app.App, loc workspace.Location, ws string) *workspace.Recorder {
+	if loc.Tree == "" { // a project-level run belongs to no work item
+		return nil
+	}
 	st, err := a.Cache()
 	if err != nil {
 		return nil

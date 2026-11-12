@@ -34,7 +34,7 @@ type Instance struct {
 	ID   string // "<node>@<tree>"
 	Node *Node
 	Tree Tree   // the tree serving the node; services use the project directory
-	Dir  string // working directory
+	Dir  string // working directory: the node's `dir` inside Tree, else Tree's root
 	// Devshell is how the command enters the tree's dev shell (direnv, nix
 	// develop) inside the project shell; the zero shell for services outside
 	// any repo in a project without packages.
@@ -43,9 +43,13 @@ type Instance struct {
 	State    string // directory for the node's data ({state})
 	Log      string
 	Cmd      string
-	Env      map[string]string
-	Ready    *readiness.Spec // nil: ready once started (services) or after exit 0 (oneshots)
-	Requires []string        // instance ids
+	// Prepare is the command that runs in Dir before the node starts; empty
+	// for none. It is skipped while PrepareIfMissing (an absolute path) exists.
+	Prepare          string
+	PrepareIfMissing string
+	Env              map[string]string
+	Ready            *readiness.Spec // nil: ready once started (services) or after exit 0 (oneshots)
+	Requires         []string        // instance ids
 }
 
 // Plan is a resolved run graph for one workspace.
@@ -141,11 +145,19 @@ func (m *Manager) bind(ctx context.Context, loc Location, tr *treeResolver, n *N
 		}
 		in.Tree = t
 	}
-	in.Dir = in.Tree.Path
+	dir, err := nodeDir(in.Tree.Path, n.Task.Dir)
+	if err != nil {
+		return nil, err
+	}
+	in.Dir = dir
 	// The project shell wraps every node, services outside any repo included
 	// (that is where e.g. postgres comes from); a repo's own shell goes inside it.
 	if n.Repo != "" {
-		in.Devshell = m.Devshell.Detect(in.Dir, loc.Manifest.Repos[n.Repo].Devshell)
+		// The dev shell is the worktree's, whatever directory the node runs in.
+		in.Devshell = m.Devshell.Detect(in.Tree.Path, loc.Manifest.Repos[n.Repo].Devshell)
+	}
+	if n.Task.PrepareIfMissing != "" {
+		in.PrepareIfMissing = filepath.Join(in.Dir, n.Task.PrepareIfMissing)
 	}
 	in.Devshell = m.Devshell.WithProject(in.Devshell, loc.ProjectDir, loc.Manifest.Project)
 	in.ID = n.ID + "@" + in.Tree.Path
@@ -165,6 +177,33 @@ func (m *Manager) bind(ctx context.Context, loc Location, tr *treeResolver, n *N
 		in.Port = port
 	}
 	return in, nil
+}
+
+// nodeDir is the working directory of a node whose worktree is tree: the
+// manifest's `dir` below it. The manifest validator rejects an absolute or
+// escaping dir; this also refuses one that leaves the tree through a symlink.
+// A directory that does not exist (yet) is not an error here: the tree may be
+// on a branch that lacks it, and starting the node says so.
+func nodeDir(tree, dir string) (string, error) {
+	if dir == "" {
+		return tree, nil
+	}
+	if !filepath.IsLocal(dir) {
+		return "", fmt.Errorf("dir %q must be a relative path inside the worktree", dir)
+	}
+	full := filepath.Join(tree, dir)
+	real, err := filepath.EvalSymlinks(full)
+	if err != nil {
+		return full, nil //nolint:nilerr // missing: reported when the node starts
+	}
+	root, err := filepath.EvalSymlinks(tree)
+	if err != nil {
+		return "", err
+	}
+	if rel, err := filepath.Rel(root, real); err != nil || !filepath.IsLocal(rel) {
+		return "", fmt.Errorf("dir %q resolves to %s, outside the worktree %s", dir, real, tree)
+	}
+	return full, nil
 }
 
 // slugOf makes a file-system name for an instance id (or any other string):
@@ -192,6 +231,9 @@ func (in *Instance) expand(ctx context.Context, tr *treeResolver, byNode map[str
 	var err error
 	if in.Cmd, err = sub(in.Node.Task.Cmd); err != nil {
 		return fmt.Errorf("cmd: %w", err)
+	}
+	if in.Prepare, err = sub(in.Node.Task.Prepare); err != nil {
+		return fmt.Errorf("prepare: %w", err)
 	}
 	in.Env = map[string]string{}
 	for _, k := range slices.Sorted(maps.Keys(in.Node.Task.Env)) {
@@ -250,7 +292,7 @@ func (in *Instance) lookup(ctx context.Context, ref string, tr *treeResolver, by
 		}
 		return strconv.Itoa(in.Port), nil
 	case "dir":
-		return in.Dir, nil
+		return in.Tree.Path, nil // the worktree root, as {<repo>.dir}
 	case "state":
 		return in.State, nil
 	}

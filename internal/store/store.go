@@ -61,6 +61,23 @@ func Open(path string) (*Store, error) {
 	return s, nil
 }
 
+// OpenReadOnly opens an existing cache at path without creating it, applying
+// migrations or taking the write lock: for commands that must start in
+// milliseconds and may not disturb a running dashboard (the shell prompt). It
+// returns an error wrapping fs.ErrNotExist when there is no cache yet; a
+// table that does not exist yet fails at query time.
+func OpenReadOnly(path string) (*Store, error) {
+	if _, err := os.Stat(path); err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro&_pragma=busy_timeout(250)")
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	return &Store{DB: db, Path: path}, nil
+}
+
 func (s *Store) migrate() error {
 	if _, err := s.DB.Exec(`CREATE TABLE IF NOT EXISTS migrations (name TEXT PRIMARY KEY)`); err != nil {
 		return err

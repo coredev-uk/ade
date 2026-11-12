@@ -49,7 +49,10 @@ type wsEnv struct {
 	webTree string
 }
 
-func newWsEnv(t *testing.T) *wsEnv {
+func newWsEnv(t *testing.T) *wsEnv { return newWsEnvWith(t, wsRunManifest) }
+
+// newWsEnvWith is newWsEnv over another manifest of project demo.
+func newWsEnvWith(t *testing.T, manifest string) *wsEnv {
 	t.Helper()
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -61,7 +64,7 @@ func newWsEnv(t *testing.T) *wsEnv {
 			t.Fatal(err)
 		}
 	}
-	snap := fmt.Sprintf("source = \"test\"\nmanifest = '''\n%s'''\n", wsRunManifest)
+	snap := fmt.Sprintf("source = \"test\"\nmanifest = '''\n%s'''\n", manifest)
 	if err := os.WriteFile(filepath.Join(root, "demo", ".project.toml"), []byte(snap), 0o644); err != nil {
 		t.Fatal(err)
 	}

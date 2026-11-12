@@ -1,5 +1,6 @@
 // Package notify records every event in a durable inbox (cache.db) and fans it
-// out to the toast, terminal and desktop channels according to config rules.
+// out to the dashboard toasts and to the external notification command
+// ([notify.external]) according to config rules.
 package notify
 
 import (

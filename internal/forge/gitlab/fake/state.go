@@ -119,12 +119,17 @@ type mr struct {
 	Merged      *time.Time
 
 	Diff        *mrDiff        // latest version; nil until GitLab has computed one
+	Commits     []commit       // oldest first
+	DescWrites  int            // description updates received
 	Drafts      []*draftNote   // the sandbox user's unpublished review comments
 	Publishes   int            // bulk_publish calls that published something
 	AutoMerge   bool           // merge_when_pipeline_succeeds
 	Retries     int            // pipeline retries requested
 	MergeParams map[string]any // parameters of the last merge request
 }
+
+// commit is one commit of an MR.
+type commit struct{ SHA, Title, Message, Author string }
 
 // mrDiff is the latest diff version of an MR.
 type mrDiff struct {

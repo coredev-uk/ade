@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -69,5 +70,23 @@ func TestReason(t *testing.T) {
 func TestBranchDir(t *testing.T) {
 	if got := BranchDir("feature/412-rate-limit"); got != "feature-412-rate-limit" {
 		t.Errorf("BranchDir = %q", got)
+	}
+}
+
+func TestWithoutSandboxesDropsOnlyAIBranchesOfAnExistingBranch(t *testing.T) {
+	trees := []Worktree{
+		{Path: "/r/main", Branch: "main"},
+		{Path: "/r/42-fix", Branch: "42-fix"},
+		{Path: "/r/42-fix-ai", Branch: "42-fix-ai"}, // an agent run's sandbox
+		{Path: "/r/43-add-ai", Branch: "43-add-ai"}, // an issue about AI: no 43-add branch, so it is real work
+		{Path: "/r/detached"},
+	}
+	var got []string
+	for _, w := range WithoutSandboxes(trees) {
+		got = append(got, w.Path)
+	}
+	want := []string{"/r/main", "/r/42-fix", "/r/43-add-ai", "/r/detached"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
 	}
 }

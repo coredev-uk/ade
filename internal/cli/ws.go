@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/coredev-uk/ade/internal/app"
+	"github.com/coredev-uk/ade/internal/audit"
 	"github.com/coredev-uk/ade/internal/forgesync"
 	"github.com/coredev-uk/ade/internal/workspace"
 )
@@ -194,10 +195,28 @@ func runWorkspace(cmd *cobra.Command, a *app.App, worktree string, tf treeFlags,
 	if err != nil {
 		return err
 	}
-	w := cmd.OutOrStdout()
 	if len(plan.Instances) == 0 {
 		return fmt.Errorf("workspace %q of %s runs nothing: add a run group to [workspaces.%s]", plan.Workspace, loc.Project, plan.Workspace)
 	}
+	return supervise(cmd, a, mgr, loc, plan, detach, runLabels{
+		name: fmt.Sprintf("workspace %s/%s", loc.Project, filepath.Base(loc.Tree)),
+		down: "ade ws down " + loc.Tree,
+	})
+}
+
+// runLabels are what a supervised run calls itself in its output.
+type runLabels struct {
+	name string // "workspace demo/main", "project demo"
+	down string // the command that stops a detached run
+}
+
+// supervise runs a plan in this process: the install hooks first, then the
+// nodes in dependency order, held by the location's holder (the worktree of a
+// workspace, "project:<name>" for a project-level run). Without detach it
+// stays until interrupted and releases what it started.
+func supervise(cmd *cobra.Command, a *app.App, mgr *workspace.Manager, loc workspace.Location, plan *workspace.Plan, detach bool, label runLabels) error {
+	ctx := cmd.Context()
+	w := cmd.OutOrStdout()
 	// Install hooks come before any service, as in the workspace's services tab.
 	if targets := mgr.InstallTargets(loc, plan, true); len(targets) > 0 {
 		out := w
@@ -210,7 +229,7 @@ func runWorkspace(cmd *cobra.Command, a *app.App, worktree string, tf treeFlags,
 	}
 	tel := newWsTelemetry(ctx, a, loc, plan.Workspace)
 	defer tel.close()
-	opts := workspace.UpOptions{Holder: loc.Tree}
+	opts := workspace.UpOptions{Holder: loc.Holder(), Prepared: auditPrepare(a, loc.Project)}
 	if !detach {
 		opts.HolderPID = os.Getpid()
 	}
@@ -221,7 +240,7 @@ func runWorkspace(cmd *cobra.Command, a *app.App, worktree string, tf treeFlags,
 		}
 	}
 	if !jsonOut {
-		fmt.Fprintf(w, "workspace %s/%s: starting %d node(s)\n", loc.Project, filepath.Base(loc.Tree), len(plan.Instances))
+		fmt.Fprintf(w, "%s: starting %d node(s)\n", label.name, len(plan.Instances))
 	}
 	// A signal during Up must still release what was started.
 	sigCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
@@ -239,13 +258,13 @@ func runWorkspace(cmd *cobra.Command, a *app.App, worktree string, tf treeFlags,
 	releaseCtx := context.WithoutCancel(ctx)
 	if failed {
 		tel.record(workspace.RunFailed, results)
-		if _, rerr := mgr.Release(releaseCtx, loc.Tree); rerr != nil {
+		if _, rerr := mgr.Release(releaseCtx, loc.Holder()); rerr != nil {
 			fmt.Fprintln(os.Stderr, "ade: release:", rerr)
 		}
 		if err != nil {
 			return err
 		}
-		return withCode(1, errors.New("workspace did not come up"))
+		return withCode(1, errors.New(label.name+" did not come up"))
 	}
 	if !jsonOut {
 		fmt.Fprintln(w, servicesStrip(results))
@@ -253,13 +272,13 @@ func runWorkspace(cmd *cobra.Command, a *app.App, worktree string, tf treeFlags,
 	if detach {
 		tel.record(workspace.RunDetached, results)
 		if !jsonOut {
-			fmt.Fprintf(w, "left running; stop with: ade ws down %s\n", loc.Tree)
+			fmt.Fprintf(w, "left running; stop with: %s\n", label.down)
 		}
 		return nil
 	}
 	tel.record(workspace.RunRunning, results)
 	if !jsonOut {
-		fmt.Fprintln(w, "ready; Ctrl-C stops this workspace's instances")
+		fmt.Fprintln(w, "ready; Ctrl-C stops the instances this run started")
 	}
 	ids := make([]string, len(plan.Instances))
 	for i, in := range plan.Instances {
@@ -271,7 +290,7 @@ func runWorkspace(cmd *cobra.Command, a *app.App, worktree string, tf treeFlags,
 			fmt.Fprintf(w, "  %s blocked: %s is not running\n", r.Node, r.BlockedBy)
 		}
 	})
-	stopped, err := mgr.Release(releaseCtx, loc.Tree)
+	stopped, err := mgr.Release(releaseCtx, loc.Holder())
 	tel.record(workspace.RunStopped, results)
 	if !jsonOut {
 		fmt.Fprintf(w, "stopped %d instance(s)\n", len(stopped))
@@ -417,7 +436,7 @@ Dependents that belong to another workspace's plan are not restarted from here.`
 				return err
 			}
 			w := cmd.OutOrStdout()
-			opts := workspace.UpOptions{Holder: loc.Tree}
+			opts := workspace.UpOptions{Holder: loc.Tree, Prepared: auditPrepare(a, loc.Project)}
 			if !jsonOut {
 				opts.Progress = func(r workspace.Result) { fmt.Fprintln(w, "  "+r.Describe()) }
 			}
@@ -508,6 +527,7 @@ func newTaskRunCmd() *cobra.Command {
 	var (
 		tf       treeFlags
 		worktree string
+		project  string
 		noFollow bool
 		gates    = taskGates{timeout: workspace.DefaultWaitTimeout}
 	)
@@ -531,7 +551,11 @@ so, keeps holding it and follows its log.
 
 A wait says every 30 seconds that it is still waiting, and what for. It ends
 with an error when the install or the required service failed (the pane that
-ran it recorded why), and after --wait-timeout (default 10m).`,
+ran it recorded why), and after --wait-timeout (default 10m).
+
+--project <name> runs the node for the project instead of a worktree: each repo
+resolves to its baseline tree (or a --with pin) and the instance is held by
+"project:<name>". The standalone services tab (ade services open) uses it.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if gates.timeout <= 0 {
@@ -541,11 +565,15 @@ ran it recorded why), and after --wait-timeout (default 10m).`,
 			if err != nil {
 				return err
 			}
-			return taskRun(cmd, appFrom(cmd), args[0], worktree, tf, trees, noFollow, gates)
+			if project != "" && cmd.Flags().Changed("worktree") {
+				return errors.New("--project and --worktree are exclusive")
+			}
+			return taskRun(cmd, appFrom(cmd), args[0], worktree, project, tf, trees, noFollow, gates)
 		},
 	}
 	tf.add(cmd)
 	cmd.Flags().StringVar(&worktree, "worktree", ".", "the workspace's worktree")
+	cmd.Flags().StringVar(&project, "project", "", "run for this project instead of a worktree (repos resolve to their baselines)")
 	cmd.Flags().BoolVar(&noFollow, "no-follow", false, "return after readiness instead of following the output")
 	cmd.Flags().BoolVar(&gates.afterInstall, "after-install", false, "wait for the install hooks of the node's worktrees first")
 	cmd.Flags().BoolVar(&gates.waitRequires, "wait-requires", false, "wait for required services started elsewhere instead of starting them")
@@ -559,10 +587,18 @@ type taskGates struct {
 	timeout                    time.Duration // of each wait
 }
 
-func taskRun(cmd *cobra.Command, a *app.App, node, worktree string, tf treeFlags, trees workspace.TreeOptions, noFollow bool, gates taskGates) error {
+func taskRun(cmd *cobra.Command, a *app.App, node, worktree, project string, tf treeFlags, trees workspace.TreeOptions, noFollow bool, gates taskGates) error {
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	loc, err := workspace.Locate(a.Root, worktree)
+	var (
+		loc workspace.Location
+		err error
+	)
+	if project != "" {
+		loc, err = workspace.LocateProject(a.Root, project)
+	} else {
+		loc, err = workspace.Locate(a.Root, worktree)
+	}
 	if err != nil {
 		return err
 	}
@@ -582,7 +618,7 @@ func taskRun(cmd *cobra.Command, a *app.App, node, worktree string, tf treeFlags
 		err := mgr.WaitInstalled(ctx, targets, workspace.InstallWait{Timeout: gates.timeout, Waiting: func(pending []workspace.InstallTarget, elapsed time.Duration) {
 			for _, t := range pending {
 				if elapsed == 0 {
-					fmt.Fprintf(w, "ade: waiting for the install of %s (%s); if nothing is installing it, run: ade ws install %s\n", t.Repo, t.Tree, loc.Tree)
+					fmt.Fprintf(w, "ade: waiting for the install of %s (%s); if nothing is installing it, run: %s\n", t.Repo, t.Tree, installHint(loc))
 				} else {
 					fmt.Fprintf(w, "ade: still waiting for the install of %s (%s) %s\n", t.Repo, t.Tree, elapsed.Round(time.Second))
 				}
@@ -595,7 +631,7 @@ func taskRun(cmd *cobra.Command, a *app.App, node, worktree string, tf treeFlags
 
 	tel := newWsTelemetry(ctx, a, loc, tf.workspace)
 	defer tel.close()
-	opts := workspace.UpOptions{Holder: loc.Tree + "#task:" + node, Progress: func(r workspace.Result) {
+	opts := workspace.UpOptions{Holder: loc.Holder() + "#task:" + node, Prepared: auditPrepare(a, loc.Project), Progress: func(r workspace.Result) {
 		tel.result(r)
 		fmt.Fprintln(w, "  "+r.Describe())
 	}}
@@ -672,4 +708,27 @@ func ignoreInterrupt(ctx context.Context, err error) error {
 		return nil
 	}
 	return err
+}
+
+// installHint is the command that runs the install hooks for what loc runs.
+func installHint(loc workspace.Location) string {
+	if loc.Tree == "" {
+		return "ade services install --project " + loc.Project
+	}
+	return "ade ws install " + loc.Tree
+}
+
+// auditPrepare records each prepare command of a node as git.hook with
+// hook=prepare, like install commands.
+func auditPrepare(a *app.App, project string) func(in *workspace.Instance, command string, err error) {
+	return func(in *workspace.Instance, command string, err error) {
+		e := audit.Entry{
+			Action: "git.hook", Target: in.Dir, Project: project, Outcome: "ok",
+			Params: map[string]any{"hook": "prepare", "node": in.Node.ID, "cmd": command},
+		}
+		if err != nil {
+			e.Outcome, e.Error = "error", err.Error()
+		}
+		_ = a.Audit.Append(e) // an unwritable audit log must not stop a start
+	}
 }

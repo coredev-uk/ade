@@ -32,6 +32,7 @@ const (
 	agPlan                   // a plan awaiting approval, read here
 	agDetail                 // a run's state, spend, diff
 	agConfirm                // push, asked
+	agDiscard                // discard a -ai branch, asked
 )
 
 // agentDialog is the dialog's state. The model holds a pointer (nil when
@@ -342,6 +343,18 @@ func (m model) agKey(k tea.KeyPressMsg) (model, tea.Cmd) {
 		case "n", "esc":
 			d.stage = agDetail
 		}
+	case agDiscard:
+		switch ks {
+		case "y", "enter":
+			d.stage, d.busy = agDetail, "removing the -ai worktree and branch"
+			ctx, mgr, id := m.ctx, d.mgr, d.cur.ID
+			return m, func() tea.Msg {
+				r, err := mgr.Discard(ctx, id)
+				return agStepMsg{d: d, run: r, err: err}
+			}
+		case "n", "esc":
+			d.stage = agDetail
+		}
 	}
 	return m, nil
 }
@@ -431,6 +444,19 @@ func (m model) agPlanKey(d *agentDialog, ks string) (model, tea.Cmd) {
 			r, err := mgr.Implement(ctx, id)
 			return agStepMsg{d: d, run: r, err: err}
 		})
+	case "i":
+		if d.busy != "" || !d.cur.Approved {
+			if !d.cur.Approved {
+				d.warn = "approve the plan first (enter)"
+			}
+			return m, nil
+		}
+		ctx, mgr, id := m.ctx, d.mgr, d.cur.ID
+		d.stage, d.busy = agList, ""
+		return m, tea.Batch(m.agLoad(d), func() tea.Msg {
+			r, err := mgr.ImplementApart(ctx, id)
+			return agStepMsg{d: d, run: r, err: err}
+		})
 	case "x":
 		if _, err := d.mgr.Cancel(d.cur.ID); err != nil {
 			d.warn = err.Error()
@@ -449,8 +475,28 @@ func (m model) agDetailKey(d *agentDialog, ks string) (model, tea.Cmd) {
 		return m, m.agLoad(d)
 	case "l":
 		if d.cur.Worktree != "" {
-			return m, agLazygit(d.cur.Worktree)
+			return m, agLazygit(d.cur.WorkDir())
 		}
+	case "a":
+		if !d.cur.Isolated() || d.busy != "" {
+			return m, nil
+		}
+		d.busy, d.warn = "fast-forwarding "+d.cur.Branch, ""
+		ctx, mgr, id := m.ctx, d.mgr, d.cur.ID
+		return m, func() tea.Msg {
+			r, err := mgr.Accept(ctx, id, agent.AcceptOpts{})
+			return agStepMsg{d: d, run: r, err: err}
+		}
+	case "D":
+		if !d.cur.Isolated() {
+			d.warn = "this run has no -ai branch to discard"
+			return m, nil
+		}
+		if d.cur.State.Active() {
+			d.warn = "the run is still working: x cancels it first"
+			return m, nil
+		}
+		d.stage, d.warn = agDiscard, ""
 	case "P":
 		if d.cur.State != agent.StateReview {
 			d.warn = fmt.Sprintf("run %s is %s: only a run in review can be pushed", d.cur.ID, d.cur.State)

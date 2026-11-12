@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/coredev-uk/ade/internal/app"
@@ -31,6 +32,7 @@ type notifier struct {
 	inbox *Inbox
 	cfg   config.Notify
 	ch    Channels
+	ext   *external // nil without notify.external.command
 }
 
 // Attach subscribes to the app's bus, records every non-transient event in the
@@ -42,6 +44,9 @@ func Attach(ctx context.Context, a *app.App, ch Channels) (stop func(), err erro
 		return nil, fmt.Errorf("open inbox: %w", err)
 	}
 	n := &notifier{inbox: NewInbox(st), cfg: a.Config.Notify, ch: ch}
+	if strings.TrimSpace(n.cfg.External.Command) != "" {
+		n.ext = newExternal(ctx, n.cfg.External, st.DB, a.Audit)
+	}
 	sub, cancel := a.Bus.Subscribe(busBuffer)
 	done := make(chan struct{})
 	go func() {
@@ -55,6 +60,9 @@ func Attach(ctx context.Context, a *app.App, ch Channels) (stop func(), err erro
 		once.Do(func() {
 			cancel()
 			<-done
+			if n.ext != nil {
+				n.ext.stop()
+			}
 		})
 	}, nil
 }
@@ -65,6 +73,9 @@ func (n *notifier) handle(_ context.Context, e events.Event) {
 		if err := n.inbox.Record(e); err != nil {
 			fmt.Fprintln(os.Stderr, "ade: notify:", err)
 		}
+	}
+	if n.ext != nil {
+		n.ext.offer(e)
 	}
 	if n.ch.Toast != nil && matchAny(n.cfg.Toast, e.Kind) {
 		n.ch.Toast(e)

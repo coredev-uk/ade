@@ -107,11 +107,17 @@ type model struct {
 	// notes are the dated notes of the listed items, read once per refresh
 	// (loadNotes), keyed by markKey(project, ref).
 	notes map[string][]records.Note
+	// research is each listed item's research job, read with the notes
+	// (research.go), keyed by markKey(project, ref).
+	research map[string]records.Research
 	// sm is the open sprint-move dialog, nil when closed (sprintmove.go).
 	sm *sprintDialog
 
 	// agt is the open agent dialog, nil when closed (agent.go).
 	agt *agentDialog
+
+	// ait is the open AI digest / stand-in dialog, nil when closed (aitext.go).
+	ait *aiTextDialog
 
 	// ws is the running-instances view behind Home's Services strip (workspace.go).
 	ws wsState
@@ -240,6 +246,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return next, cmd
 	}
 	if next, cmd, ok := m.agentUpdate(msg); ok {
+		return next, cmd
+	}
+	if next, cmd, ok := m.aiTextUpdate(msg); ok {
 		return next, cmd
 	}
 	if next, cmd, ok := m.homeUpdate(msg); ok {
@@ -458,6 +467,9 @@ func (m model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return next, cmd
 	case "c":
 		next, cmd := m.openClassify()
+		return next, cmd
+	case "R":
+		next, cmd := m.openResearch()
 		return next, cmd
 	case "a", "A":
 		if m.page == pageHome && m.mr == nil && !m.isAgilePage() {

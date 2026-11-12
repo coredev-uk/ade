@@ -60,13 +60,15 @@ func (o *aiOpts) bind(c *cobra.Command) {
 func newAICmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ai",
-		Short: "AI helpers: summarize, classify, draft-reply, review (every call is audited and capped)",
+		Short: "AI helpers: summarize, classify, draft-reply, review, research, describe, ci-triage (every call is audited and capped)",
 		Long: "Each command prints a pre-flight estimate before it spends anything. Results are cached by\n" +
 			"content hash, so an unchanged MR is never summarised twice (cache hits cost $0 and are\n" +
 			"audited). Budget caps live under [budget] in the config; a breach stops the call (exit 4).\n" +
 			"With ai.mode = \"off\" these commands refuse; nothing else changes.",
 	}
 	cmd.AddCommand(newAISummarizeCmd(), newAIClassifyCmd(), newAIReplyCmd(), newAIReviewCmd(), newAITriageCmd(), newAIModelsCmd())
+	cmd.AddCommand(newAIResearchCmd(), newAIDescribeCmd(), newAICITriageCmd())
+	cmd.AddCommand(newAIDigestCmd(), newAIStandInCmd())
 	return cmd
 }
 

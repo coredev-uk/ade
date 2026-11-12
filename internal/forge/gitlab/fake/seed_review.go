@@ -22,6 +22,10 @@ func (s *state) seedReview(api *project) {
 			Diff: "@@ -0,0 +1,7 @@\n+package limit\n+\n+// Bucket is a per-tenant token bucket.\n+type Bucket struct {\n+\tRate  int // tokens per minute\n+\tBurst int\n+}\n",
 		}},
 	}
+	rate.Commits = []commit{
+		{SHA: "9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c", Title: "Add the token bucket", Message: "Add the token bucket\n\nOne bucket per tenant.", Author: "Sandbox Dev"},
+		{SHA: rate.SHA, Title: "Expose Burst", Message: "Expose Burst", Author: "Sandbox Dev"},
+	}
 	for _, m := range s.mrs {
 		switch {
 		case m.Project.Path == GroupPath+"/web" && m.IID == 1:

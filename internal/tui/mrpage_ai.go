@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -36,6 +37,8 @@ const (
 	aiThreadSum               // one thread: Threads
 	aiReply                   // a draft reply to one thread: Threads
 	aiReview                  // an agent review pass over the diff
+	aiDescribe                // a drafted description for the MR (B): previewed in a dialog, applied on enter
+	aiCITriage                // cause and fix per failed CI job: CI
 )
 
 // aiKey names one answer on an MR: the kind, and the discussion for the
@@ -46,7 +49,7 @@ type aiKey struct {
 }
 
 func (k aiKey) what() string {
-	return [...]string{"summary", "thread summary", "draft reply", "agent review"}[k.kind]
+	return [...]string{"summary", "thread summary", "draft reply", "agent review", "MR description", "CI triage"}[k.kind]
 }
 
 // aiText is one asked-for answer and where it stands.
@@ -73,7 +76,8 @@ type aiAnswer struct {
 	pf       *ai.Preflight // set when the call needs a yes first; nothing was sent
 	added    int
 	rejected int
-	notes    bool // the prompt carried the user's notes
+	notes    bool   // the prompt carried the user's notes
+	draft    string // describe: the text that enter writes to the MR
 }
 
 // aiOn reports whether the page offers AI at all: ai.mode is not off and a
@@ -153,6 +157,7 @@ func (m *model) aiAsk(d *mrData, k aiKey, refresh, assume bool) tea.Cmd {
 
 	app, reviews := m.app, m.reviews
 	mr, diff, haveDiff, ref, forgeName := d.mr, d.diff, d.diffL.st == loadOK, d.ref, d.forgeKey
+	jobs := slices.Clone(d.jobs)
 	disc, haveDisc := d.discussion(k.id)
 	fn := func(ctx context.Context, be review.Backend) (any, error) {
 		if k.kind == aiThreadSum || k.kind == aiReply {
@@ -165,6 +170,9 @@ func (m *model) aiAsk(d *mrData, k aiKey, refresh, assume bool) tea.Cmd {
 			return nil, err
 		}
 		svc.SprintStart = budget.SprintStart(app)
+		if k.kind == aiDescribe || k.kind == aiCITriage {
+			return runTextJob(ctx, svc, app, be, k.kind, textJob{mr: mr, jobs: jobs, forgeName: forgeName, refresh: refresh, assume: assume})
+		}
 		if !haveDiff {
 			if diff, err = be.MRDiff(ctx, ref); err != nil {
 				return nil, fmt.Errorf("read the diff of %s: %w", ref, err)
@@ -243,6 +251,11 @@ func (m *model) onAI(d *mrData, msg mrResultMsg) tea.Cmd {
 	k := msg.ai
 	if msg.err != nil {
 		st.l = load{st: loadFailed, err: msg.err}
+		if k.kind == aiCITriage && (errors.Is(msg.err, ai.ErrNoFailedJobs) || errors.Is(msg.err, ai.ErrNoPipeline)) {
+			st.l = load{} // nothing to triage is not a failure: say so once
+			m.notice(events.Info, msg.err.Error())
+			return nil
+		}
 		if k.kind != aiSummary { // the summary starts by itself: it reports in its own section
 			m.emit(d, "ai.failed", events.Error, fmt.Sprintf("%s failed on %s", capitalize(k.what()), d.ref), aiCause(msg.err)+"\n"+msg.err.Error())
 		}
@@ -260,6 +273,8 @@ func (m *model) onAI(d *mrData, msg mrResultMsg) tea.Cmd {
 	st.text, st.profile, st.model, st.cost, st.cached, st.notes = strings.TrimSpace(ans.res.Text), ans.res.Profile, ans.res.Model, ans.res.CostUSD, ans.res.CacheHit, ans.notes
 	st.cut = ans.res.CutShort()
 	switch k.kind {
+	case aiDescribe:
+		m.deliverDescription(d, st, ans.draft)
 	case aiReply:
 		m.deliverReply(d, k.id, st)
 	case aiReview:

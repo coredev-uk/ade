@@ -16,7 +16,10 @@ import (
 	"github.com/coredev-uk/ade/internal/forge"
 )
 
-var _ forge.MRWriter = (*Client)(nil)
+var (
+	_ forge.MRWriter     = (*Client)(nil)
+	_ forge.MRTextWriter = (*Client)(nil)
+)
 
 // send issues a write with an optional JSON body and decodes the answer into
 // out when there is one (204 answers carry no body).
@@ -433,4 +436,38 @@ func (c *Client) PublishDraftNotes(ctx context.Context, mr forge.Ref) error {
 		return fmt.Errorf("gitlab: publishing %s: %w (draft notes bulk_publish needs a newer GitLab): %w", mr, forge.ErrUnavailable, err)
 	}
 	return err
+}
+
+type wireCommit struct {
+	ID         string `json:"id"`
+	Title      string `json:"title"`
+	Message    string `json:"message"`
+	AuthorName string `json:"author_name"`
+}
+
+// MRCommits implements forge.MRTextWriter. GitLab lists the commits newest
+// first; the result is oldest first, the order the work was done in.
+func (c *Client) MRCommits(ctx context.Context, ref forge.Ref) ([]forge.Commit, error) {
+	if err := wantKind(ref, forge.KindMR); err != nil {
+		return nil, err
+	}
+	raw, err := getAll[wireCommit](ctx, c, mrPath(ref)+"/commits", nil, false)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]forge.Commit, len(raw))
+	for i, w := range raw {
+		out[len(raw)-1-i] = forge.Commit{SHA: w.ID, Title: w.Title, Message: w.Message, Author: w.AuthorName}
+	}
+	return out, nil
+}
+
+// SetMRDescription implements forge.MRTextWriter. Only the description is sent,
+// so the title (and with it the draft state) is left alone. GitLab runs quick
+// actions in a description it is given.
+func (c *Client) SetMRDescription(ctx context.Context, ref forge.Ref, description string) error {
+	if err := wantKind(ref, forge.KindMR); err != nil {
+		return err
+	}
+	return c.send(ctx, http.MethodPut, mrPath(ref), map[string]string{"description": description}, nil)
 }

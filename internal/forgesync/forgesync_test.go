@@ -583,3 +583,69 @@ func TestMRTargets(t *testing.T) {
 		t.Errorf("targets = %v, want %v", got, want)
 	}
 }
+
+// A sync that keeps failing raises sync.stalled once the last good sync is
+// older than notify.sync_stalled_after, once per outage, and again for the
+// next outage.
+func TestSyncStalledEvent(t *testing.T) {
+	h := newHarness(t, manifest("a", "alpha", "tracker", "milestones"))
+	seed(h.f)
+	now := testNow
+	h.svc.Now = func() time.Time { return now }
+	h.app.Config.Notify.SyncStalledAfter = config.Duration{Duration: 2 * time.Hour}
+	got := h.listen()
+	h.sync() // good sync at testNow
+	got()
+
+	h.f.update(func(f *memForge) { f.failProject = "g/tracker" })
+	now = testNow.Add(time.Hour)
+	h.sync()
+	if ev := kinds(got()); len(ev[EvSyncStalled]) != 0 {
+		t.Fatalf("an outage of 1h raised sync.stalled: %v", ev[EvSyncStalled])
+	}
+
+	now = testNow.Add(3 * time.Hour)
+	h.sync()
+	ev := kinds(got())[EvSyncStalled]
+	if len(ev) != 1 {
+		t.Fatalf("sync.stalled events = %v, want 1", ev)
+	}
+	e := ev[0]
+	if e.Severity != events.Warn || e.Transient || e.Project != "alpha" || !strings.Contains(e.Title, "3h0m0s") || !strings.Contains(e.Detail, "boom") {
+		t.Errorf("sync.stalled = %+v", e)
+	}
+
+	now = testNow.Add(5 * time.Hour)
+	h.sync()
+	if ev := kinds(got()); len(ev[EvSyncStalled]) != 0 {
+		t.Errorf("the same outage raised sync.stalled again: %v", ev[EvSyncStalled])
+	}
+
+	// Recovery ends the outage; a new one raises it again.
+	h.f.update(func(f *memForge) { f.failProject = "" })
+	now = testNow.Add(6 * time.Hour)
+	h.sync()
+	got()
+	h.f.update(func(f *memForge) { f.failProject = "g/tracker" })
+	now = testNow.Add(9 * time.Hour)
+	h.sync()
+	if ev := kinds(got()); len(ev[EvSyncStalled]) != 1 {
+		t.Errorf("second outage raised %d sync.stalled events, want 1", len(ev[EvSyncStalled]))
+	}
+}
+
+func TestSyncStalledOff(t *testing.T) {
+	h := newHarness(t, manifest("a", "alpha", "tracker", "milestones"))
+	seed(h.f)
+	now := testNow
+	h.svc.Now = func() time.Time { return now }
+	h.app.Config.Notify.SyncStalledAfter = config.Duration{}
+	h.sync()
+	h.f.update(func(f *memForge) { f.failProject = "g/tracker" })
+	got := h.listen()
+	now = testNow.Add(72 * time.Hour)
+	h.sync()
+	if ev := kinds(got()); len(ev[EvSyncStalled]) != 0 {
+		t.Errorf("sync_stalled_after = 0 still raised %v", ev[EvSyncStalled])
+	}
+}

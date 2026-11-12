@@ -100,6 +100,28 @@ type Notify struct {
 	// Toast lists event-kind globs shown as pop-ups in the dashboard. Every
 	// event is recorded in the inbox regardless.
 	Toast []string `toml:"toast"`
+	// External hands system-level events to a command of your own (a CDE
+	// inbox, a chat webhook script).
+	External NotifyExternal `toml:"external"`
+	// SyncStalledAfter is how long a project's sync may keep failing before
+	// ADE raises sync.stalled, once per outage (default 2h; 0 never).
+	SyncStalledAfter Duration `toml:"sync_stalled_after"`
+}
+
+// NotifyExternal is the external notification command ([notify.external]).
+// The event goes to the command as JSON on stdin and as ADE_EVENT_* variables.
+type NotifyExternal struct {
+	// Command runs through `sh -c`; empty turns the hook off.
+	Command string `toml:"command"`
+	// Kinds are event-kind globs the command receives.
+	Kinds []string `toml:"kinds"`
+	// MinSeverity is the lowest severity sent: info | success | warn | error.
+	MinSeverity string `toml:"min_severity"`
+	// Timeout kills a command that runs longer.
+	Timeout Duration `toml:"timeout"`
+	// Dedupe is how long the same kind in the same project (and severity) is
+	// sent only once; it holds across ade processes. 0 sends every event.
+	Dedupe Duration `toml:"dedupe"`
 }
 
 type Records struct {
@@ -219,6 +241,13 @@ func Defaults() Config {
 		Update: Update{OnStart: &on, Interval: Duration{10 * time.Minute}, FeatureBranches: "ff-if-clean", Concurrency: 4},
 		Notify: Notify{
 			Toast: []string{"*"},
+			External: NotifyExternal{
+				Kinds:       []string{"budget.*", "sync.stalled"},
+				MinSeverity: "warn",
+				Timeout:     Duration{10 * time.Second},
+				Dedupe:      Duration{time.Hour},
+			},
+			SyncStalledAfter: Duration{2 * time.Hour},
 		},
 		Records: Records{AuditRetain: "forever", SnapshotComments: 20},
 		Host:    Host{Mode: "auto", Editor: "auto", Glyphs: "unicode"},
