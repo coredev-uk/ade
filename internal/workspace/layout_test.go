@@ -233,12 +233,19 @@ func TestBuildLayoutRejectsBadInput(t *testing.T) {
 type fakeZellij struct {
 	sessions string
 	tabs     string
+	panes    string // list-panes --json
+	failOn   string // an action whose arguments contain this fails
 	calls    [][]string
 }
 
 func (f *fakeZellij) run(_ context.Context, args ...string) (string, error) {
 	f.calls = append(f.calls, args)
+	if f.failOn != "" && strings.Contains(strings.Join(args, " "), f.failOn) {
+		return "", errors.New("zellij " + f.failOn + ": failed")
+	}
 	switch {
+	case len(args) > 3 && args[3] == "list-panes":
+		return f.panes, nil
 	case args[0] == "list-sessions":
 		return f.sessions, nil
 	case len(args) > 3 && args[3] == "query-tab-names":

@@ -280,7 +280,7 @@ default_branch = "develop"               # baseline tree is api/develop/; omit t
 [repos.web.hooks]
 post_clone    = ["npm ci"]               # once, in the baseline tree after `ade project add`
 post_worktree = ["npm ci"]               # every new worktree
-install       = ["npm ci"]               # every worktree a workspace uses, when it first opens
+install       = ["npm ci"]               # every worktree a workspace uses (services tab, ade ws install)
 
 [repos.api.tasks.dev]
 cmd   = "make run"
@@ -318,21 +318,38 @@ baseline (default-branch) tree, so `{api.dev.port}` in web's `API_URL` follows t
 
 `hooks.install` is a list of shell commands that make a worktree runnable (`npm ci`, `make deps`). ADE runs them in
 each worktree of that repo that a workspace uses (the one it opened, and the trees its required repos and services run
-from), inside the repo's dev shell, one after the other. They run when the workspace first opens, in the first pane of
-the workspace's services tab, before any service starts, and on demand with `ade ws install <tree> [--force]`.
+from), inside the repo's dev shell, one after the other; the trees of required repos and services come first, the
+workspace's own tree last. With `services = "background"` they run when the workspace first opens, in the first pane
+of the workspace's services tab, before any service starts. With `services = "manual"` nothing runs them on open: use
+`ade ws up` or `ade ws install <tree> [--force]`. A review tab runs no install.
 
-ADE remembers a success per worktree, keyed by a hash of the commands (and the worktree's creation), so the commands
-run again only when you change them, recreate the worktree or pass `--force`. A failing command stops that worktree's
-commands, is reported and is not remembered; the service panes keep waiting until `ade ws install` succeeds. Each
-command is audited as `git.hook` with `hook=install`. `post_clone` and `post_worktree` are unchanged.
+ADE remembers a success per worktree, keyed by a hash of the commands, of the content of the lockfiles at the
+worktree's root (`package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lockb`, `go.sum`, `Cargo.lock`,
+`poetry.lock`, `uv.lock`, `flake.lock`, when present) and of the worktree's creation. The commands run again only
+when one of them changes (a pull that updates a lockfile installs again) or you pass `--force`. The dev shell is not
+part of the key. A failing command stops that worktree's commands and is reported; ADE keeps no success marker but
+records the failure, so every pane waiting for that install stops at once with the reason instead of waiting. The
+next `ade ws install` clears the record. Each command is audited as `git.hook` with `hook=install`. `post_clone` and
+`post_worktree` are unchanged.
+
+Install commands run with ADE's environment (including any forge token you exported) and inside the worktree's dev
+shell (`direnv exec`, `nix develop`), so the branch's own `.envrc` or flake runs when the workspace opens. They come
+from the project manifest and have the same trust as `post_worktree` and task `cmd`: ADE asks nothing when the
+manifest changes, and the audit log keeps the command text. Only open workspaces of projects you trust.
 
 The first time ADE opens a workspace tab it also creates an unfocused tab named `<tab> · services` (you stay on the
 workspace tab). It holds the install pane and one pane per service of the `run` group (requirements running from other
 trees and `services.*`), started in dependency order with no "Waiting to run" prompt. Each pane waits for the install of
-its worktrees and for every service it requires to be ready. A required service with a `port` and no `ready` counts as
-ready once its TCP port accepts connections; an explicit `ready` always wins. A `services.*` instance another
+its worktrees and for every service it requires to be ready. A service some node requires, with a `port` and no
+`ready`, counts as ready once its TCP port accepts connections, in its own pane as well as for its dependents; an
+explicit `ready` always wins. A `services.*` instance another
 workspace already runs is reused: the pane reports `already running (pid N)`, holds it and shows its log. The
 workspace's own tasks stay in the workspace tab's strip and start on Enter.
+
+A waiting pane never hangs silently: it prints `still waiting for <node> (<probe>) <time>` every 30 seconds, stops
+with the reason when the pane that starts what it waits for failed (crashed, or its `ready` timed out), and gives up
+after `--wait-timeout` (default 10 minutes, `ade task run`) with a non-zero exit. A stopped pane shows the reason;
+press Enter to run it again.
 
 ```toml
 [workspaces]
@@ -340,7 +357,8 @@ default = { layout = "code", run = "dev", services = "background" }   # or "manu
 ```
 
 `services = "manual"` skips the services tab: services and the `services` (start all) pane stay in the strip, each
-waiting for Enter, and `ade ws up --no-zellij` still runs the install hooks first.
+waiting for Enter, and `ade ws up --no-zellij` still runs the install hooks first. Strip tasks wait for the install
+too (`--after-install`): run `ade ws install` or `ade ws up` first, or the pane says so and waits.
 
 ### Dev shell per repo
 

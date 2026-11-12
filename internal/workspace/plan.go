@@ -105,7 +105,7 @@ func (m *Manager) Plan(ctx context.Context, loc Location, o PlanOptions) (*Plan,
 			return nil, fmt.Errorf("%s: %w", n.ID, err)
 		}
 	}
-	p.gateRequiredPorts()
+	p.gateRequiredPorts(g.Required())
 	for repo := range loc.Manifest.Repos {
 		if t, ok := tr.done[repo]; ok {
 			p.Trees[repo] = t
@@ -114,19 +114,15 @@ func (m *Manager) Plan(ctx context.Context, loc Location, o PlanOptions) (*Plan,
 	return p, nil
 }
 
-// gateRequiredPorts is the port gate: a service another node requires, with a
+// gateRequiredPorts is the port gate: a service some node requires, with a
 // port but no ready probe of its own, counts as ready once that port accepts
 // connections, so its dependents do not start against a server still booting.
-// An explicit ready probe always wins.
-func (p *Plan) gateRequiredPorts() {
-	required := map[string]bool{}
+// An explicit ready probe always wins. required comes from the whole manifest,
+// not from the plan: the pane that runs the service alone (`ade task run`)
+// applies the same gate as the plan of its dependent.
+func (p *Plan) gateRequiredPorts(required map[string]bool) {
 	for _, in := range p.Instances {
-		for _, req := range in.Requires {
-			required[req] = true
-		}
-	}
-	for _, in := range p.Instances {
-		if required[in.ID] && in.Ready == nil && in.Port > 0 && !in.Node.Oneshot() {
+		if required[in.Node.ID] && in.Ready == nil && in.Port > 0 && !in.Node.Oneshot() {
 			in.Ready = &readiness.Spec{Kind: readiness.TCP, Target: net.JoinHostPort("localhost", strconv.Itoa(in.Port))}
 		}
 	}

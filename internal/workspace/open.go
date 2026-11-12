@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -9,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/coredev-uk/ade/internal/app"
@@ -103,9 +105,10 @@ type OpenResult struct {
 // Open opens the workspace of a worktree in the user's host: a tab in the
 // `ade` zellij session (reused when it exists), a VS Code window with
 // generated tasks, or a `cd` hint on a plain terminal. It starts no
-// processes itself, and neither do the tab's service panes until the user
-// presses Enter in them: they run `ade task run`, which brings up the run
-// graph and shares instances with other workspaces.
+// processes itself. The panes of the tab's strip run `ade task run`, which
+// brings up the run graph and shares instances with other workspaces; they
+// wait for Enter. With services = "background" the services tab's panes run
+// as soon as that tab opens.
 func Open(ctx context.Context, a *app.App, project, repo, worktree string, opts ...OpenOption) (OpenResult, error) {
 	p, err := prepare(ctx, a, project, repo, worktree, opts)
 	if err != nil {
@@ -408,10 +411,54 @@ func currentSession(getenv func(string) string) string {
 }
 
 // FocusTab focuses the tab of a running zellij session or creates it from
-// layoutFile (zellij focuses a new tab). created says which happened.
+// layoutFile (zellij focuses a new tab). created says which happened. The tab
+// is expected to run one command that stays up (the dashboard): when its pane
+// has exited, the tab is replaced by a fresh one, because zellij offers no way
+// to run the pane again from outside.
 func FocusTab(ctx context.Context, session, tab, layoutFile string) (created bool, err error) {
-	created, _, err = openTab(ctx, runZellij, session, tab, layoutFile, tabLayout{})
+	return focusTab(ctx, runZellij, session, tab, layoutFile)
+}
+
+func focusTab(ctx context.Context, run zellijRunner, session, tab, layoutFile string) (created bool, err error) {
+	if stale := exitedTabs(ctx, run, session, tab); len(stale) > 0 {
+		// The new tab goes first: closing the session's last tab would end the session.
+		if _, err := run(ctx, "--session", session, "action", "new-tab", "--layout", layoutFile, "--name", tab); err != nil {
+			return false, err
+		}
+		for _, id := range stale {
+			if _, err := run(ctx, "--session", session, "action", "close-tab-by-id", strconv.Itoa(id)); err != nil {
+				return true, err
+			}
+		}
+		return true, nil
+	}
+	created, _, err = openTab(ctx, run, session, tab, layoutFile, tabLayout{})
 	return created, err
+}
+
+// exitedTabs returns the ids of the tabs named tab that hold a command pane
+// whose command has exited. A zellij that cannot list panes as JSON yields none.
+func exitedTabs(ctx context.Context, run zellijRunner, session, tab string) []int {
+	out, err := run(ctx, "--session", session, "action", "list-panes", "--json", "--tab", "--state")
+	if err != nil {
+		return nil
+	}
+	var panes []struct {
+		IsPlugin bool   `json:"is_plugin"`
+		Exited   bool   `json:"exited"`
+		TabID    int    `json:"tab_id"`
+		TabName  string `json:"tab_name"`
+	}
+	if json.Unmarshal([]byte(out), &panes) != nil {
+		return nil
+	}
+	var ids []int
+	for _, p := range panes {
+		if p.TabName == tab && !p.IsPlugin && p.Exited && !slices.Contains(ids, p.TabID) {
+			ids = append(ids, p.TabID)
+		}
+	}
+	return ids
 }
 
 // tabLayout is a tab to create from a layout file; the zero value is none.
@@ -475,8 +522,9 @@ func layoutSpec(ctx context.Context, p *prepared) LayoutSpec {
 			continue // runs as part of its dependents' `task run`
 		}
 		pane := Pane{Name: in.Node.ID, Args: append([]string{"task", "run", in.Node.ID, "--worktree", p.loc.Tree}, p.runArgs...)}
-		if p.background {
-			// Waits for the install; a service of the background tab also waits for what it requires.
+		if p.background || p.install {
+			// Waits for the install (in manual mode: for `ade ws install` or `ade ws up`); a
+			// service of the background tab also waits for what it requires.
 			pane.Args = append(pane.Args, "--after-install")
 		}
 		if in.Node.Repo == "" || in.Tree.Path != p.loc.Tree {

@@ -509,7 +509,7 @@ func newTaskRunCmd() *cobra.Command {
 		tf       treeFlags
 		worktree string
 		noFollow bool
-		gates    taskGates
+		gates    = taskGates{timeout: workspace.DefaultWaitTimeout}
 	)
 	cmd := &cobra.Command{
 		Use:   "run <node>",
@@ -527,9 +527,16 @@ have succeeded (ade ws install). --wait-requires starts only the node itself:
 it waits until each service it requires is running and ready, started by its
 own pane or another workspace. The services tab's panes use both. A node that
 is already running for another workspace is not started twice: the pane says
-so, keeps holding it and follows its log.`,
+so, keeps holding it and follows its log.
+
+A wait says every 30 seconds that it is still waiting, and what for. It ends
+with an error when the install or the required service failed (the pane that
+ran it recorded why), and after --wait-timeout (default 10m).`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if gates.timeout <= 0 {
+				return fmt.Errorf("--wait-timeout %s: want a positive duration", gates.timeout)
+			}
 			trees, err := tf.options()
 			if err != nil {
 				return err
@@ -542,11 +549,15 @@ so, keeps holding it and follows its log.`,
 	cmd.Flags().BoolVar(&noFollow, "no-follow", false, "return after readiness instead of following the output")
 	cmd.Flags().BoolVar(&gates.afterInstall, "after-install", false, "wait for the install hooks of the node's worktrees first")
 	cmd.Flags().BoolVar(&gates.waitRequires, "wait-requires", false, "wait for required services started elsewhere instead of starting them")
+	cmd.Flags().DurationVar(&gates.timeout, "wait-timeout", gates.timeout, "with --after-install and --wait-requires: give up a wait after this long")
 	return cmd
 }
 
 // taskGates are the waits `ade task run` can put before the start.
-type taskGates struct{ afterInstall, waitRequires bool }
+type taskGates struct {
+	afterInstall, waitRequires bool
+	timeout                    time.Duration // of each wait
+}
 
 func taskRun(cmd *cobra.Command, a *app.App, node, worktree string, tf treeFlags, trees workspace.TreeOptions, noFollow bool, gates taskGates) error {
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
@@ -568,11 +579,15 @@ func taskRun(cmd *cobra.Command, a *app.App, node, worktree string, tf treeFlags
 	fmt.Fprintln(w, workspace.StartMarker(node))
 	if gates.afterInstall {
 		targets := mgr.InstallTargets(loc, plan, false)
-		err := mgr.WaitInstalled(ctx, targets, 0, func(pending []workspace.InstallTarget) {
+		err := mgr.WaitInstalled(ctx, targets, workspace.InstallWait{Timeout: gates.timeout, Waiting: func(pending []workspace.InstallTarget, elapsed time.Duration) {
 			for _, t := range pending {
-				fmt.Fprintf(w, "ade: waiting for the install of %s (%s); if it failed, fix it and run: ade ws install %s\n", t.Repo, t.Tree, loc.Tree)
+				if elapsed == 0 {
+					fmt.Fprintf(w, "ade: waiting for the install of %s (%s); if nothing is installing it, run: ade ws install %s\n", t.Repo, t.Tree, loc.Tree)
+				} else {
+					fmt.Fprintf(w, "ade: still waiting for the install of %s (%s) %s\n", t.Repo, t.Tree, elapsed.Round(time.Second))
+				}
 			}
-		})
+		}})
 		if err != nil {
 			return ignoreInterrupt(ctx, err)
 		}
@@ -589,7 +604,13 @@ func taskRun(cmd *cobra.Command, a *app.App, node, worktree string, tf treeFlags
 	}
 	var results []workspace.Result
 	if gates.waitRequires {
-		wait := workspace.WaitOptions{Waiting: func(req string) { fmt.Fprintf(w, "ade: waiting for %s to be ready (started in its own pane)\n", req) }}
+		wait := workspace.WaitOptions{Timeout: gates.timeout, Waiting: func(req, probe string, elapsed time.Duration) {
+			if elapsed == 0 {
+				fmt.Fprintf(w, "ade: waiting for %s (%s) to be ready; it starts in its own pane\n", req, probe)
+			} else {
+				fmt.Fprintf(w, "ade: still waiting for %s (%s) %s\n", req, probe, elapsed.Round(time.Second))
+			}
+		}}
 		results, err = mgr.UpWaiting(ctx, plan, opts, wait)
 	} else {
 		results, err = mgr.Up(ctx, plan, opts)

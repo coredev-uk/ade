@@ -67,9 +67,11 @@ type LayoutSpec struct {
 	// pane, the one-step way to start everything in order.
 	Up Pane
 	// Services are requirements running elsewhere (other trees, services.*), Tasks
-	// the workspace's own. Every one gets a pane of the strip along the bottom.
-	// None starts when the tab opens (zellij start_suspended): the pane shows its
-	// command and waits for Enter; Ctrl-C stops it and Enter starts it again.
+	// the workspace's own. Every Task gets a pane of the strip along the bottom,
+	// and so does every Service unless BackgroundServices moves them to a tab of
+	// their own. A strip pane does not start when the tab opens (zellij
+	// start_suspended): it shows its command and waits for Enter; Ctrl-C stops it
+	// and Enter starts it again.
 	Services []Pane
 	Tasks    []Pane
 	// BackgroundServices moves Up and Services out of the strip into a tab of

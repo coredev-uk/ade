@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -100,10 +101,7 @@ func launch(cmd *cobra.Command, dry bool) error {
 		}
 	}
 	if focusFirst {
-		// The session would open on the tab focused last, often an agent tab.
-		if _, err := workspace.FocusTab(cmd.Context(), host.SessionName, zellij.HomeTab, layoutFile); err != nil {
-			fmt.Fprintln(os.Stderr, "ade: could not focus the home tab:", err)
-		}
+		focusHomeBeforeAttach(cmd.Context(), os.Stderr, layoutFile)
 	}
 	bin, err := exec.LookPath("zellij")
 	if err != nil {
@@ -118,6 +116,15 @@ func launch(cmd *cobra.Command, dry bool) error {
 	return syscall.Exec(bin, argv, os.Environ())
 }
 
+// focusHomeBeforeAttach moves the live `ade` session to its home tab: it would
+// otherwise open on the tab focused last, often an agent tab. A failure only
+// warns, because attaching still works.
+func focusHomeBeforeAttach(ctx context.Context, warn io.Writer, layoutFile string) {
+	if _, err := workspace.FocusTab(ctx, host.SessionName, zellij.HomeTab, layoutFile); err != nil {
+		fmt.Fprintln(warn, "ade: could not focus the home tab:", err)
+	}
+}
+
 func writeHomeLayout(cacheDir, layoutFile, layout string) error {
 	if err := paths.EnsureDir(cacheDir); err != nil {
 		return err
@@ -129,8 +136,8 @@ func writeHomeLayout(cacheDir, layoutFile, layout string) error {
 }
 
 // showHomeTab runs inside zellij: it focuses the `home` tab of the current
-// session, creating it (running `ade dash`) when it is gone, so the dashboard
-// never runs a second time in the pane that typed `ade`.
+// session, creating it (running `ade dash`) when it is gone or its dashboard
+// has exited, so the dashboard never runs a second time in the pane that typed `ade`.
 func showHomeTab(cmd *cobra.Command, action host.Action, session, layout, layoutFile string, dry bool) error {
 	out := cmd.OutOrStdout()
 	if action == host.OpenHome {

@@ -57,7 +57,9 @@ type InstallOptions struct {
 
 // InstallTargets lists the worktrees of a plan whose repos declare install
 // commands, requirements first: the trees its instances run in, then the other
-// trees the plan resolved. The workspace's own tree comes first when own is true.
+// trees the plan resolved. The workspace's own tree comes last when own is
+// true, so a long install there does not delay the services that need only
+// their own trees.
 func (m *Manager) InstallTargets(loc Location, p *Plan, own bool) []InstallTarget {
 	var out []InstallTarget
 	seen := map[string]bool{}
@@ -72,29 +74,42 @@ func (m *Manager) InstallTargets(loc Location, p *Plan, own bool) []InstallTarge
 			Devshell: m.Devshell.Detect(tree, loc.Manifest.Repos[repo].Devshell),
 		})
 	}
+	addOther := func(repo, tree string) {
+		if !own || tree != loc.Tree {
+			add(repo, tree)
+		}
+	}
+	if p != nil {
+		for _, in := range p.Instances {
+			addOther(in.Node.Repo, in.Tree.Path)
+		}
+		for _, repo := range slices.Sorted(maps.Keys(p.Trees)) {
+			addOther(repo, p.Trees[repo].Path)
+		}
+	}
 	if own {
 		add(loc.Repo, loc.Tree)
-	}
-	if p == nil {
-		return out
-	}
-	for _, in := range p.Instances {
-		add(in.Node.Repo, in.Tree.Path)
-	}
-	for _, repo := range slices.Sorted(maps.Keys(p.Trees)) {
-		add(repo, p.Trees[repo].Path)
 	}
 	return out
 }
 
-// installKey identifies what a successful install covers: the commands and the
-// worktree's creation (its .git file), so a worktree recreated at the same
-// path installs again.
+// lockfiles are the dependency locks at a worktree's root whose content is part
+// of the install key: a pull that changes one installs again.
+var lockfiles = []string{"package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lockb", "go.sum", "Cargo.lock", "poetry.lock", "uv.lock", "flake.lock"}
+
+// installKey identifies what a successful install covers: the commands, the
+// content of the worktree's lockfiles, and the worktree's creation (its .git
+// file), so a worktree recreated at the same path installs again.
 func installKey(t InstallTarget) string {
 	h := sha256.New()
 	for _, c := range t.Commands {
 		io.WriteString(h, c) //nolint:errcheck // hash writes cannot fail
 		h.Write([]byte{0})
+	}
+	for _, name := range lockfiles {
+		if sum, ok := fileSum(filepath.Join(t.Tree, name)); ok {
+			fmt.Fprintf(h, "%s=%s\n", name, sum)
+		}
 	}
 	if fi, err := os.Stat(filepath.Join(t.Tree, ".git")); err == nil {
 		fmt.Fprintf(h, "%d", fi.ModTime().UnixNano())
@@ -102,8 +117,46 @@ func installKey(t InstallTarget) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+func fileSum(path string) (string, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", false
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", false
+	}
+	return hex.EncodeToString(h.Sum(nil)), true
+}
+
 func (m *Manager) installMarker(t InstallTarget) string {
 	return filepath.Join(m.StateDir, "install", slugOf(t.Tree))
+}
+
+// installFailedMarker holds what the last failed install of the target said,
+// for the panes waiting for it.
+func (m *Manager) installFailedMarker(t InstallTarget) string { return m.installMarker(t) + ".failed" }
+
+// installFailure returns the detail of the target's failed install, when it
+// was for the current commands and lockfiles.
+func (m *Manager) installFailure(t InstallTarget) (string, bool) {
+	data, err := os.ReadFile(m.installFailedMarker(t))
+	if err != nil {
+		return "", false
+	}
+	key, detail, _ := strings.Cut(string(data), "\n")
+	if key != installKey(t) {
+		return "", false
+	}
+	return strings.TrimSpace(detail), true
+}
+
+func (m *Manager) markInstallFailed(t InstallTarget, detail string) {
+	path := m.installFailedMarker(t)
+	if os.MkdirAll(filepath.Dir(path), 0o700) == nil {
+		_ = os.WriteFile(path, []byte(installKey(t)+"\n"+detail+"\n"), 0o600)
+	}
 }
 
 // InstallDone reports whether the target's commands already succeeded in its
@@ -126,8 +179,10 @@ func (m *Manager) markInstalled(t InstallTarget) error {
 
 // Install runs the target's commands in its worktree, inside the repo's dev
 // shell, one after the other; the first failure stops the run and leaves no
-// marker, so the next Install tries again. After a success the marker makes
-// later calls no-ops until the commands change (or Force).
+// marker, so the next Install tries again, but a failure marker with the detail
+// (<marker>.failed) that WaitInstalled reports at once. The next attempt
+// clears it. After a success the marker makes later calls no-ops until the
+// commands or the lockfiles change (or Force).
 func (m *Manager) Install(ctx context.Context, t InstallTarget, o InstallOptions) InstallResult {
 	res := InstallResult{Repo: t.Repo, Tree: t.Tree, Outcome: InstallUpToDate}
 	out := o.Out
@@ -142,6 +197,7 @@ func (m *Manager) Install(ctx context.Context, t InstallTarget, o InstallOptions
 	if !o.Force && m.InstallDone(t) {
 		return res
 	}
+	_ = os.Remove(m.installFailedMarker(t))
 	if err := os.Remove(m.installMarker(t)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return InstallResult{Repo: t.Repo, Tree: t.Tree, Outcome: InstallFailed, Detail: err.Error()}
 	}
@@ -153,11 +209,13 @@ func (m *Manager) Install(ctx context.Context, t InstallTarget, o InstallOptions
 		}
 		if err != nil {
 			res.Outcome, res.Detail = InstallFailed, fmt.Sprintf("%q: %v", c, err)
+			m.markInstallFailed(t, res.Detail)
 			return res
 		}
 	}
 	if err := m.markInstalled(t); err != nil {
 		res.Outcome, res.Detail = InstallFailed, "record the install: "+err.Error()
+		m.markInstallFailed(t, res.Detail)
 		return res
 	}
 	res.Outcome = InstallRan
@@ -175,32 +233,51 @@ func runInstallCommand(ctx context.Context, t InstallTarget, command string, out
 // installPoll is how often WaitInstalled looks for the markers.
 const installPoll = 500 * time.Millisecond
 
-// WaitInstalled blocks until every target's install marker is current or ctx
-// ends. onWait is called once with the targets still pending when the first
-// check fails.
-func (m *Manager) WaitInstalled(ctx context.Context, targets []InstallTarget, poll time.Duration, onWait func(pending []InstallTarget)) error {
-	if poll <= 0 {
-		poll = installPoll
+// InstallWait tunes WaitInstalled.
+type InstallWait struct {
+	// Poll is how often the markers are looked at (default half a second).
+	Poll time.Duration
+	// Timeout bounds the wait (default DefaultWaitTimeout).
+	Timeout time.Duration
+	// Every is how often Waiting repeats (default DefaultWaitReport).
+	Every time.Duration
+	// Waiting is called with the targets still pending when the first check
+	// fails (elapsed 0), and again every Every with the time waited so far.
+	Waiting func(pending []InstallTarget, elapsed time.Duration)
+}
+
+// WaitInstalled blocks until every target's install marker is current. It
+// ends with an error when ctx ends, when a pending target's last install
+// failed (the detail is in the error), and when w.Timeout passes.
+func (m *Manager) WaitInstalled(ctx context.Context, targets []InstallTarget, w InstallWait) error {
+	if w.Poll <= 0 {
+		w.Poll = installPoll
 	}
-	announced := false
+	pace := newPacer(w.Every, w.Timeout)
 	for {
 		var pending []InstallTarget
 		for _, t := range targets {
-			if !m.InstallDone(t) {
-				pending = append(pending, t)
+			if m.InstallDone(t) {
+				continue
 			}
+			if detail, failed := m.installFailure(t); failed {
+				return fmt.Errorf("install of %s (%s) failed: %s", t.Repo, t.Tree, detail)
+			}
+			pending = append(pending, t)
 		}
 		if len(pending) == 0 {
 			return nil
 		}
-		if !announced && onWait != nil {
-			announced = true
-			onWait(pending)
+		if pace.expired() {
+			return fmt.Errorf("install of %s (%s) did not finish within %s", pending[0].Repo, pending[0].Tree, pace.timeout)
+		}
+		if elapsed, due := pace.report(); due && w.Waiting != nil {
+			w.Waiting(pending, elapsed)
 		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(poll):
+		case <-time.After(w.Poll):
 		}
 	}
 }

@@ -238,7 +238,7 @@ var schemaDocs = map[string]string{
 	"manifest:repos.*.app":                "App-label values routed to this repo.",
 	"manifest:repos.*.requires":           "Checkout dependencies (repo names).",
 	"manifest:repos.*.devshell":           "How a worktree's dev shell is entered for panes and tasks: auto (direnv with an .envrc, else nix develop with a flake devShell), direnv, nix or none.",
-	"manifest:repos.*.hooks.install":      "Shell commands that set a worktree up (npm ci). Run in each worktree of this repo a workspace uses, inside the repo's dev shell, when the workspace first opens and on ade ws install; re-run only when the commands change.",
+	"manifest:repos.*.hooks.install":      "Shell commands that set a worktree up (npm ci). Run in each worktree of this repo a workspace uses, inside the repo's dev shell, in the services tab when the workspace first opens (background mode), and on ade ws install and ade ws up in either mode; re-run only when the commands or the worktree's lockfiles change. Runs with ADE's environment: same trust as post_worktree.",
 	"manifest:repos.*.tasks":              "Run-graph nodes of this repo.",
 	"manifest:repos.*.tasks.*.requires":   "Node references: \"<repo>.<task>\" or \"services.<name>\".",
 	"manifest:repos.*.tasks.*.env":        "Environment of the task; values may use {port}, {dir}, {state} and <node>.port templates.",

@@ -22,10 +22,11 @@ func newWsInstallCmd() *cobra.Command {
 		Use:   "install [worktree]",
 		Short: "Run the install hooks of a worktree's workspace",
 		Long: `Runs [repos.<r>.hooks] install in every worktree the workspace uses (the
-worktree itself, then the trees its required repos and services run from), each
+trees its required repos and services run from, then the worktree itself), each
 inside its repo's dev shell. A worktree whose commands already succeeded is
 skipped: the result is remembered per worktree and re-run only when the
-commands change. --force runs them again.
+commands or the repo's lockfiles change. --force runs them again. A failed
+install is recorded, so the panes waiting for it stop with the reason.
 
 The workspace's services tab runs this first; its service panes wait for it.
 Each command is audited as git.hook with hook=install.`,
