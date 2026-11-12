@@ -201,7 +201,7 @@ func TestEventMerge(t *testing.T) {
 		g := newGLEnv(t, fake.Free)
 		g.must(g.srv.MergeMRAs(ref(apiMR1), rae))
 		got := g.next()
-		if len(got[EvMRMerged]) != 1 || got[EvMRMerged][0].Title != "api!1 merged by "+rae {
+		if len(got[EvMRMerged]) != 1 || got[EvMRMerged][0].Title != "api!1 merged by Rae Reviewer ("+rae+")" {
 			t.Errorf("mr.merged = %+v (all %v)", got[EvMRMerged], keysOf(got))
 		}
 	})

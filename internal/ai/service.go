@@ -21,6 +21,7 @@ import (
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/ledger"
 	"github.com/coredev-uk/ade/internal/records"
+	"github.com/coredev-uk/ade/internal/store"
 )
 
 // ErrDisabled is returned when ai.mode is off.
@@ -33,6 +34,14 @@ type ErrNeedsConfirm struct{ Preflight Preflight }
 func (e *ErrNeedsConfirm) Error() string {
 	return "needs confirmation (" + strings.Join(e.Preflight.Confirm, "; ") + "): pass --yes to go ahead"
 }
+
+// ErrCutShortRecently is returned instead of asking again for a prompt whose
+// answer the model cut short a moment ago: the same prompt would most likely
+// be cut short again, and each try is paid for. Refresh asks anyway.
+var ErrCutShortRecently = errors.New("the last answer to this prompt was cut short; refresh to ask again")
+
+// cutShortTTL is how long a cut-short answer is remembered per input hash.
+const cutShortTTL = 30 * time.Minute
 
 // ErrCancelled is returned when the user declined the pre-flight prompt.
 var ErrCancelled = errors.New("cancelled at the pre-flight prompt; nothing was sent")
@@ -150,12 +159,23 @@ type Result struct {
 	// SavedUSD is what a cache hit did not cost: the original call's price.
 	SavedUSD float64
 	// Truncated is true when the model hit its output cap, even on the
-	// retry with the cap doubled. Text ends in TruncatedNote and the answer
-	// is not cached.
+	// retry with the cap doubled. Text is the fragment as the model wrote it:
+	// it never carries TruncatedNote, so nothing parsed or posted from it
+	// does. The caller shows the note. The answer is not cached.
 	Truncated bool
 }
 
-// TruncatedNote ends the text of an answer the model did not finish.
+// CutShort is the words to show beside the answer when the model did not
+// finish it, "" otherwise.
+func (r Result) CutShort() string {
+	if r.Truncated {
+		return strings.TrimSpace(TruncatedNote)
+	}
+	return ""
+}
+
+// TruncatedNote is shown beside an answer the model did not finish. It is
+// written to the artifact only, never to Result.Text.
 const TruncatedNote = "\n… (cut short: the model reached its output limit)"
 
 // resolve picks the profile, driver and model for a job.
@@ -192,6 +212,9 @@ func (s *Service) Run(ctx context.Context, j Job) (Result, error) {
 			return Result{}, err
 		} else if ok {
 			return s.hit(j, name, p, model, item, a)
+		}
+		if s.cutShortRecently(hash) {
+			return Result{}, ErrCutShortRecently
 		}
 	}
 
@@ -264,6 +287,16 @@ func (s *Service) Preview(ctx context.Context, j Job) (pf Preflight, cached bool
 	return pf, cached, err
 }
 
+func cutShortKey(hash string) string { return "ai:cut-short:" + hash }
+
+func (s *Service) cutShortRecently(hash string) bool {
+	if s.DB == nil {
+		return false
+	}
+	cut, ok := store.Peek[bool](&store.Store{DB: s.DB}, cutShortKey(hash), cutShortTTL, s.Now())
+	return ok && cut
+}
+
 // thinkingFor chooses omp's reasoning level: none for explain/classify/draft work,
 // light for review.
 func thinkingFor(driver string, role Role) string {
@@ -296,13 +329,19 @@ func (s *Service) finish(j Job, name string, p config.AIProfile, model, item, ha
 	if resp.Truncated {
 		// Kept in the record like any paid output, but with no input hash:
 		// neither Cache.Put nor Reindex will serve it for the same prompt.
+		if s.DB != nil {
+			store.Put(&store.Store{DB: s.DB}, cutShortKey(hash), now, true)
+		}
 		hash = ""
-		resp.Text = strings.TrimRight(resp.Text, "\n ") + TruncatedNote
+		resp.Text = strings.TrimRight(resp.Text, "\n ")
 	}
 	art := records.Artifact{
 		Feature: j.Feature, Profile: name, Model: firstNonEmpty(resp.Model, model), PromptVersion: j.PromptVersion,
 		InputHash: hash, TokensIn: resp.Usage.In, TokensOut: resp.Usage.Out, CostUSD: resp.CostUSD,
 		Created: now, AuditID: id, Body: resp.Text,
+	}
+	if resp.Truncated {
+		art.Body += TruncatedNote
 	}
 	// The artifact is written first: paid output must survive an audit failure.
 	path, werr := s.Records.WriteArtifact(s.Records.ItemDir(j.Forge, j.Ref), j.Name, art)
@@ -359,6 +398,17 @@ func (s *Service) finish(j Job, name string, p config.AIProfile, model, item, ha
 // whatever cost the driver did report.
 func (s *Service) failed(j Job, name string, p config.AIProfile, model, item string, resp Response, err error, pf Preflight) (Result, error) {
 	if stop, ok := AsStop(err); ok {
+		// A stop on the retry follows a first call that was paid for: the
+		// ledger counts cost from ai.* entries only, so book it.
+		if resp.CostUSD > 0 {
+			s.record(audit.Entry{
+				Action: "ai." + j.Feature, Target: item, Item: item, Params: j.Params, Outcome: "error", Error: err.Error(),
+				AI: &audit.AIInfo{
+					Profile: name, Driver: p.Driver, Model: model, TokensIn: resp.Usage.In, TokensOut: resp.Usage.Out,
+					CostUSD: resp.CostUSD, CostSource: firstNonEmpty(resp.CostSource, CostReported),
+				},
+			})
+		}
 		s.recordStop(j, name, model, item, stop)
 		return Result{Preflight: pf, CostUSD: resp.CostUSD}, err
 	}
@@ -402,10 +452,15 @@ func (s *Service) preflight(ctx context.Context, j Job, name string, p config.AI
 		Profile: name, Driver: p.Driver, Model: model, Role: string(j.Role),
 		InTokens: estimateTokens(j.System) + estimateTokens(j.Prompt), OutTokens: out,
 		Dest: destOf(p), Notes: j.Notes,
+		Retry: p.Driver != "omp" && j.MaxTokens > 0, // see retryTruncated
 	}
 	if price, ok := s.priceFor(ctx, name, p, d, model); ok {
 		pf.Priced = true
-		pf.EstimateUSD = priceUSD(price, pf.InTokens, pf.OutTokens)
+		in, outTok := pf.InTokens, pf.OutTokens
+		if pf.Retry {
+			in, outTok = 2*in, 3*outTok
+		}
+		pf.EstimateUSD = priceUSD(price, in, outTok)
 	}
 	spent, err := s.Ledger.Periods(s.Now(), s.Loc, s.SprintStart)
 	if err != nil {

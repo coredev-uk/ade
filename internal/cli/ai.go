@@ -137,6 +137,8 @@ type aiOut struct {
 	Cached    bool          `json:"cached,omitempty"` // dry-run: an answer is already cached
 	// IncludesNotes: the prompt carries the user's notes (--no-notes leaves them out).
 	IncludesNotes bool `json:"includes_notes,omitempty"`
+	// Truncated: the model reached its output limit, so Text is cut short.
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 // runJob executes (or, with --dry-run, previews) a job and maps budget stops
@@ -158,7 +160,7 @@ func (e *aiEnv) runJob(cmd *cobra.Command, j ai.Job, o aiOpts) (ai.Result, aiOut
 		return res, out, aiError(err)
 	}
 	out.Text, out.CacheHit, out.CostUSD, out.SavedUSD = res.Text, res.CacheHit, res.CostUSD, res.SavedUSD
-	out.Profile, out.Model, out.Artifact = res.Profile, res.Model, res.Artifact
+	out.Profile, out.Model, out.Artifact, out.Truncated = res.Profile, res.Model, res.Artifact, res.Truncated
 	if res.Preflight.Model != "" {
 		out.Preflight = &res.Preflight
 	}
@@ -193,9 +195,9 @@ func printFooter(w io.Writer, o aiOut) {
 			fmt.Fprintf(w, "  would be refused: %s\n", pf.Refuse)
 		}
 	case o.CacheHit:
-		fmt.Fprintf(w, "— cached · $0.00 (saved $%.4f) · %s · %s%s\n", o.SavedUSD, o.Model, o.Artifact, notesMark(o))
+		fmt.Fprintf(w, "— cached · $0.00 (saved $%.4f) · %s · %s%s\n", o.SavedUSD, o.Model, o.Artifact, notesMark(o)+truncMark(o))
 	default:
-		fmt.Fprintf(w, "— $%.4f · %s · %s · %s%s\n", o.CostUSD, o.Profile, o.Model, o.Artifact, notesMark(o))
+		fmt.Fprintf(w, "— $%.4f · %s · %s · %s%s\n", o.CostUSD, o.Profile, o.Model, o.Artifact, notesMark(o)+truncMark(o))
 	}
 }
 

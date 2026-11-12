@@ -268,8 +268,9 @@ type MR struct {
 	// requested" (GitLab reviewer state requested_changes, GitHub review
 	// CHANGES_REQUESTED).
 	ChangesRequestedBy []User `json:"changes_requested_by,omitempty"`
-	// MergedBy is the username that merged the MR, when the forge says.
-	MergedBy       string     `json:"merged_by,omitempty"`
+	// MergedBy is who merged the MR, when the forge says. Sync data cached
+	// before it kept names holds a bare username; User reads that too.
+	MergedBy       User       `json:"merged_by,omitzero"`
 	HasConflicts   bool       `json:"has_conflicts,omitempty"`
 	DetailedStatus string     `json:"detailed_status,omitempty"`
 	UpdatedAt      time.Time  `json:"updated_at"`

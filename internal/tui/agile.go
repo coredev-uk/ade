@@ -445,6 +445,9 @@ func (m model) narrativeDone(msg narrativeMsg) (tea.Model, tea.Cmd) {
 	if msg.res.CacheHit {
 		cost = "cached, $0"
 	}
+	if note := msg.res.CutShort(); note != "" {
+		cost += ", " + note
+	}
 	e := events.New("ui.ai_narrative", events.Info, "narrative written ("+cost+")")
 	e.Transient = true
 	m.nc.push(e)

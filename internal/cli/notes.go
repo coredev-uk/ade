@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"strings"
+
 	"github.com/spf13/cobra"
 
 	"github.com/coredev-uk/ade/internal/ai"
@@ -23,6 +25,14 @@ func (e *aiEnv) withNotes(j ai.Job, o aiOpts, refs ...forge.Ref) (ai.Job, error)
 		return j, err
 	}
 	return ai.WithNotes(j, notes), nil
+}
+
+// truncMark is the footer words for an answer the model did not finish.
+func truncMark(o aiOut) string {
+	if o.Truncated {
+		return " · " + strings.TrimSpace(ai.TruncatedNote)
+	}
+	return ""
 }
 
 // notesMark is the footer words for an answer whose prompt carried notes.

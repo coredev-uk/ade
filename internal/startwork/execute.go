@@ -322,7 +322,8 @@ func ParentRefusedKey(forgeName, trackerProject, childProject string) string {
 // hierarchy, where it has one. It is best effort: the relates_to link and the
 // Parent: line already tie the two together, so a refusal (the forge only
 // nests some pairs of types, such as an issue under an epic) or an unreachable
-// hierarchy is a note, not a failed step, and a refusal is remembered.
+// hierarchy is a note, not a failed step, and a refusal of the pair of types is
+// remembered (a success forgets it).
 func (e *Env) setParent(ctx context.Context, p Plan, child forge.Ref, res *Result) {
 	pr, ok := e.Forge.(forge.Parenter)
 	if !ok {
@@ -344,6 +345,9 @@ func (e *Env) setParent(ctx context.Context, p Plan, child forge.Ref, res *Resul
 	e.audit(p, "forge.issue.parent", child.String(), map[string]any{"parent": p.Item.String()}, "", err)
 	switch {
 	case err == nil:
+		if serr == nil {
+			store.Put(st, key, now, false) // a pair that nests after all is not refused
+		}
 	case errors.Is(err, forge.ErrParentRefused):
 		if serr == nil {
 			store.Put(st, key, now, true)

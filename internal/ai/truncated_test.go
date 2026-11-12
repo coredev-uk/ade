@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -161,15 +162,27 @@ func TestTruncatedAnswerIsFiledButNeverCached(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !first.Truncated || !strings.HasPrefix(first.Text, "adds an") || !strings.HasSuffix(first.Text, TruncatedNote) || first.Artifact == "" {
+	if !first.Truncated || first.Text != "adds an" || first.Artifact == "" || first.CutShort() == "" {
 		t.Fatalf("first run: %+v", first)
 	}
-	second, err := e.svc.Run(ctx, summarizeJob("abc123"))
+	if strings.Contains(first.Text, "cut short") {
+		t.Errorf("the note must not be part of the text: %q", first.Text)
+	}
+	if a, err := e.svc.Records.ReadArtifact(first.Artifact); err != nil || !strings.Contains(a.Body, TruncatedNote) {
+		t.Errorf("the record should say it was cut short: %v %q", err, a.Body)
+	}
+	// The same prompt is not bought again by itself, only on a refresh.
+	if _, err := e.svc.Run(ctx, summarizeJob("abc123")); !errors.Is(err, ErrCutShortRecently) || e.drv.calls != 1 {
+		t.Fatalf("an unchanged prompt cut short a moment ago: err=%v calls=%d", err, e.drv.calls)
+	}
+	job := summarizeJob("abc123")
+	job.Refresh = true
+	second, err := e.svc.Run(ctx, job)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if second.CacheHit || e.drv.calls != 2 {
-		t.Fatalf("a truncated answer must be asked for again: hit=%v calls=%d", second.CacheHit, e.drv.calls)
+		t.Fatalf("a refresh must ask again: hit=%v calls=%d", second.CacheHit, e.drv.calls)
 	}
 	// Rebuilding the index from the artifacts must not bring it back either.
 	if n, err := e.svc.Cache.Reindex(); err != nil || n != 0 {

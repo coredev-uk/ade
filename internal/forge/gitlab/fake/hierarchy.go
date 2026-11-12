@@ -17,6 +17,18 @@ func WithoutHierarchy() Option { return func(o *options) { o.noHierarchy = true 
 // for a pair of work item types that may not nest (an issue under an issue).
 func WithRefusedParents() Option { return func(o *options) { o.refuseParents = true } }
 
+// WithParentError makes workItemUpdate answer with msg as its payload error, a
+// problem of the request (permission, a locked issue) rather than of the types.
+func WithParentError(msg string) Option { return func(o *options) { o.parentError = msg } }
+
+// WithForbiddenParents makes workItemUpdate answer 403, as it does for a token
+// without the write scope, while the work item reads keep working.
+func WithForbiddenParents() Option { return func(o *options) { o.forbidParents = true } }
+
+// WithWorkItemPageSize caps the page size of the workItems query below the
+// requested one, so a hierarchy read has to follow pageInfo.
+func WithWorkItemPageSize(n int) Option { return func(o *options) { o.workItemPage = n } }
+
 const refusedParentMessage = "No matching work item found. Make sure that you are adding a valid work item ID."
 
 func workItemID(is *issue) string { return fmt.Sprintf("gid://gitlab/WorkItem/%d", is.ID) }
@@ -41,6 +53,13 @@ func (s *Server) workItems(w http.ResponseWriter, query string, vars map[string]
 		return
 	}
 	first, _ := vars["first"].(float64)
+	if limit := s.opts.workItemPage; limit > 0 && (first == 0 || int(first) > limit) {
+		first = float64(limit)
+	}
+	offset := 0
+	if after, ok := vars["after"].(string); ok {
+		offset, _ = strconv.Atoi(after)
+	}
 	wantIID := map[int]bool{}
 	iids, _ := vars["iids"].([]any)
 	for _, v := range iids {
@@ -49,9 +68,18 @@ func (s *Server) workItems(w http.ResponseWriter, query string, vars map[string]
 		}
 	}
 	nodes := []object{}
+	seen, more := 0, false
 	for _, is := range s.st.issues {
-		if !wantIID[is.IID] || !strings.HasPrefix(is.Project.Path, path+"/") || len(nodes) >= int(first) {
+		if !wantIID[is.IID] || !strings.HasPrefix(is.Project.Path, path+"/") {
 			continue
+		}
+		seen++
+		if seen <= offset {
+			continue
+		}
+		if len(nodes) >= int(first) {
+			more = true
+			break
 		}
 		node := object{"reference": s.st.ref(is.Project, is.IID, forge.KindIssue).String()}
 		if strings.Contains(query, "query WorkItemChildren") {
@@ -72,12 +100,17 @@ func (s *Server) workItems(w http.ResponseWriter, query string, vars map[string]
 		}
 		nodes = append(nodes, node)
 	}
-	writeJSON(w, http.StatusOK, object{"data": object{"group": object{"workItems": object{"nodes": nodes}}}})
+	pageInfo := object{"hasNextPage": more, "endCursor": strconv.Itoa(offset + len(nodes))}
+	writeJSON(w, http.StatusOK, object{"data": object{"group": object{"workItems": object{"pageInfo": pageInfo, "nodes": nodes}}}})
 }
 
 // setParentMutation answers workItemUpdate with a hierarchyWidget parentId.
 func (s *Server) setParentMutation(w http.ResponseWriter, vars map[string]any) {
 	if s.noHierarchyReply(w) {
+		return
+	}
+	if s.opts.forbidParents {
+		writeJSON(w, http.StatusForbidden, object{"message": "403 Forbidden"})
 		return
 	}
 	reply := func(errs ...string) {
@@ -93,6 +126,10 @@ func (s *Server) setParentMutation(w http.ResponseWriter, vars map[string]any) {
 			}
 		}
 		return nil
+	}
+	if s.opts.parentError != "" {
+		reply(s.opts.parentError)
+		return
 	}
 	child, parent := byID("id"), byID("parentId")
 	if child == nil || parent == nil || s.opts.refuseParents {

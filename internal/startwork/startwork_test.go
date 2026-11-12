@@ -769,6 +769,29 @@ func TestStartKeepsTheLinkWhenTheHierarchyRefusesAndDoesNotAskAgain(t *testing.T
 	}
 }
 
+// An error that is not about the types (permission, a locked issue) is a note
+// for this start only: the next one asks again.
+func TestStartDoesNotRememberAParentErrorThatIsNotATypeRefusal(t *testing.T) {
+	h := newHarness(t, fake.Free, fake.WithParentError("You do not have permission to update this work item"))
+	for i, iid := range []int{3, 4} {
+		_, res, err := h.start(iid, draftApi())
+		if err != nil {
+			t.Fatalf("start %d: a parent error must not fail the start: %v", i+1, err)
+		}
+		if !slices.ContainsFunc(res.Notes, func(n string) bool {
+			return strings.Contains(n, "not placed under") && strings.Contains(n, "permission")
+		}) {
+			t.Errorf("start %d: no note about the parent: %v", i+1, res.Notes)
+		}
+		if slices.ContainsFunc(res.Notes, func(n string) bool { return strings.Contains(n, "refused earlier") }) {
+			t.Errorf("start %d: an ordinary error was remembered as a refusal: %v", i+1, res.Notes)
+		}
+	}
+	if h.mutations() != 2 {
+		t.Errorf("%d mutations, want one attempt per start", h.mutations())
+	}
+}
+
 func TestStartWithoutAHierarchyIsQuiet(t *testing.T) {
 	h := newHarness(t, fake.Free, fake.WithoutHierarchy())
 	_, res, err := h.start(3, draftApi())

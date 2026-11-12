@@ -179,12 +179,17 @@ mr          = { create = "ask", template = "Default", draft = true, closes = "ch
   - On GitLab, `ade start` also places the child under the tracker issue in GitLab's work item hierarchy
     (GraphQL `workItemUpdate`), where the instance has one. GitLab nests only some pairs of types (an issue
     under an epic, a task under an issue), so it may refuse an issue under an issue. A refusal is a warning,
-    not a failure: the `relates_to` link and the `Parent:` line stay, and ADE remembers the refusal for a week
-    so later starts do not ask again.
+    not a failure: the `relates_to` link and the `Parent:` line stay, and ADE remembers a refusal of the pair
+    of types for a week so later starts do not ask again. Any other error (a permission problem, say) is a
+    warning for that start only and is not remembered.
   - To decide which tracker issue a code-repo issue belongs to, ADE asks in this order: the hierarchy parent
     (GraphQL, skipped silently where the instance or forge has none), the `Parent:` line, then a `relates_to`
-    link from the child to a tracker issue. The tracker issue is fetched even if it is not assigned to you and
-    is outside the sprint window, and the child shows under it as one My work entry. A code-repo issue with no
+    link from the child to a tracker issue. The hierarchy is read for every code-repo issue ADE lists, so a
+    closed child or a teammate's keeps its place under the tracker issue; links are read only for your open
+    issues. If the hierarchy read fails for another reason, ADE keeps the parents of the last sync and warns.
+    The tracker issue is fetched even if it is not assigned to you and is outside the sprint window, and the
+    child shows under it as one My work entry; the entry counts as yours while an open child is. A tracker
+    issue that is closed is not listed, so its open child of yours is its own entry. A code-repo issue with no
     parent from any of these is its own entry.
 - `mr.create`: `ask` (default), `always`, `never`. `mr.draft` opens the MR as a draft; leave it out (or set `true`) for a draft MR, `false` to open it ready for review. `mr.closes = "child"`
   puts `Closes #<child>` in the MR body; `mr.mention = "parent"` references the tracker issue.

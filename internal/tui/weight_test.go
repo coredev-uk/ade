@@ -215,7 +215,11 @@ func TestWeightSuggestionUsesClosedIssuesFromTheCache(t *testing.T) {
 	if err := gitlab.New(e.srv.URL, fake.Token).SetLabels(context.Background(), trk(10), []string{"weight::2"}, nil); err != nil {
 		t.Fatal(err)
 	}
-	// Nothing closed on Home: only the forge knows #10 ("Upgrade export worker dependencies").
+	// Only the forge knows #10 ("Upgrade export worker dependencies"). The one
+	// closed item on Home shares no word with the issue; it makes "export" rarer
+	// than the words the two titles have in common, so one shared word counts.
+	e.closedSample(23, 8, "Upgrade worker dependencies", "story", "api")
+	e.m.rebuildHome("")
 	e.open(model.openWeight)
 	e.want("no weight suggested")
 	deadline := time.Now().Add(10 * time.Second)

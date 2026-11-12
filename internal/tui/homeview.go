@@ -241,7 +241,7 @@ func (m model) homeList(w, h int) string {
 				continue
 			}
 			shown = true
-			out = append(out, subRule(sec.title(m.g), m.sectionGuide(res, sec, idx-start), w, m.g))
+			out = append(out, subRule(sec.title(m.g), m.sectionGuide(res, sec, m.homeRows[start:idx]), w, m.g))
 			for i := start; i < idx; i++ {
 				if i == m.homeSel {
 					selLine = len(out)
@@ -380,12 +380,24 @@ func subRule(title, guide string, w int, g glyphs) string {
 	return t + stRule.Render(strings.Repeat(g.Rule, fill)) + gd
 }
 
-func (m model) sectionGuide(res *forgesync.Result, sec homeSection, n int) string {
+// sectionGuide words a section's header. A search lists assigned sprint
+// items too, so the sprint-open count is of those with nobody on them.
+func (m model) sectionGuide(res *forgesync.Result, sec homeSection, rows []homeRow) string {
+	n := len(rows)
 	switch sec {
 	case secReviews:
 		return fmt.Sprintf("%d waiting on you", n)
 	case secSprintOpen:
-		return fmt.Sprintf("%d unassigned in the tracker", n)
+		unassigned := 0
+		for _, r := range rows {
+			if r.item != nil && len(r.item.Issue.Assignees) == 0 {
+				unassigned++
+			}
+		}
+		if unassigned < n {
+			return fmt.Sprintf("%d unassigned in the tracker · %d assigned to others", unassigned, n-unassigned)
+		}
+		return fmt.Sprintf("%d unassigned in the tracker", unassigned)
 	case secNext:
 		return fmt.Sprintf("%d not assigned to you", n)
 	case secPrevious:

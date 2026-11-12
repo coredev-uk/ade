@@ -88,6 +88,9 @@ type options struct {
 	noMRDetails   bool
 	noHierarchy   bool
 	refuseParents bool
+	parentError   string // workItemUpdate answers this payload error
+	forbidParents bool   // workItemUpdate answers 403, as a read-only token gets
+	workItemPage  int    // caps workItems page size below the requested one; 0 = no cap
 	userNamespace bool
 	rateLimit     int
 	rateWindow    time.Duration

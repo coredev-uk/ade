@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	standupVersion = "standup-v1"
-	sprintVersion  = "sprint-review-v1"
+	standupVersion = "standup-v2"
+	sprintVersion  = "sprint-review-v2"
 	parentVersion  = "sprint-parent-v2"
 
 	// StandupForge and SprintForge are the item-record roots of the agile

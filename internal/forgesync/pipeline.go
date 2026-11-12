@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -39,6 +40,8 @@ type pipeline struct {
 	cfg       *config.Config
 	forgeName string
 	now       time.Time
+	prev      Result   // the previous sync of the project; zero when there is none
+	warnings  []string // non-fatal problems of this run, for Result.Warnings
 }
 
 func (p *pipeline) run(ctx context.Context, res *Result) error {
@@ -66,6 +69,7 @@ func (p *pipeline) run(ctx context.Context, res *Result) error {
 	}
 	res.Me, res.Caps, res.Sprints, res.Window = me, caps, sprints, window
 	res.Items, res.Reviews = items, reviews
+	res.Warnings = append(res.Warnings, p.warnings...)
 	return nil
 }
 
@@ -310,26 +314,41 @@ func (p *pipeline) inTracker(refs []forge.Ref) []forge.Ref {
 	return slices.DeleteFunc(slices.Clone(refs), func(r forge.Ref) bool { return r.Project != p.m.Tracker.Project })
 }
 
-// parents finds the tracker issue of each open code-repo issue assigned to me
-// that belongs to one, in order of trust: the forge's work item hierarchy
-// (batched; a forge or instance without one is skipped silently), the
-// "Parent:" line of the description, and a relates_to link from the issue to a
-// tracker issue. An issue whose description names a parent is not asked for
-// links. The result holds the hierarchy and link parents only; descriptions
-// are read where needed (domain.Parents).
+// parents finds the tracker issue of each code-repo issue that belongs to one,
+// in order of trust: the forge's work item hierarchy, the "Parent:" line of
+// the description, and a relates_to link from the issue to a tracker issue.
+// The hierarchy is asked for every issue loaded, not only mine: a closed child
+// or a teammate's has no link or Parent: line, and its edge would be lost.
+// Links are read only for my open issues still without a parent; the others
+// are reached through the links of their tracker issue. An issue whose
+// description names a parent is not asked for links. The result holds the
+// hierarchy and link parents only; descriptions are read where needed
+// (domain.Parents).
+//
+// A forge or instance without a hierarchy is skipped silently. Any other
+// error keeps the parents of the previous sync and is reported as a warning,
+// so a passing failure does not drop the edges from the cache.
 func (p *pipeline) parents(ctx context.Context, me forge.User, repos []repoData) (map[forge.Ref]forge.Ref, error) {
-	mine := p.myOpenIssues(me, repos)
 	out := map[forge.Ref]forge.Ref{}
-	if pr, ok := p.f.(forge.Parenter); ok && len(mine) > 0 {
-		refs := make([]forge.Ref, len(mine))
-		for i, is := range mine {
-			refs[i] = is.Ref
+	var asked []forge.Ref
+	for _, r := range repos {
+		if r.path == p.m.Tracker.Project {
+			continue
 		}
-		got, err := pr.Parents(ctx, refs)
-		if ctx.Err() != nil {
+		for _, is := range r.issues {
+			asked = append(asked, is.Ref)
+		}
+	}
+	if pr, ok := p.f.(forge.Parenter); ok && len(asked) > 0 {
+		got, err := pr.Parents(ctx, asked)
+		switch {
+		case ctx.Err() != nil:
 			return nil, ctx.Err()
-		}
-		if err == nil { // an error only means the hierarchy is unavailable: the other sources carry on
+		case errors.Is(err, forge.ErrUnavailable):
+		case err != nil:
+			p.warnings = append(p.warnings, "issue hierarchy: "+err.Error()+"; keeping the parents of the last sync")
+			maps.Copy(out, p.previousParents())
+		default:
 			for child, parent := range got {
 				if parent.Project == p.m.Tracker.Project {
 					out[child] = parent
@@ -338,7 +357,7 @@ func (p *pipeline) parents(ctx context.Context, me forge.User, repos []repoData)
 		}
 	}
 	var rest []forge.Issue
-	for _, is := range mine {
+	for _, is := range p.myOpenIssues(me, repos) {
 		if len(p.inTracker(domain.Parents(is, out))) == 0 {
 			rest = append(rest, is)
 		}
@@ -366,6 +385,17 @@ func (p *pipeline) parents(ctx context.Context, me forge.User, repos []repoData)
 		}
 	}
 	return out, nil
+}
+
+// previousParents maps each child of the previous sync's items to its item.
+func (p *pipeline) previousParents() map[forge.Ref]forge.Ref {
+	out := map[forge.Ref]forge.Ref{}
+	for _, it := range p.prev.Items {
+		for _, k := range it.Children {
+			out[k.Ref] = it.Ref
+		}
+	}
+	return out
 }
 
 // adoptParents adds tracker issues that parent an open issue assigned to me
@@ -512,18 +542,25 @@ type root struct {
 }
 
 // roots lists tracker items first, then open code-repo issues assigned to me
-// that no tracker item claims.
+// that no tracker item claims. A closed tracker claims only the children that
+// are not open work of mine: those stay entries of their own, as a Done
+// tracker is not listed and would hide them.
 func (p *pipeline) roots(me forge.User, tracker []forge.Issue, links [][]forge.Link, parents map[forge.Ref]forge.Ref, cands []forge.Issue, repos []repoData) []root {
 	index := indexMRs(repos)
 	claimed := map[forge.Ref]bool{}
 	have := map[forge.Ref]bool{}
+	closed := map[forge.Ref]bool{}
 	var out []root
 	for i, t := range tracker {
 		have[t.Ref] = true
+		closed[t.Ref] = t.State != issueOpened
 		refs := []forge.Ref{t.Ref}
-		for _, k := range childRefs(t, links[i], parents, cands) {
-			claimed[k] = true
-			refs = append(refs, k)
+		for _, k := range childIssues(t, links[i], parents, cands) {
+			if t.State != issueOpened && k.State == issueOpened && assignedTo(k, me) {
+				continue
+			}
+			claimed[k.Ref] = true
+			refs = append(refs, k.Ref)
 		}
 		out = append(out, root{issue: t, links: links[i], mrs: mrsFor(index, refs)})
 	}
@@ -532,10 +569,7 @@ func (p *pipeline) roots(me forge.User, tracker []forge.Issue, links [][]forge.L
 			continue
 		}
 		for _, is := range r.issues {
-			// A description that names a parent keeps the issue off the list
-			// even when the parent is gone; a hierarchy or link parent only
-			// does when it was loaded.
-			if is.State == issueOpened && assignedTo(is, me) && !claimed[is.Ref] && len(domain.ParentRefs(is)) == 0 && !have[parents[is.Ref]] {
+			if is.State == issueOpened && assignedTo(is, me) && !claimed[is.Ref] && !hasListedParent(is, parents, have, closed) {
 				claimed[is.Ref] = true
 				out = append(out, root{issue: is, mrs: mrsFor(index, []forge.Ref{is.Ref})})
 			}
@@ -544,19 +578,31 @@ func (p *pipeline) roots(me forge.User, tracker []forge.Issue, links [][]forge.L
 	return out
 }
 
-// childRefs mirrors domain's child rule: linked by a child link, or having the
-// tracker as a parent.
-func childRefs(tracker forge.Issue, links []forge.Link, parents map[forge.Ref]forge.Ref, cands []forge.Issue) []forge.Ref {
+// hasListedParent reports whether is belongs under a tracker item that is
+// listed. A description that names a parent keeps the issue off the list even
+// when the parent is gone; a hierarchy or link parent only does when it was
+// loaded. A closed parent is not listed, so it never counts.
+func hasListedParent(is forge.Issue, parents map[forge.Ref]forge.Ref, have, closed map[forge.Ref]bool) bool {
+	if named := domain.ParentRefs(is); len(named) > 0 {
+		return slices.ContainsFunc(named, func(r forge.Ref) bool { return !closed[r] })
+	}
+	p := parents[is.Ref]
+	return have[p] && !closed[p]
+}
+
+// childIssues mirrors domain's child rule: linked by a child link, or having
+// the tracker as a parent.
+func childIssues(tracker forge.Issue, links []forge.Link, parents map[forge.Ref]forge.Ref, cands []forge.Issue) []forge.Issue {
 	linked := map[forge.Ref]bool{}
 	for _, l := range links {
 		if domain.IsChildLink(l) {
 			linked[l.Ref] = true
 		}
 	}
-	var out []forge.Ref
+	var out []forge.Issue
 	for _, c := range cands {
 		if c.Ref != tracker.Ref && (linked[c.Ref] || slices.Contains(domain.Parents(c, parents), tracker.Ref)) {
-			out = append(out, c.Ref)
+			out = append(out, c)
 		}
 	}
 	return out

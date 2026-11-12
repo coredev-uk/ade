@@ -106,7 +106,7 @@ expect_json "audit: one paid call, then two \$0 hits" "$VERIFY_TMP/aud.json" \
   'length == 3 and (.[0].ai.cache_hit // false) == false and .[0].ai.cost_source == "reported" and .[1].ai.cache_hit and .[2].ai.cache_hit and .[1].ai.cost_usd == 0 and (.[0].ai.artifact | length) > 0 and .[0].ai.dest_host != null'
 ART=$(jq -r '.[0].ai.artifact' "$VERIFY_TMP/aud.json")
 head -12 "$XDG_DATA_HOME/ade/$ART" >"$VERIFY_TMP/artifact.txt"
-for key in 'feature: summarize' 'profile: sub' 'prompt_version: summarize-v1' 'input_hash: ' 'cost_usd: ' "audit_id: $(jq -r '.[0].id' "$VERIFY_TMP/aud.json")"; do
+for key in 'feature: summarize' 'profile: sub' 'prompt_version: summarize-v2' 'input_hash: ' 'cost_usd: ' "audit_id: $(jq -r '.[0].id' "$VERIFY_TMP/aud.json")"; do
   grep -q "$key" "$VERIFY_TMP/artifact.txt" && pass "artifact frontmatter has '$key'" || fail "artifact lacks '$key'"
 done
 

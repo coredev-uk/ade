@@ -104,3 +104,62 @@ func TestHierarchyUnavailableIsRememberedAndSilent(t *testing.T) {
 		t.Errorf("the hierarchy is optional, nothing to report: %v", u)
 	}
 }
+
+// iids repeat across a group's projects: when the homonyms overflow a page the
+// read follows the cursor instead of dropping the oldest issues.
+func TestHierarchyFollowsPageInfoWhenAChunkOverflowsAPage(t *testing.T) {
+	srv := fake.New(fake.Free, fake.WithWorkItemPageSize(2))
+	defer srv.Close()
+	cases := srv.SeedHierarchyCases()
+	c := gitlab.New(srv.URL, fake.Token)
+	// iid of each child is shared with issues of the other projects, so a
+	// chunk of three iids matches more than two nodes.
+	refs := []forge.Ref{cases.HierarchyOnly.Child, cases.HierarchyOutside.Child, cases.LinkOnly.Child}
+	got, err := c.Parents(context.Background(), refs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[forge.Ref]forge.Ref{
+		cases.HierarchyOnly.Child:    cases.HierarchyOnly.Tracker,
+		cases.HierarchyOutside.Child: cases.HierarchyOutside.Tracker,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Parents = %v, want %v", got, want)
+	}
+	if n := graphqlRequests(srv); n < 2 {
+		t.Errorf("%d request(s) with a page of 2: the cursor was not followed", n)
+	}
+}
+
+func TestSetParentRefusalIsCachedOnlyForTypeNesting(t *testing.T) {
+	child, parent := issueRef(apiProj, 1), issueRef(trackerProj, 3)
+	for msg, refused := range map[string]bool{
+		"No matching work item found. Make sure that you are adding a valid work item ID.": true,
+		"#1 cannot be added: it's not allowed to add this type of parent":                  true,
+		"You do not have permission to update this work item":                              false,
+	} {
+		srv := fake.New(fake.Free, fake.WithParentError(msg))
+		c := gitlab.New(srv.URL, fake.Token)
+		err := c.SetParent(context.Background(), child, parent)
+		srv.Close()
+		if err == nil || errors.Is(err, forge.ErrParentRefused) != refused {
+			t.Errorf("%q: err = %v, want ErrParentRefused = %v", msg, err, refused)
+		}
+	}
+}
+
+// A refused write says nothing about the read queries.
+func TestSetParentForbiddenDoesNotDisableTheHierarchyReads(t *testing.T) {
+	srv := fake.New(fake.Free, fake.WithForbiddenParents())
+	defer srv.Close()
+	cases := srv.SeedHierarchyCases()
+	c := gitlab.New(srv.URL, fake.Token)
+	ctx := context.Background()
+	if err := c.SetParent(ctx, issueRef(apiProj, 1), issueRef(trackerProj, 3)); err == nil {
+		t.Fatal("a forbidden write succeeded")
+	}
+	got, err := c.Parents(ctx, []forge.Ref{cases.HierarchyOnly.Child})
+	if err != nil || got[cases.HierarchyOnly.Child] != cases.HierarchyOnly.Tracker {
+		t.Errorf("Parents after a forbidden write = %v, %v", got, err)
+	}
+}

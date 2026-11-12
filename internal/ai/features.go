@@ -13,9 +13,9 @@ import (
 
 // Prompt versions key the result cache: change a prompt, bump its version.
 const (
-	summarizeVersion = "summarize-v1"
+	summarizeVersion = "summarize-v2"
 	classifyVersion  = "classify-v3"
-	replyVersion     = "draft-reply-v1"
+	replyVersion     = "draft-reply-v2"
 	reviewVersion    = "review-v1"
 )
 

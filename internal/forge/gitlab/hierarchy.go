@@ -26,6 +26,11 @@ var setParentMutation string
 // does for merge requests.
 const workItemChunk = 25
 
+// workItemPage is the page size of a hierarchy request, GitLab's maximum. iids
+// repeat across the group's projects, so a chunk can match more nodes than it
+// has iids; the rest is read by following the cursor.
+const workItemPage = 100
+
 var _ forge.Parenter = (*Client)(nil)
 
 // workItem is what the hierarchy reads give for one issue.
@@ -124,48 +129,65 @@ func (c *Client) workItemChunk(ctx context.Context, group string, chunk []forge.
 	for i, r := range chunk {
 		iids[i] = strconv.Itoa(r.IID)
 	}
-	// iids repeat across the group's projects: allow for a few homonyms per issue.
-	vars := map[string]any{"path": group, "iids": iids, "first": 4 * workItemChunk}
-	var data struct {
-		Group *struct {
-			WorkItems *struct {
-				Nodes []wireWorkItemNode `json:"nodes"`
-			} `json:"workItems"`
-		} `json:"group"`
-	}
-	if err := c.graphql(ctx, query, vars, &data); err != nil {
-		return nil, err
-	}
-	if data.Group == nil {
-		return nil, nil // not a group (a personal namespace) or not visible: no hierarchy to read
-	}
-	if data.Group.WorkItems == nil {
-		return nil, &graphqlSchemaError{msg: "group.workItems is not available"}
-	}
 	out := map[forge.Ref]workItem{}
-	for _, n := range data.Group.WorkItems.Nodes {
-		ref, err := forge.ParseRef(n.Reference)
-		if err != nil {
-			continue
+	after := ""
+	for {
+		vars := map[string]any{"path": group, "iids": iids, "first": workItemPage}
+		if after != "" {
+			vars["after"] = after
 		}
-		wi := workItem{id: n.ID}
-		for _, w := range n.Widgets {
-			if w.Parent != nil {
-				if p, err := forge.ParseRef(w.Parent.Reference); err == nil {
-					wi.parent = p
-				}
-			}
-			if w.Children != nil {
-				for _, k := range w.Children.Nodes {
-					if kr, err := forge.ParseRef(k.Reference); err == nil {
-						wi.children = append(wi.children, kr)
-					}
-				}
+		var data struct {
+			Group *struct {
+				WorkItems *struct {
+					PageInfo struct {
+						HasNextPage bool   `json:"hasNextPage"`
+						EndCursor   string `json:"endCursor"`
+					} `json:"pageInfo"`
+					Nodes []wireWorkItemNode `json:"nodes"`
+				} `json:"workItems"`
+			} `json:"group"`
+		}
+		if err := c.graphql(ctx, query, vars, &data); err != nil {
+			return nil, err
+		}
+		if data.Group == nil {
+			return nil, nil // not a group (a personal namespace) or not visible: no hierarchy to read
+		}
+		wis := data.Group.WorkItems
+		if wis == nil {
+			return nil, &graphqlSchemaError{msg: "group.workItems is not available"}
+		}
+		for _, n := range wis.Nodes {
+			if ref, err := forge.ParseRef(n.Reference); err == nil {
+				out[ref] = n.workItem()
 			}
 		}
-		out[ref] = wi
+		if !wis.PageInfo.HasNextPage || wis.PageInfo.EndCursor == "" || wis.PageInfo.EndCursor == after {
+			return out, nil
+		}
+		after = wis.PageInfo.EndCursor
 	}
-	return out, nil
+}
+
+// workItem reads the id, parent and children off a node. A parent or child
+// that is not an issue (an epic, a task) fails ParseRef and is dropped.
+func (n wireWorkItemNode) workItem() workItem {
+	wi := workItem{id: n.ID}
+	for _, w := range n.Widgets {
+		if w.Parent != nil {
+			if p, err := forge.ParseRef(w.Parent.Reference); err == nil {
+				wi.parent = p
+			}
+		}
+		if w.Children != nil {
+			for _, k := range w.Children.Nodes {
+				if kr, err := forge.ParseRef(k.Reference); err == nil {
+					wi.children = append(wi.children, kr)
+				}
+			}
+		}
+	}
+	return wi
 }
 
 // Parents implements forge.Parenter. Issues the instance does not return
@@ -195,7 +217,8 @@ func (c *Client) Children(ctx context.Context, parent forge.Ref) ([]forge.Ref, e
 
 // SetParent implements forge.Parenter through workItemUpdate: both issues'
 // work item ids are read first. GitLab answers a pair of types that may not
-// nest with a payload error, which is forge.ErrParentRefused.
+// nest with a payload error, which is forge.ErrParentRefused; any other
+// payload error is returned as it is.
 func (c *Client) SetParent(ctx context.Context, child, parent forge.Ref) error {
 	items, err := c.workItems(ctx, []forge.Ref{child, parent}, workItemParentsQuery)
 	if err != nil {
@@ -213,8 +236,9 @@ func (c *Client) SetParent(ctx context.Context, child, parent forge.Ref) error {
 		} `json:"workItemUpdate"`
 	}
 	if err := c.graphql(ctx, setParentMutation, vars, &out); err != nil {
+		// A write refused for scope or permission says nothing about the read
+		// queries, so it does not switch the hierarchy off.
 		if unsupported(err) {
-			c.noHierarchy.Store(true)
 			return fmt.Errorf("gitlab: workItemUpdate on %s: %w", child, forge.ErrUnavailable)
 		}
 		return err
@@ -223,7 +247,19 @@ func (c *Client) SetParent(ctx context.Context, child, parent forge.Ref) error {
 		return fmt.Errorf("gitlab: workItemUpdate on %s: %w", child, forge.ErrUnavailable)
 	}
 	if errs := out.WorkItemUpdate.Errors; len(errs) > 0 {
-		return fmt.Errorf("gitlab: %s under %s: %w: %s", child, parent, forge.ErrParentRefused, strings.Join(errs, "; "))
+		msg := strings.Join(errs, "; ")
+		if typeNestingRefusal(msg) {
+			return fmt.Errorf("gitlab: %s under %s: %w: %s", child, parent, forge.ErrParentRefused, msg)
+		}
+		return fmt.Errorf("gitlab: %s under %s: %s", child, parent, msg)
 	}
 	return nil
+}
+
+// typeNestingRefusal reports whether a workItemUpdate error says the pair of
+// work item types may not nest, as opposed to a problem with this one request
+// (permission, a locked issue) that a later start may not hit.
+func typeNestingRefusal(msg string) bool {
+	msg = strings.ToLower(msg)
+	return strings.Contains(msg, "type of parent") || strings.Contains(msg, "not allowed to add") || strings.Contains(msg, "no matching work item found")
 }

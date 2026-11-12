@@ -188,10 +188,10 @@ func mrEvents(project, me string, wi domain.WorkItem, mr forge.MR, oldMRs map[fo
 	if names := newcomers(mr.ChangesRequestedBy, prev.ChangesRequestedBy, me); len(names) > 0 {
 		emit(EvMRChangesAsked, events.Warn, fmt.Sprintf("changes requested on %s by %s", label, strings.Join(names, ", ")))
 	}
-	if mr.State == mrMerged && prev.State != mrMerged && (me == "" || mr.MergedBy != me) {
+	if mr.State == mrMerged && prev.State != mrMerged && (me == "" || mr.MergedBy.Username != me) {
 		title := label + " merged"
-		if mr.MergedBy != "" {
-			title += " by " + mr.MergedBy
+		if by := mr.MergedBy.Display(); by != "" {
+			title += " by " + by
 		}
 		emit(EvMRMerged, events.Success, title)
 	}

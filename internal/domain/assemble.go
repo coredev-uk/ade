@@ -50,7 +50,9 @@ func Assemble(in AssembleInput) WorkItem {
 		Workflow: f.Workflow,
 		Weight:   ResolveWeight(in.Tracker, m.Tracker.Weight),
 		Sprint:   SprintOf(in.Tracker, m.Tracker.Iterations, in.Sprints),
-		Assigned: assignedTo(in.Tracker, in.Me, in.MeID),
+		Assigned: assignedTo(in.Tracker, in.Me, in.MeID) || slices.ContainsFunc(kids, func(k forge.Issue) bool {
+			return k.State == "opened" && assignedTo(k, in.Me, in.MeID)
+		}),
 	}
 	item.Stage = deriveStage(in.Tracker, kids, in.MRs, in.Branches)
 	// The team's done label finishes an open tracker, unless an MR is still

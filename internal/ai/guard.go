@@ -14,13 +14,18 @@ type Spent = ledger.Periods
 
 // Preflight is the estimate shown before a call, and the verdict on it.
 type Preflight struct {
-	Profile     string  `json:"profile"`
-	Driver      string  `json:"driver"`
-	Model       string  `json:"model"`
-	Role        string  `json:"role"`
-	InTokens    int     `json:"in_tokens"`
-	OutTokens   int     `json:"out_tokens"`
+	Profile   string `json:"profile"`
+	Driver    string `json:"driver"`
+	Model     string `json:"model"`
+	Role      string `json:"role"`
+	InTokens  int    `json:"in_tokens"`
+	OutTokens int    `json:"out_tokens"`
+	// EstimateUSD is the worst case: with Retry, the call sent twice, the
+	// second time with double the output cap.
 	EstimateUSD float64 `json:"estimate_usd"`
+	// Retry is true when an answer cut off at the output cap is asked for
+	// again once, with the cap doubled (HTTP drivers; omp does not).
+	Retry bool `json:"may_retry,omitempty"`
 	// Priced is false when no price for the model is known: the estimate is
 	// then $0 and the call's cost will be unknown as well.
 	Priced bool   `json:"priced"`
@@ -108,6 +113,9 @@ func (pf Preflight) Describe() string {
 		fmt.Fprintf(&b, " · ~%d in / ≤%d out tokens · est $%.4f", pf.InTokens, pf.OutTokens, pf.EstimateUSD)
 	} else {
 		fmt.Fprintf(&b, " · ~%d in / ≤%d out tokens · no price known", pf.InTokens, pf.OutTokens)
+	}
+	if pf.Retry {
+		fmt.Fprintf(&b, " · asks again with double the cap if cut short (≤%d out in all)", 3*pf.OutTokens)
 	}
 	if pf.Dest != "" {
 		fmt.Fprintf(&b, " · to %s", pf.Dest)

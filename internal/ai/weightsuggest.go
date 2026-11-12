@@ -135,7 +135,8 @@ type match struct {
 // suggested facets count when the issue lacks them) that share title words.
 // Samples rank by the summed rarity (IDF over all samples) of the shared
 // words plus a small bonus per matching facet. A sample qualifies with two
-// shared words, or one that is rarer than the median word. The suggestion is
+// shared words, or one that is strictly rarer than the median word (in a pool
+// where every word is as common as the next, that takes two). The suggestion is
 // the score-weighted median weight of the nearest few, so it is a weight the
 // team really used; on an even split it takes the one nearer the weighted
 // mean. It is deterministic and needs no AI. nil when the issue has a weight,
@@ -176,13 +177,19 @@ func SuggestWeight(is forge.Issue, labels config.Labels, src config.WeightSource
 		if len(apps) > 0 && sharedApps == 0 {
 			continue
 		}
-		shared, rare, score := 0, false, 0.0
+		// Summed in word order: float addition is not associative, and map
+		// order would let equal samples differ in the last bit.
+		var words []string
 		for w := range titleTokens(s.Title) {
 			if mine[w] {
-				shared++
-				rare = rare || idf[w] >= floor
-				score += idf[w]
+				words = append(words, w)
 			}
+		}
+		slices.Sort(words)
+		shared, rare, score := len(words), false, 0.0
+		for _, w := range words {
+			rare = rare || idf[w] > floor
+			score += idf[w]
 		}
 		if shared == 0 || (shared < 2 && !rare) {
 			continue
@@ -218,8 +225,8 @@ func SuggestWeight(is forge.Issue, labels config.Labels, src config.WeightSource
 }
 
 // tokenRarity gives each title word of the samples its IDF (a word in every
-// sample still scores above zero) and the median of those values: a word at
-// or above it is rarer than a typical one.
+// sample still scores above zero) and the median of those values: a word
+// above it is rarer than a typical one.
 func tokenRarity(pool []WeightSample) (idf map[string]float64, median float64) {
 	df := map[string]int{}
 	for _, s := range pool {

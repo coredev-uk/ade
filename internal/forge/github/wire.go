@@ -211,11 +211,11 @@ func (w wirePull) mr(project string) forge.MR {
 	}
 }
 
-func (w wirePull) mergedBy() string {
+func (w wirePull) mergedBy() forge.User {
 	if w.MergedBy == nil {
-		return ""
+		return forge.User{}
 	}
-	return w.MergedBy.Login
+	return w.MergedBy.user()
 }
 
 // changesRequested lists reviewers whose latest verdict is CHANGES_REQUESTED.

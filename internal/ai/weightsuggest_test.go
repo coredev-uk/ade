@@ -271,3 +271,46 @@ func TestClosedSamplesUseTheClosedDateForTheWindow(t *testing.T) {
 		t.Errorf("samples = %+v, want #2 (closed recently) and #3 (no closed date: the forge's update filter stands)", got)
 	}
 }
+
+// Float addition depends on order, so equal word sets must be summed in a
+// fixed order or the Ref tie-break never gets to decide.
+func TestSuggestWeightScoreDoesNotDependOnMapOrder(t *testing.T) {
+	src := config.WeightSource{Source: "label"}
+	samples := []WeightSample{
+		sample(1, "Rework billing export pipeline retries logging", "bug", 3, "api"),
+		sample(2, "Logging retries pipeline export billing rework", "bug", 8, "api"),
+		sample(3, "Billing page", "bug", 2, "api"),
+		sample(4, "Export csv", "bug", 2, "api"),
+		sample(5, "Retries on timeout", "bug", 5, "api"),
+		sample(6, "Pipeline stage names", "bug", 1, "api"),
+		sample(7, "Logging format", "bug", 1, "api"),
+	}
+	issue := newIssue("Billing export pipeline retries logging rework", "type::bug", "app::api")
+	_, first := SuggestWeight(issue, weightLabels, src, Suggestion{}, samples)
+	if !strings.Contains(first, "g/tracker#1 (3), g/tracker#2 (8)") {
+		t.Fatalf("equal scores should order by ref: %q", first)
+	}
+	for range 200 {
+		if _, why := SuggestWeight(issue, weightLabels, src, Suggestion{}, samples); why != first {
+			t.Fatalf("reason changed between runs:\n%q\n%q", first, why)
+		}
+	}
+}
+
+// With every word as common as the next, none is rarer than the median, so a
+// single shared word does not qualify a sample; two do.
+func TestSuggestWeightNeedsTwoSharedWordsWhenNoWordIsRarer(t *testing.T) {
+	src := config.WeightSource{Source: "label"}
+	samples := []WeightSample{
+		sample(1, "Alpha beta", "bug", 3, "api"),
+		sample(2, "Gamma delta", "bug", 5, "api"),
+	}
+	one := newIssue("Alpha epsilon", "type::bug", "app::api")
+	if w, why := SuggestWeight(one, weightLabels, src, Suggestion{}, samples); w != nil {
+		t.Errorf("one shared word in a pool of equally common words suggested %d (%s)", *w, why)
+	}
+	two := newIssue("Alpha beta epsilon", "type::bug", "app::api")
+	if w, why := SuggestWeight(two, weightLabels, src, Suggestion{}, samples); w == nil || *w != 3 {
+		t.Errorf("two shared words: %v (%s), want 3", w, why)
+	}
+}
