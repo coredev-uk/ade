@@ -102,7 +102,10 @@ go run ./cmd/ade dash
 ## Develop
 
 ```sh
+nix develop            # Go, zellij, lazygit, git, gh, glab, delta, nvim, golangci-lint, ...
 go test ./...
 golangci-lint run ./...
 nix flake check
 ```
+
+The dashboard and the overview pane have golden-file tests (`internal/tui/testdata/golden`, `internal/overview/testdata/golden`). After a deliberate UI change, `go test ./internal/tui ./internal/overview -run TestGolden -update` rewrites them; read the diff before committing.

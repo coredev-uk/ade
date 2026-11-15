@@ -1,53 +1,36 @@
-# ADE
+<img src="assets/logo.svg" alt="" width="100" align="left">
 
-[![CI](https://github.com/coredev-uk/ade/actions/workflows/ci.yml/badge.svg)](https://github.com/coredev-uk/ade/actions/workflows/ci.yml)
+### ADE
 
-An agentic development environment for the terminal. One dashboard, inside its own [zellij](https://zellij.dev) session, replaces the GitLab/GitHub web workflow for the projects you work on: issues, merge requests and reviews, sprints, per-ticket worktrees and dev tabs (editor or omp agent, lazygit, services), AI summaries and agent runs with hard budget caps, and notifications. It is one static Go binary; GitLab is the work forge, GitHub covers personal projects.
+[![Downloads](https://img.shields.io/github/downloads/coredev-uk/ade/total)](https://github.com/coredev-uk/ade/releases)
+[![Latest release](https://img.shields.io/github/v/release/coredev-uk/ade?include_prereleases)](https://github.com/coredev-uk/ade/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/coredev-uk/ade/ci.yml?branch=main)](https://github.com/coredev-uk/ade/actions/workflows/ci.yml)
 
-The spec is [docs/PLAN.md](docs/PLAN.md) (phases 0–7 are implemented), product constraints are in [PRODUCT.md](PRODUCT.md), the visual system in [DESIGN.md](DESIGN.md).
+An agentic development environment for the terminal: issues, merge requests, reviews, sprints, worktrees and agent runs in one dashboard.
+
+[Download](https://github.com/coredev-uk/ade/releases) •
+[Setup](docs/setup.md) •
+[Reference](docs/reference.md) •
+[Manifest](docs/manifest.md) •
+[Release notes](CHANGELOG.md)
+
+<br clear="left">
+
+<img src="assets/hero.webp" alt="The ADE dashboard in a terminal: merge request api!1, Rate-limit the export endpoint, with its timeline from assigned to review, the acceptance checklist, the merge request's state, pipeline and threads, and an AI summary of the change.">
 
 ## Getting started
 
-Full guide: **[docs/setup.md](docs/setup.md)** (installing Nix, tools, tokens, first run, troubleshooting). Unattended machine setup (Coder workspaces, new laptops): `ade setup`, see [Coder / CDE](docs/setup.md#coder--cde).
-Self-hosted GitLab (internal CA, path prefix, custom ssh port) and headless Coder workspaces: [docs/setup.md](docs/setup.md#self-hosted-gitlab); every dashboard action is also reachable by name from `:`.
-
 ```sh
-# 1. Nix with flakes (skip if you have it): https://nixos.org/download or https://determinate.systems/nix-installer
-curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install
-
-# 2. Try ADE without installing, or keep it
-nix run github:coredev-uk/ade -- version
-nix profile install github:coredev-uk/ade
-# (no Nix? static binaries for linux/macOS: https://github.com/coredev-uk/ade/releases)
-
-# 3. Put zellij, lazygit and git on PATH (nix profile install nixpkgs#zellij nixpkgs#lazygit nixpkgs#git), then:
-export GITLAB_TOKEN=...            # PAT with api, read_repository, write_repository
-ade init                           # teammate: asks for forge, host, token source, project manifest
-ade doctor                         # what is missing?
-ade                                # open the dashboard (zellij session "ade")
+nix run github:coredev-uk/ade -- version      # try it
+nix profile install github:coredev-uk/ade     # keep it
+ade init && ade doctor && ade                 # configure, check, open the dashboard
 ```
 
-Team lead creating the shared manifest first: `ade project bootstrap --group <group>`, review, then `--publish`.
-No forge handy? `nix develop -c bash scripts/demo.sh` runs everything against a local fake GitLab.
+No Nix? Static binaries for Linux and macOS are on the [releases page](https://github.com/coredev-uk/ade/releases).
+The [setup guide](docs/setup.md) covers tools, tokens, self-hosted GitLab, Coder workspaces and an offline demo.
 
-## Documentation
+## Contributing
 
-| | |
-|---|---|
-| [docs/setup.md](docs/setup.md) | Install, tools, tokens, first run, daily loop, troubleshooting |
-| [docs/reference.md](docs/reference.md) | Every command, configuration keys, sandbox, developing ADE |
-| [docs/manifest.md](docs/manifest.md) | The shared team manifest, conventions, commit prefix and hook |
-| [docs/schema/](docs/schema) | JSON Schemas for the config and manifest (editor completion) |
-| [docs/billing/](docs/billing/README.md) | AI spend and budget sources |
-| [docs/PLAN.md](docs/PLAN.md) | The spec |
-
-## Develop
-
-```sh
-nix develop            # Go, zellij, lazygit, git, gh, glab, delta, nvim, golangci-lint, ...
-go test ./...
-golangci-lint run ./...
-nix flake check
-```
-
-The dashboard and the overview pane have golden-file tests (`internal/tui/testdata/golden`, `internal/overview/testdata/golden`). After a deliberate UI change, `go test ./internal/tui ./internal/overview -run TestGolden -update` rewrites them; read the diff before committing.
+Report bugs and request features in [Issues](https://github.com/coredev-uk/ade/issues).
+To change the code, read [Develop](docs/reference.md#develop); the spec is [docs/PLAN.md](docs/PLAN.md),
+product constraints are in [PRODUCT.md](PRODUCT.md) and the visual system in [DESIGN.md](DESIGN.md).
