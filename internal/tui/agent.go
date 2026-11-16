@@ -6,13 +6,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/coredev-uk/ade/internal/agent"
+	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/domain"
 	hostedit "github.com/coredev-uk/ade/internal/editor"
 	"github.com/coredev-uk/ade/internal/forge"
+	"github.com/coredev-uk/ade/internal/project"
 )
 
 // The agent surfaces (PLAN 6.6): `a` on a Home item (`P` on the MR page) opens
@@ -44,6 +48,11 @@ type agentDialog struct {
 	item *domain.WorkItem
 	// mr is the item's MR with unresolved threads, when "address comments" applies.
 	mr *forge.MR
+	// repos are the repos the item works in, when there are several (the
+	// agent acts on one worktree); ri is the targeted one, switched with [ and ].
+	// Empty for the common one-repo item.
+	repos []agRepo
+	ri    int
 
 	runs []agent.Run
 	sel  int
@@ -61,6 +70,64 @@ type agentDialog struct {
 	// the runs started from this dialog (n toggles).
 	notes   string
 	noNotes bool
+}
+
+// agRepo is one repo of a multi-repo item and the MR the agent would address
+// there: its open MR with the most unresolved threads, nil when none has any.
+type agRepo struct {
+	name string
+	mr   *forge.MR
+}
+
+// agentRepos lists the repos a multi-repo item works in: the repos its labels
+// route to, then the repos holding its child issues and MRs, in manifest
+// order. Fewer than two repos: nil, the dialog keeps its single target.
+func agentRepos(item *domain.WorkItem, man *config.Manifest) []agRepo {
+	if man == nil {
+		return nil
+	}
+	names := slices.Clone(item.Repos)
+	for _, name := range man.RepoNames() {
+		path := man.Repos[name].Path
+		held := slices.ContainsFunc(item.MRs, func(mr forge.MR) bool { return strings.EqualFold(mr.Ref.Project, path) }) ||
+			slices.ContainsFunc(item.Children, func(c forge.Issue) bool { return strings.EqualFold(c.Ref.Project, path) })
+		if held {
+			names = append(names, name)
+		}
+	}
+	var out []agRepo
+	for _, name := range names {
+		if slices.ContainsFunc(out, func(r agRepo) bool { return r.name == name }) {
+			continue
+		}
+		r := agRepo{name: name}
+		path := man.Repos[name].Path
+		for i := range item.MRs {
+			if mr := &item.MRs[i]; mr.State == "opened" && mr.Unresolved > 0 && strings.EqualFold(mr.Ref.Project, path) &&
+				(r.mr == nil || mr.Unresolved > r.mr.Unresolved) {
+				r.mr = mr
+			}
+		}
+		out = append(out, r)
+	}
+	if len(out) < 2 {
+		return nil
+	}
+	return out
+}
+
+// pick targets repo i and the MR to address there.
+func (d *agentDialog) pick(i int) {
+	d.ri, d.mr = i, d.repos[i].mr
+}
+
+// repo is the repo the agent acts in: empty for a one-repo item, which
+// resolves its single routed repo itself.
+func (d *agentDialog) repo() string {
+	if len(d.repos) == 0 {
+		return ""
+	}
+	return d.repos[d.ri].name
 }
 
 // --- messages -----------------------------------------------------------------
@@ -97,6 +164,7 @@ type (
 // Tests replace these: no real agent, editor or lazygit is ever started.
 var (
 	agentOpen = agent.ForApp
+	agResolve = agent.ResolveTarget
 	agEditor  = func(ed hostedit.Editor, path string) *exec.Cmd { return ed.Command(path, 0, true) }
 	agLazygit = func(worktree string) tea.Cmd {
 		cmd := agent.LazygitCmd(worktree, os.Getenv("ZELLIJ") != "")
@@ -128,6 +196,21 @@ func (m model) openAgent(item *domain.WorkItem, all bool) (model, tea.Cmd) {
 	}
 	if d.item != nil {
 		d.notes = m.itemNotes(d.item)
+		var man *config.Manifest
+		if m.app != nil {
+			man, _ = project.LoadManifest(filepath.Join(m.app.Root, d.item.Project))
+		}
+		if d.repos = agentRepos(d.item, man); len(d.repos) > 0 {
+			// The repo whose open MR has the most threads; else the first.
+			best := 0
+			for i, r := range d.repos {
+				if r.mr != nil && (d.repos[best].mr == nil || r.mr.Unresolved > d.repos[best].mr.Unresolved) {
+					best = i
+				}
+			}
+			d.pick(best)
+			return m, m.agLoad(d)
+		}
 		for i := range d.item.MRs {
 			if mr := &d.item.MRs[i]; mr.State == "opened" && mr.Unresolved > 0 {
 				d.mr = mr
@@ -263,10 +346,10 @@ func (m model) agStarted(msg agStartedMsg) (model, tea.Cmd, bool) {
 // agStart creates a run for the dialog's item and starts its first step: the
 // target and the issue's context are read first (the network part).
 func (m model) agStart(d *agentDialog, kind agent.Kind) tea.Cmd {
-	ctx, a, mgr, ref := m.ctx, m.app, d.mgr, d.item.Ref
+	ctx, a, mgr, ref, repo := m.ctx, m.app, d.mgr, d.item.Ref, d.repo()
 	d.busy, d.warn = "reading "+ref.String()+" and its worktree", ""
 	return func() tea.Msg {
-		t, fg, err := agent.ResolveTarget(ctx, a, nil, ref.String(), "")
+		t, fg, err := agResolve(ctx, a, nil, ref.String(), repo)
 		if err != nil {
 			return agStartedMsg{d: d, err: err}
 		}
@@ -371,6 +454,14 @@ func (m model) agListKey(d *agentDialog, ks string) (model, tea.Cmd) {
 		d.sel = 0
 	case "G", "end":
 		d.sel = max(len(d.runs)-1, 0)
+	case "[", "]":
+		if n := len(d.repos); n > 1 && d.busy == "" {
+			step := 1
+			if ks == "[" {
+				step = n - 1
+			}
+			d.pick((d.ri + step) % n)
+		}
 	case "p":
 		if d.item == nil || d.busy != "" {
 			return m, nil

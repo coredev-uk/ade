@@ -66,7 +66,7 @@ func Assemble(in AssembleInput) WorkItem {
 	}
 	blocked := blockedReason(in.Tracker, in.Links, m.Labels)
 	item.Blocked = blocked != "" && item.Stage != StageDone
-	item.Court, item.Reason, item.Upstream = deriveCourt(&item, m, in.Me, blocked)
+	item.Court, item.Reason, item.Upstream = deriveCourt(&item, m, in.Me, in.MeID, blocked)
 
 	item.WantWorkflow = WantWorkflow(item.Stage, m.Labels)
 	if item.KeptOpen {

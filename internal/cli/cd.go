@@ -35,8 +35,9 @@ cd "$(ade cd 412)" stays where it is on failure without an error.
 child issue or MR ref (group/project#N, group/project!N), or a bare N with one
 registered project (read from the manifest snapshot of the last "ade update").
 It is resolved from the cache and the file system only (no network). The path
-is the item's worktree in its primary repo (the repos the item routes to, in
-order, then the others by name), or in the repo --repo names.
+is the item's worktree in the repo --repo names. An item with worktrees in
+several repos needs --repo: without it the command fails and lists them on
+stderr (--json included: stdout stays empty).
 An item with no worktree is an error.
 
 A name that is not a ref is a repo: "api" (when one project has it) or
@@ -53,7 +54,7 @@ number is a work item; a repo named by digits is reached as "<project>/<repo>".`
 			return printCd(cmd.OutOrStdout(), sel)
 		},
 	}
-	cmd.Flags().StringVar(&repo, "repo", "", "repo whose worktree to print when the item has several (default: the primary one)")
+	cmd.Flags().StringVar(&repo, "repo", "", "repo whose worktree to print (required when the item has worktrees in several repos)")
 	return cmd
 }
 
@@ -81,6 +82,17 @@ func printCd(w io.Writer, sel cdSelection) error {
 	}
 	_, err := fmt.Fprintln(w, sel.Chosen.Path)
 	return err
+}
+
+// cdAmbiguousError is an item with worktrees in several repos and no --repo:
+// like every ade cd failure it prints nothing on stdout, --json included.
+type cdAmbiguousError struct {
+	Ref   string
+	Repos []string
+}
+
+func (e *cdAmbiguousError) Error() string {
+	return fmt.Sprintf("%s has worktrees in %d repos (%s): pick one with --repo <name>", e.Ref, len(e.Repos), strings.Join(e.Repos, ", "))
 }
 
 func resolveCd(cmd *cobra.Command, arg, repoFlag string) (cdSelection, error) {
@@ -126,13 +138,25 @@ func resolveCd(cmd *cobra.Command, arg, repoFlag string) (cdSelection, error) {
 		return cdSelection{}, fmt.Errorf("%s has no worktree: make one with `ade start %s` (or `w` on Home)", it.Item.Ref, arg)
 	}
 	sel := cdSelection{Project: it.Project, Chosen: wts[0], Worktrees: wts}
+	var have []string
+	for _, w := range wts {
+		have = append(have, w.Repo)
+	}
+	if repoFlag == "" && len(wts) > 1 {
+		// A child or MR ref names its repo; only the tracker ref is ambiguous.
+		for _, name := range m.RepoNames() {
+			if strings.EqualFold(m.Repos[name].Path, ref.Project) {
+				repoFlag = name
+				break
+			}
+		}
+		if repoFlag == "" {
+			return cdSelection{}, &cdAmbiguousError{Ref: it.Item.Ref.String(), Repos: have}
+		}
+	}
 	if repoFlag != "" {
 		i := slices.IndexFunc(wts, func(w workspace.ItemWorktree) bool { return w.Repo == repoFlag })
 		if i < 0 {
-			var have []string
-			for _, w := range wts {
-				have = append(have, w.Repo)
-			}
 			return cdSelection{}, fmt.Errorf("%s has no worktree in repo %q (it has: %s)", it.Item.Ref, repoFlag, strings.Join(have, ", "))
 		}
 		sel.Chosen = wts[i]

@@ -83,8 +83,21 @@ func TestCdRepoFlagPicksAnotherWorktreeOrListsTheRepos(t *testing.T) {
 	if err != nil || out != web+"\n" {
 		t.Errorf("--repo web = %q, %v; want %q", out, err, web)
 	}
-	if out, _, err = e.runCd("g/tracker#15"); err != nil || out != filepath.Join(e.root, "demo", "api", "3-add-limit")+"\n" {
-		t.Errorf("without --repo the primary repo (first routed) = %q, %v", out, err)
+	// Two trees and no --repo: nothing on stdout, both repos and the flag named.
+	for _, jsn := range []bool{false, true} {
+		jsonOut = jsn
+		out, _, err = e.runCd("g/tracker#15")
+		if err == nil || out != "" || !strings.Contains(err.Error(), "api") || !strings.Contains(err.Error(), "web") || !strings.Contains(err.Error(), "--repo") {
+			t.Errorf("json=%v: without --repo out %q, err %v; want an error naming both repos and --repo", jsn, out, err)
+		}
+	}
+	jsonOut = false
+	if out, _, err = e.runCd("g/tracker#15", "--repo", "api"); err != nil || out != filepath.Join(e.root, "demo", "api", "3-add-limit")+"\n" {
+		t.Errorf("--repo api = %q, %v", out, err)
+	}
+	// A child ref names its repo, so it needs no --repo.
+	if out, _, err = e.runCd("g/web#7"); err != nil || out != web+"\n" {
+		t.Errorf("child ref g/web#7 = %q, %v; want the web tree", out, err)
 	}
 
 	jsonOut = true

@@ -50,32 +50,47 @@ type (
 
 // openWorkspace handles `w`; other is `W`, which opens the tab with the other
 // main pane: omp with the ADE implement skill when the default is not omp, the
-// editor when it is.
+// editor when it is. On the MR page it opens the worktree of the MR shown; on
+// Home, an item with worktrees in several repos asks which one first.
 func (m model) openWorkspace(other bool) (model, tea.Cmd) {
-	if m.mr != nil || m.isAgilePage() || m.isToolPage() {
+	if m.isAgilePage() || m.isToolPage() {
 		return m, nil
 	}
 	ctx, a := m.ctx, m.app
-	var items []workspace.ItemRef
-	for _, res := range m.results {
-		for _, it := range res.Items {
-			items = append(items, workspace.ItemRef{Project: res.Project, Forge: res.Forge, Item: it})
-		}
-	}
+	items := m.wsItems()
 	var target func() (workspace.Target, error)
 	switch {
+	case m.mr != nil:
+		p := m.mr
+		if p.cur < 0 || p.cur >= len(p.mrs) {
+			return m, nil
+		}
+		mr := p.mrs[p.cur]
+		proj, item := p.project, p.item
+		target = func() (workspace.Target, error) {
+			mf, err := loadProject(a, proj)
+			if err != nil {
+				return workspace.Target{}, err
+			}
+			t, err := workspace.TargetForMR(ctx, a.Root, mf, mr)
+			if err != nil || item == nil {
+				return t, err
+			}
+			t.ItemTrees, _ = workspace.ItemTrees(ctx, a.Root, mf, *item)
+			if !t.Baseline && t.ItemTrees != nil {
+				t.ItemTrees[t.Repo] = t.Worktree // the tree shown, not another branch of the item in this repo
+			}
+			return t, nil
+		}
 	case m.page == pageHome && m.homeSel < len(m.homeRows):
 		r := m.homeRows[m.homeSel]
+		if r.item != nil {
+			return m, m.openItemWorkspace(r.project, *r.item, items, other)
+		}
 		target = func() (workspace.Target, error) {
-			mf, err := project.LoadManifest(filepath.Join(a.Root, r.project))
+			mf, err := loadProject(a, r.project)
 			if err != nil {
-				return workspace.Target{}, &recoverable{
-					msg:   "project " + r.project + " is not cloned\nrun ade project add",
-					cause: err,
-				}
-			}
-			if r.item != nil {
-				return workspace.TargetForItem(ctx, a.Root, mf, *r.item)
+				return workspace.Target{}, err
 			}
 			return workspace.TargetForMR(ctx, a.Root, mf, *r.mr)
 		}
@@ -92,14 +107,38 @@ func (m model) openWorkspace(other bool) (model, tea.Cmd) {
 		if err != nil {
 			return wsOpenedMsg{err: err}
 		}
-		label := t.Repo + "/" + t.Title
-		opts := []workspace.OpenOption{workspace.WithItemTrees(t.ItemTrees), workspace.WithTitle(t.Title), workspace.WithItems(items)}
-		if other {
-			opts = append(opts, workspace.WithLayout(otherMainPane(a, t.Project)))
-		}
-		res, err := wsOpen(ctx, a, t.Project, t.Repo, t.Worktree, opts...)
-		return wsOpenedMsg{label: label, res: res, err: err}
+		return m.openTarget(t, items, other)
 	}
+}
+
+// loadProject reads a project's manifest; a project that is not cloned says what to do.
+func loadProject(a *app.App, name string) (*config.Manifest, error) {
+	mf, err := project.LoadManifest(filepath.Join(a.Root, name))
+	if err != nil {
+		return nil, &recoverable{msg: "project " + name + " is not cloned\nrun ade project add", cause: err}
+	}
+	return mf, nil
+}
+
+// wsItems is every cached work item with its project and forge.
+func (m model) wsItems() []workspace.ItemRef {
+	var items []workspace.ItemRef
+	for _, res := range m.results {
+		for _, it := range res.Items {
+			items = append(items, workspace.ItemRef{Project: res.Project, Forge: res.Forge, Item: it})
+		}
+	}
+	return items
+}
+
+// openTarget opens (or focuses) the tab for t and reports what happened.
+func (m model) openTarget(t workspace.Target, items []workspace.ItemRef, other bool) wsOpenedMsg {
+	opts := []workspace.OpenOption{workspace.WithItemTrees(t.ItemTrees), workspace.WithTitle(t.Title), workspace.WithItems(items)}
+	if other {
+		opts = append(opts, workspace.WithLayout(otherMainPane(m.app, t.Project)))
+	}
+	res, err := wsOpen(m.ctx, m.app, t.Project, t.Repo, t.Worktree, opts...)
+	return wsOpenedMsg{label: t.Repo + "/" + t.Title, res: res, err: err}
 }
 
 // otherMainPane is the layout `W` asks for: omp unless that is the default, then the editor.
@@ -148,6 +187,35 @@ func (m *model) onWsOpened(msg wsOpenedMsg) tea.Cmd {
 	}
 	m.nc.push(e)
 	return cmd
+}
+
+// onWsOpenedMany reports the tabs `all` opened. One missing session is said
+// once, and on a host without tabs the commands are copied together (one
+// clipboard write: several would race and keep an arbitrary one).
+func (m *model) onWsOpenedMany(msgs wsManyMsg) tea.Cmd {
+	var hints, labels []string
+	noSession := false
+	for _, o := range msgs {
+		switch {
+		case errors.Is(o.err, workspace.ErrNoSession):
+			if !noSession {
+				m.onWsOpened(o)
+			}
+			noSession = true
+		case o.err == nil && o.res.Hint != "":
+			hints, labels = append(hints, o.res.Hint), append(labels, o.label)
+		default:
+			m.onWsOpened(o)
+		}
+	}
+	if len(hints) == 0 {
+		return nil
+	}
+	e := events.New("workspace.hint", events.Info, strings.Join(labels, ", ")+": no tab on this host")
+	e.Subject = "commands copied, paste them in a shell\nade ws up --no-zellij runs their services there"
+	e.Transient = true
+	m.nc.push(e)
+	return tea.SetClipboard(strings.Join(hints, "\n"))
 }
 
 // recoverable is an error whose message already says what to do next; the

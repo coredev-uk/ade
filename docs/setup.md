@@ -444,9 +444,10 @@ max_concurrency = 4                                       # in-flight API reques
 
 `ca_file` is trusted for ADE's API calls and handed to git for https clones (`http.<scheme://host>.sslCAInfo`, scoped to the forge's host). Exporting `SSL_CERT_FILE` works too. `ade init --host git.example.internal/gitlab --ca-file … --ssh-port 2222` writes these keys. `ade doctor` prints the GitLab version and edition and warns, per feature, when the release is older than ADE's floors (draft-notes bulk publish 15.9, reviewer verdicts 14.0, work items 16.0, iteration cadences 15.0: ADE's tested floors, not a statement of when GitLab shipped them). Features whose endpoint answers 404 are reported once per sync as "not available on this GitLab" and never fail it. Rate limiting needs no `RateLimit-*` headers: `Retry-After` alone paces requests.
 
-### Headless CDE: VS Code remote terminal and web tty
+### Headless CDE: VS Code remote terminal, code-server and web tty
 
 - **VS Code remote terminal.** `host.editor = "auto"` uses the VS Code remote CLI (found on PATH, else under `~/.vscode-server`); a stale `VSCODE_IPC_HOOK_CLI` after a reconnect is replaced by the newest live socket. `v` and `ade vscode workspace --open` open in the connected window.
+- **code-server** (VS Code in the browser, e.g. when the CDE cannot reach VS Code desktop). Its terminal is a VS Code terminal whose remote CLI is `code-server` instead of `code`: ADE uses it from PATH, else from code-server's install (`/tmp/code-server`, `~/.local/lib/code-server-*`, `/usr/lib/code-server`), so `host.editor = "auto"` or `"code"`, `v` and `ade vscode workspace --open` open files and workspaces in the browser tab. `ade doctor` shows it as `code-server (remote CLI …)`.
 - **Web tty** (no VS Code client): `v` prints the workspace path and how to open it from your VS Code window; `o` copies the URL through OSC 52 and says so; the editor falls back to nvim.
 - **Keys.** A browser takes Ctrl-w, Ctrl-t, Ctrl-n and similar. Coder's web terminal is detected (`CODER=true`, no ssh, not VS Code) and gets zellij's unlock-first preset; otherwise set `ADE_ZELLIJ_PRESET=unlock-first` (`default` opts out; `ADE_WEB_TTY=1` forces the detection).
 - `ade doctor` has a `cde` group: display, VS Code remote CLI, OSC 52 note, nix, direnv.

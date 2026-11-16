@@ -126,7 +126,7 @@ func courtFit(g glyphs, it *domain.WorkItem, w int) string {
 		return c
 	}
 	sep := " " + g.Sep + " "
-	failed := strings.HasPrefix(it.Reason, "pipeline failed")
+	failed := strings.Contains(it.Reason, "pipeline failed")
 	mark := 0
 	if failed {
 		mark = lipgloss.Width(g.Bad) + 1
@@ -524,8 +524,9 @@ func contains(s []string, v string) bool {
 }
 
 // rowBadge is "✉ 2 ✓": unresolved review threads over the item's open MRs and
-// the state of the newest pipeline, each a glyph plus a number; blank when
-// there is neither. It is exactly badgeCells wide.
+// the worst pipeline among them (failed, then running or pending, then
+// canceled, skipped or manual, then success; the newest of equals), each a
+// glyph plus a number; blank when there is neither. It is exactly badgeCells wide.
 func (m model) rowBadge(it *domain.WorkItem) string {
 	threads := 0
 	var pipe *forge.Pipeline
@@ -535,8 +536,9 @@ func (m model) rowBadge(it *domain.WorkItem) string {
 			continue
 		}
 		threads += mr.Unresolved
-		if mr.Pipeline != nil && (pipe == nil || mr.Pipeline.UpdatedAt.After(pipe.UpdatedAt)) {
-			pipe = mr.Pipeline
+		if mp := mr.Pipeline; mp != nil && (pipe == nil || pipeSeverity(mp.Status) > pipeSeverity(pipe.Status) ||
+			pipeSeverity(mp.Status) == pipeSeverity(pipe.Status) && mp.UpdatedAt.After(pipe.UpdatedAt)) {
+			pipe = mp
 		}
 	}
 	t := ""
@@ -557,6 +559,19 @@ func (m model) rowBadge(it *domain.WorkItem) string {
 		}
 	}
 	return pad(m.g, t, badgeCells-2) + " " + pad(m.g, p, 1)
+}
+
+// pipeSeverity orders pipeline states by how much they need attention.
+func pipeSeverity(status string) int {
+	switch status {
+	case "failed":
+		return 3
+	case "canceled", "skipped", "manual":
+		return 1
+	case "success":
+		return 0
+	}
+	return 2 // running, pending, created: not decided yet
 }
 
 func mrStatus(g glyphs, mr *forge.MR) string {

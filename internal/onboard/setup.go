@@ -11,6 +11,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/coredev-uk/ade/internal/editor"
 )
 
 // This file holds the pure and filesystem parts of `ade setup`: the machine
@@ -35,7 +37,7 @@ func SetupTools() []Tool {
 		{Name: "direnv", Why: "per-repo dev shells (.envrc)", Nix: "direnv"},
 		{Name: "nix", Why: "per-repo dev shells (flake.nix)", Hint: "install Nix: https://nixos.org/download"},
 		{Name: "omp", Why: "the agent driver", Hint: "install omp (oh-my-pi) and put it on PATH"},
-		{Name: "code", Why: "VS Code remote CLI (open files and diffs from the terminal)", Hint: "open a VS Code remote terminal once: it puts the remote `code` CLI on PATH"},
+		{Name: "code", Why: "VS Code remote CLI (open files and diffs from the terminal)", Hint: "open a VS Code remote terminal (or a code-server terminal) once: it puts the remote `code` (`code-server`) CLI on PATH"},
 	}
 }
 
@@ -47,16 +49,18 @@ type ToolStatus struct {
 }
 
 // CheckTools looks every tool up with look (exec.LookPath in production).
-// The VS Code remote CLI also counts when it sits in the remote server's
-// directory under home, where a terminal that VS Code did not start cannot
-// see it on PATH.
+// The VS Code remote CLI also counts as code-server's (`code-server` in a
+// code-server terminal), or when either sits in its server's install
+// directory, where a terminal the editor did not start cannot see it on PATH.
 func CheckTools(look func(string) (string, error), home string) []ToolStatus {
 	var out []ToolStatus
 	for _, t := range SetupTools() {
 		p, err := look(t.Name)
-		if err != nil && t.Name == "code" && home != "" {
-			if m, _ := filepath.Glob(filepath.Join(home, ".vscode-server", "bin", "*", "bin", "remote-cli", "code")); len(m) > 0 {
-				p, err = m[len(m)-1], nil
+		if err != nil && t.Name == "code" {
+			if cs, csErr := look("code-server"); csErr == nil && strings.Contains(filepath.ToSlash(cs), "/remote-cli/") {
+				p, err = cs, nil
+			} else if r := editor.RemoteCLI(home); r != "" {
+				p, err = r, nil
 			}
 		}
 		out = append(out, ToolStatus{Tool: t, Path: p, Missing: err != nil})
