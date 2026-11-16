@@ -45,7 +45,7 @@ try("mini.clue", function(m)
       m.gen_clues.builtin_completion(),
       { mode = "n", keys = "<Leader>f", desc = "+find" },
       { mode = "n", keys = "<Leader>g", desc = "+git" },
-      { mode = "n", keys = "<Leader>l", desc = "+lsp" },
+      { mode = "n", keys = "<Leader>l", desc = "+lsp/lint" },
       { mode = "n", keys = "<Leader>a", desc = "+ade" },
     },
   })
@@ -138,3 +138,91 @@ map("n", "gD", pick("lsp_declarations"), { desc = "Go to declaration" })
 map("n", "gr", pick("lsp_references"), { desc = "References", nowait = true })
 map("n", "gI", pick("lsp_implementations"), { desc = "Implementations" })
 map("n", "gy", pick("lsp_type_definitions"), { desc = "Type definition" })
+
+-- Diagnostics (LSP and linters alike): signs, the message at the line's end, the
+-- worst first; ]d / [d move between them, <Leader>le shows one in full.
+vim.diagnostic.config({
+  severity_sort = true,
+  virtual_text = { spacing = 2, source = "if_many" },
+  float = { border = "rounded", source = true },
+  signs = true,
+  underline = true,
+  update_in_insert = false,
+})
+
+-- Linters through nvim-lint. Like the language servers they come from each
+-- project's devshell: a linter runs only when its program is on PATH, so a repo
+-- gets exactly the linters its shell provides (golangci-lint, eslint, ruff, …).
+try("lint", function(lint)
+  lint.linters_by_ft = {
+    go = { "golangcilint" },
+    lua = { "selene", "luacheck" },
+    sh = { "shellcheck" },
+    bash = { "shellcheck" },
+    nix = { "statix", "deadnix" },
+    python = { "ruff" },
+    javascript = { "eslint_d", "eslint" },
+    javascriptreact = { "eslint_d", "eslint" },
+    typescript = { "eslint_d", "eslint" },
+    typescriptreact = { "eslint_d", "eslint" },
+    vue = { "eslint_d", "eslint" },
+    svelte = { "eslint_d", "eslint" },
+    css = { "stylelint" },
+    scss = { "stylelint" },
+    yaml = { "yamllint", "actionlint" },
+    markdown = { "markdownlint-cli2", "markdownlint" },
+    dockerfile = { "hadolint" },
+    terraform = { "tflint" },
+    sql = { "sqlfluff" },
+    proto = { "buf_lint" },
+  }
+  -- Where two programs do the same job (eslint_d and eslint) only the first one
+  -- installed runs.
+  local alternatives = { eslint = "eslint_d", luacheck = "selene", markdownlint = "markdownlint-cli2" }
+  local function program(name)
+    local l = lint.linters[name]
+    if type(l) == "function" then
+      local ok, v = pcall(l)
+      l = ok and v or nil
+    end
+    if type(l) ~= "table" then
+      return nil, nil
+    end
+    local cmd = l.cmd
+    if type(cmd) == "function" then
+      local ok, v = pcall(cmd)
+      cmd = ok and v or nil
+    end
+    return cmd, l
+  end
+  -- available(ft, typing) is the linters of ft whose program is on PATH; while
+  -- typing only those that read the buffer (stdin), since the rest lint the file
+  -- on disk and would report stale lines.
+  local function available(ft, typing)
+    local out, have = {}, {}
+    for _, name in ipairs(lint.linters_by_ft[ft] or {}) do
+      local cmd, l = program(name)
+      local skip = alternatives[name] and have[alternatives[name]]
+      if cmd and not skip and vim.fn.executable(cmd) == 1 and (not typing or l.stdin) then
+        out[#out + 1], have[name] = name, true
+      end
+    end
+    return out
+  end
+  local function run(typing)
+    local names = available(vim.bo.filetype, typing)
+    if #names > 0 then
+      lint.try_lint(names)
+    end
+  end
+  local group = vim.api.nvim_create_augroup("ade_lint", { clear = true })
+  -- FileType, not BufReadPost: a file named on the command line is read before
+  -- filetype detection, and the linters are chosen by filetype.
+  vim.api.nvim_create_autocmd({ "FileType", "BufWritePost" }, { group = group, callback = function() run(false) end })
+  vim.api.nvim_create_autocmd("InsertLeave", { group = group, callback = function() run(true) end })
+  map("n", "<Leader>ll", function() run(false) end, { desc = "Lint now" })
+  map("n", "<Leader>li", function()
+    local names = available(vim.bo.filetype, false)
+    vim.notify(#names > 0 and ("linters: " .. table.concat(names, ", ")) or ("no linter on PATH for " .. vim.bo.filetype))
+  end, { desc = "Linters for this buffer" })
+end)
