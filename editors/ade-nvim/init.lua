@@ -11,6 +11,12 @@ o.ignorecase, o.smartcase = true, true
 o.splitright, o.splitbelow = true, true
 o.updatetime = 250
 
+-- Neovim creates no cache directory of its own, and under NVIM_APPNAME=ade-nvim a
+-- fresh machine has none: snacks writes lazygit's theme there (<Leader>gg).
+for _, what in ipairs({ "cache", "data", "state" }) do
+  vim.fn.mkdir(vim.fn.stdpath(what), "p")
+end
+
 local function try(mod, setup)
   local ok, m = pcall(require, mod)
   if ok then
