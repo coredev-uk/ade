@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/coredev-uk/ade/internal/config"
+	"github.com/coredev-uk/ade/internal/domain"
 	hostedit "github.com/coredev-uk/ade/internal/editor"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/startwork"
@@ -29,6 +30,13 @@ import (
 //	confirm  every write as a station list, the MR body from the template,
 //	         its quick actions each kept or stripped
 //	done     what was created, with the references
+//
+// `s` on work already started looks for it with the default choices first:
+// when it exists whole (no forge write left), it runs at once, adding the
+// missing local worktree and its install, then opening the workspace, and
+// the dialog closes when nothing but the tab happened. A plan warning, or an
+// install due in a tree that exists already, shows the confirm screen first;
+// the palette's openStartAsk always asks.
 //
 // All forge and git work runs in commands; the dialog never blocks the list.
 
@@ -55,8 +63,15 @@ type swRepo struct {
 // when closed), so copies of the model share one dialog.
 type startDialog struct {
 	mrOnly bool // `M`: create the MR for started work, nothing else
-	stage  swStage
-	ref    forge.Ref
+	// quick is `s` on started work: discover with the default choices and run
+	// without asking when that writes nothing to the forge. It is cleared once
+	// the dialog falls back to asking.
+	quick bool
+	// auto marks a run nobody confirmed (quick); it closes the dialog when
+	// all it did was open the workspace.
+	auto  bool
+	stage swStage
+	ref   forge.Ref
 
 	res *startwork.Resolved
 	env *startwork.Env
@@ -149,7 +164,7 @@ func (m model) openStart(mrOnly bool) (model, tea.Cmd) {
 		return m, nil
 	}
 	it := m.homeRows[m.homeSel].item
-	d := &startDialog{mrOnly: mrOnly, ref: it.Ref, stage: swResolving}
+	d := &startDialog{mrOnly: mrOnly, ref: it.Ref, stage: swResolving, quick: !mrOnly && it.Stage > domain.StageAssigned}
 	m.sw = d
 	ctx, a, sync := m.ctx, m.app, m.sync
 	return m, func() tea.Msg {
@@ -170,6 +185,17 @@ func (m model) openStart(mrOnly bool) (model, tea.Cmd) {
 		r, err := startwork.Resolve(ctx, a, open, d.ref.String())
 		return swResolvedMsg{d: d, res: r, err: err}
 	}
+}
+
+// openStartAsk opens the full dialog also for started work (the palette's
+// "Start work: choose…"), to add a repo, pin a branch, pick Browse or the main
+// pane, or move the label where `s` would just open the worktree.
+func (m model) openStartAsk() (model, tea.Cmd) {
+	next, cmd := m.openStart(false)
+	if next.sw != nil {
+		next.sw.quick = false
+	}
+	return next, cmd
 }
 
 // swWorkspace builds the workspace opener; tests replace it so no zellij
@@ -243,6 +269,11 @@ func (m model) swResolved(msg swResolvedMsg) (model, tea.Cmd, bool) {
 		d.stage = swPlanning
 		return m, m.swDiscover(d), true
 	}
+	if d.quick && len(d.ch.Repos) > 0 && d.ch.Mode != startwork.ModeBrowse {
+		d.stage = swPlanning
+		return m, m.swDiscover(d), true
+	}
+	d.quick = false
 	d.stage = swChoose
 	return m, nil, true
 }
@@ -292,6 +323,24 @@ func (m model) swPlanned(msg swPlannedMsg) (model, tea.Cmd, bool) {
 		if d.mrOnly {
 			d.stage, d.err = swFailed, msg.err
 		}
+		d.quick = false
+		return m, nil, true
+	}
+	if d.quick {
+		d.quick = false
+		d.found = msg.found
+		switch {
+		case d.replan() != "" || d.plan.Writes() > 0:
+			// Something is still to be written: ask as for new work.
+			d.stage = swChoose
+		case len(d.plan.Warnings) > 0 || installsInLiveTree(d.plan):
+			// Nothing to write, but a warning to read first, or an install in a
+			// tree that may hold running services: confirm it.
+			d.stage, d.preview, d.action = swConfirm, 0, 0
+		default:
+			d.stage, d.auto = swRunning, true
+			return m, m.swExecute(d), true
+		}
 		return m, nil, true
 	}
 	d.found = msg.found
@@ -339,10 +388,14 @@ func (m model) swFinished(msg swDoneMsg) (model, tea.Cmd, bool) {
 		return m, nil, true
 	}
 	d.stage, d.result, d.err = swDone, &msg.res, msg.err
+	if d.auto && msg.err == nil && msg.res.Reopened() {
+		m.sw = nil // the tab is open; the work.resumed toast says so
+		return m, nil, true
+	}
 	// What was created changes Home's row and the worktrees list: read this
 	// one item again and the worktrees' status, not every project.
 	var cmd tea.Cmd
-	if msg.res.Created() > 0 {
+	if msg.res.Created() > 0 && !msg.res.Reopened() {
 		cmd = m.refreshItem(d.res.Manifest, d.res.Forge, d.ref)
 		if m.svc != nil {
 			cmd = tea.Batch(cmd, m.loadStatus())
@@ -593,13 +646,18 @@ func (m model) swConfirmKey(d *startDialog, ks string) (model, tea.Cmd) {
 			return m, nil
 		}
 		d.stage = swRunning
-		ctx, env, plan := m.ctx, d.env, d.plan
-		return m, func() tea.Msg {
-			res, err := env.Execute(ctx, plan)
-			return swDoneMsg{d: d, res: res, err: err}
-		}
+		return m, m.swExecute(d)
 	}
 	return m, nil
+}
+
+// swExecute runs the plan.
+func (m model) swExecute(d *startDialog) tea.Cmd {
+	ctx, env, plan := m.ctx, d.env, d.plan
+	return func() tea.Msg {
+		res, err := env.Execute(ctx, plan)
+		return swDoneMsg{d: d, res: res, err: err}
+	}
 }
 
 func (d *startDialog) hasLocalWork() bool {
@@ -732,7 +790,11 @@ func (m model) startOverlay(w, h int) string {
 			hint = keys("enter", "keep", "esc", "discard")
 		}
 	case swPlanning:
-		l = append(l, m.swBusy("looking for an existing child, branch, MR and template"))
+		what := "looking for an existing child, branch, MR and template"
+		if d.quick {
+			what = "looking for the started work"
+		}
+		l = append(l, m.swBusy(what))
 		hint = keys("esc", "cancel")
 	case swConfirm:
 		// Rows left for the confirm lines: the frame, title and hint are fixed.
@@ -744,7 +806,14 @@ func (m model) startOverlay(w, h int) string {
 		l, hh = m.swConfirmView(d, inner, room)
 		hint = hh
 	case swRunning:
-		l = append(l, m.swBusy("creating"))
+		what := "creating"
+		if d.auto {
+			what = "opening the started work"
+		}
+		if hasPending(d.plan, startwork.StepInstall) {
+			what += ", running the install hooks"
+		}
+		l = append(l, m.swBusy(what))
 		hint = keys("esc", "hide")
 	case swDone:
 		l = append(l, m.swDoneView(d, inner)...)
@@ -1174,6 +1243,8 @@ func doneText(g glyphs, s startwork.StepResult, inner int) string {
 		return "draft MR " + s.Ref
 	case startwork.StepWorktree:
 		return "worktree " + truncLeft(g, s.Ref, max(20, inner-20))
+	case startwork.StepInstall:
+		return "install hooks of " + s.Repo
 	}
 	return g.T(s.Text)
 }
@@ -1206,6 +1277,26 @@ func stepsOf(p startwork.Plan, repo string) []startwork.Step {
 
 func hasStep(p startwork.Plan, kind startwork.StepKind, repo string) bool {
 	return slices.ContainsFunc(p.Steps, func(s startwork.Step) bool { return s.Kind == kind && s.Repo == repo })
+}
+
+// hasPending reports that the plan still has a step of kind to run.
+func hasPending(p startwork.Plan, kind startwork.StepKind) bool {
+	return slices.ContainsFunc(p.Steps, func(s startwork.Step) bool { return s.Kind == kind && !s.Done })
+}
+
+// installsInLiveTree reports a pending install in a worktree that exists
+// already: it may be in use (`npm ci` replaces node_modules under running
+// services), so it is not run without a confirmation.
+func installsInLiveTree(p startwork.Plan) bool {
+	for _, s := range p.Steps {
+		if s.Kind != startwork.StepInstall || s.Done {
+			continue
+		}
+		if slices.ContainsFunc(p.Steps, func(w startwork.Step) bool { return w.Kind == startwork.StepWorktree && w.Repo == s.Repo && w.Done }) {
+			return true
+		}
+	}
+	return false
 }
 
 // localSteps counts the steps the list marks `+ local`: git work and the

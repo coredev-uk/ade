@@ -645,10 +645,13 @@ sequenceDiagram
   A->>F: relates_to link + "Parent:" reference (+ work item hierarchy parent on GitLab, if allowed)
   A->>F: create branch 412-rate-limit-export + draft MR (Closes #412, mentions parent)
   A->>G: fetch, worktree add --track ~/ade/acme/api/412-rate-limit-export, post_worktree hooks
+  A->>G: install hooks in the new worktree (repos.<r>.hooks.install, in its dev shell)
   A->>G: open workspace tab (layout from manifest)
 ```
 
 One confirm screen shows every write before it happens. It is idempotent: re‑running detects an existing child, branch, or MR and resumes from the next missing step.
+
+**`s` on work already started** (the item's stage is past *assigned*) skips the questions: ADE looks for the work with the dialog's defaults first, and when nothing is left to write to the forge it runs at once. A worktree missing on this machine (work started elsewhere, or a tree removed with `git worktree remove` or `rm -rf`) is fetched and added, the repo's install hooks run in it, and the workspace tab opens there; when the tree exists and its install is current, the tab simply opens and the dialog closes. The confirm screen shows first when the plan carries a warning, or when the install is due in a tree that already exists (a lockfile changed: the tree may hold running services). Anything still to be written (an MR the default mode would open, a label move under `labels.workflow.sync = "auto"`) opens the dialog as for new work, and the palette's "Start work: choose repos, mode, branches" always does (a sibling repo, a pinned branch, Browse, the main pane, the label under `ask`).
 
 **The Start work dialog is a short flow, not a single yes/no:**
 

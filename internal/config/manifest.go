@@ -169,7 +169,8 @@ type Hooks struct {
 	PostWorktree []string `toml:"post_worktree"`
 	// Install are shell commands that set a worktree up for running (`npm ci`).
 	// ADE runs them in every worktree of the repo a workspace uses, inside the
-	// repo's dev shell, when the workspace first opens and on `ade ws install`.
+	// repo's dev shell, when the workspace first opens and on `ade ws install`,
+	// and start work runs them in the worktree it adds or opens.
 	Install []string `toml:"install"`
 }
 

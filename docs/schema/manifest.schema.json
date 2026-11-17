@@ -238,9 +238,9 @@
             "additionalProperties": false,
             "properties": {
               "install": {
-                "description": "Shell commands that set a worktree up (npm ci). Run in each worktree of this repo a workspace uses, inside the repo's dev shell, in the services tab when the workspace first opens (background mode), and on ade ws install and ade ws up in either mode; re-run only when the commands or the worktree's lockfiles change. Runs with ADE's environment: same trust as post_worktree.",
+                "description": "Shell commands that set a worktree up (npm ci). Run in each worktree of this repo a workspace uses, inside the repo's dev shell, in the services tab when the workspace first opens (background mode), and on ade ws install and ade ws up in either mode; start work also runs them in the worktree it adds or opens, before the workspace opens. Re-run only when the commands or the worktree's lockfiles change. Runs with ADE's environment: same trust as post_worktree.",
                 "items": {
-                  "description": "Shell commands that set a worktree up (npm ci). Run in each worktree of this repo a workspace uses, inside the repo's dev shell, in the services tab when the workspace first opens (background mode), and on ade ws install and ade ws up in either mode; re-run only when the commands or the worktree's lockfiles change. Runs with ADE's environment: same trust as post_worktree.",
+                  "description": "Shell commands that set a worktree up (npm ci). Run in each worktree of this repo a workspace uses, inside the repo's dev shell, in the services tab when the workspace first opens (background mode), and on ade ws install and ade ws up in either mode; start work also runs them in the worktree it adds or opens, before the workspace opens. Re-run only when the commands or the worktree's lockfiles change. Runs with ADE's environment: same trust as post_worktree.",
                   "type": "string"
                 },
                 "type": "array"

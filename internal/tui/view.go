@@ -579,7 +579,7 @@ func helpGroups(full bool) []helpGroup {
 		}},
 		{"Selected item", [][2]string{
 			{"enter", "open the item's MR page (the MR itself for a review request)"},
-			{"s", "start work: child issue, branch, worktree, draft MR"},
+			{"s", "start work: child issue, branch, worktree, draft MR; on started work, opens its worktree (added and installed when missing)"},
 			{"M", "create the MR for work already started"},
 			{"c", "classify: suggest missing type/app labels (added on confirm)"},
 			{"R", "research: a stored, background AI research of the issue (cost shown first; the answer is kept in the item's record and never bought twice)"},

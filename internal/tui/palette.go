@@ -142,7 +142,8 @@ func (m model) paletteEntries() []palEntry {
 			cmd := m.openHomeRow()
 			return m, cmd
 		}},
-		pressEntry("Start work", "s", "ade start", true),
+		pressEntry("Start work (on started work: open its worktree)", "s", "ade start", true),
+		{name: "Start work: choose repos, mode, branches", cli: "ade start <ref> --repo <repo> --mode <mode>", needHome: true, run: func(m model) (model, tea.Cmd) { return m.openStartAsk() }},
 		pressEntry("Create the MR for started work", "M", "ade mr create", true),
 		pressEntry("Classify: suggest type and app labels", "c", "ade ai classify", true),
 		{name: "AI digest of new comments", cli: "ade ai digest <ref>", needHome: true, run: func(m model) (model, tea.Cmd) { return m.openAIText(aiTextDigest) }},

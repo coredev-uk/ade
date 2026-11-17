@@ -1073,3 +1073,118 @@ func TestOnlyChildCreatesJustTheLinkedChild(t *testing.T) {
 		t.Fatalf("second run: %v, created %d, writes %d→%d", err, res.Created(), before, h.mutations())
 	}
 }
+
+// stepOutcome is the outcome of the first step of kind in res, "" when none.
+func stepOutcome(res startwork.Result, kind startwork.StepKind) (outcome, errText string) {
+	for _, s := range res.Steps {
+		if s.Kind == kind {
+			return s.Outcome, s.Error
+		}
+	}
+	return "", ""
+}
+
+// withInstall gives api install hooks and the harness a data directory for
+// their markers.
+func withInstall(h *harness, cmds ...string) {
+	h.app.Paths.DataDir = filepath.Join(h.dir, "data")
+	r := h.m.Repos["api"]
+	r.Hooks.Install = cmds
+	h.m.Repos["api"] = r
+}
+
+// Work started elsewhere (or whose tree was removed) is picked up again: the
+// re-run writes nothing to the forge, adds the worktree, runs the repo's
+// install hooks in it and opens the workspace there.
+func TestRerunAddsTheMissingWorktreeAndInstallsIt(t *testing.T) {
+	h := newHarness(t, fake.Free)
+	// The projects root is reached through a symlink (~/ade on another disk):
+	// the install is remembered under the tree's real path, as workspaces and
+	// `git worktree list` name it, so the next run finds it done.
+	link := filepath.Join(h.dir, "root-link")
+	if err := os.Symlink(h.app.Root, link); err != nil {
+		t.Fatal(err)
+	}
+	h.app.Root = link
+	_, first, err := h.start(3, draftApi())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree := target(t, first, "api").Worktree
+	// Deleted outside git: git still lists it until a prune.
+	if err := os.RemoveAll(tree); err != nil {
+		t.Fatal(err)
+	}
+	withInstall(h, "echo run >> .installed")
+	var opened []string
+	h.env.Workspace = func(_ context.Context, req startwork.WorkspaceRequest) error {
+		if _, err := os.Stat(filepath.Join(req.Worktree, ".installed")); err != nil {
+			t.Errorf("workspace opened before the install ran: %v", err)
+		}
+		opened = append(opened, req.Worktree)
+		return nil
+	}
+
+	before := h.writes()
+	plan, res, err := h.start(3, draftApi())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Writes() != 0 || h.writes() != before {
+		t.Errorf("re-run planned %d forge writes and made %d", plan.Writes(), h.writes()-before)
+	}
+	if o, _ := stepOutcome(res, startwork.StepWorktree); o != startwork.OutcomeCreated {
+		t.Errorf("worktree step %q, want created", o)
+	}
+	if o, e := stepOutcome(res, startwork.StepInstall); o != startwork.OutcomeCreated {
+		t.Errorf("install step %q (%s), want created", o, e)
+	}
+	if got := target(t, res, "api").Worktree; got != tree || len(opened) != 1 || opened[0] != tree {
+		t.Errorf("worktree %s, workspace opened on %v, want %s", got, opened, tree)
+	}
+	if res.Reopened() {
+		t.Error("a run that added the tree counts as a plain reopen")
+	}
+	if !slices.Contains(h.auditActions(), "git.hook") {
+		t.Errorf("install command not audited: %v", h.auditActions())
+	}
+
+	// The install is remembered: the next run only opens the workspace.
+	plan, res, err = h.start(3, draftApi())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Pending() != 0 || !res.Reopened() {
+		t.Errorf("third run pending=%d reopened=%v: %+v", plan.Pending(), res.Reopened(), res.Steps)
+	}
+	if o, _ := stepOutcome(res, startwork.StepInstall); o != startwork.OutcomeExists {
+		t.Errorf("install step %q on the third run, want exists", o)
+	}
+	if b, err := os.ReadFile(filepath.Join(tree, ".installed")); err != nil || string(b) != "run\n" {
+		t.Errorf(".installed = %q, %v: want the hooks to have run once", b, err)
+	}
+}
+
+// A failing install fails its step only: the tree is usable and the workspace
+// still opens, and the error says where to see the output.
+func TestFailedInstallStillOpensTheWorkspace(t *testing.T) {
+	h := newHarness(t, fake.Free)
+	withInstall(h, "exit 3")
+	var opened int
+	h.env.Workspace = func(context.Context, startwork.WorkspaceRequest) error { opened++; return nil }
+	_, res, err := h.start(3, draftApi())
+	if err == nil || !strings.Contains(err.Error(), "ade ws install") {
+		t.Fatalf("err = %v, want the failed install with its hint", err)
+	}
+	if o, _ := stepOutcome(res, startwork.StepInstall); o != startwork.OutcomeFailed {
+		t.Errorf("install step %q, want failed", o)
+	}
+	if o, _ := stepOutcome(res, startwork.StepWorkspace); o != startwork.OutcomeCreated || opened != 1 {
+		t.Errorf("workspace step %q, opened %d times", o, opened)
+	}
+	// The next start tries again.
+	plan, _, _ := h.start(3, draftApi())
+	if i := slices.IndexFunc(plan.Steps, func(s startwork.Step) bool { return s.Kind == startwork.StepInstall }); i < 0 || plan.Steps[i].Done {
+		t.Errorf("install step after a failure: %+v", plan.Steps)
+	}
+}

@@ -24,6 +24,7 @@ import (
 	"github.com/coredev-uk/ade/internal/forge/gitlab"
 	"github.com/coredev-uk/ade/internal/forge/gitlab/fake"
 	"github.com/coredev-uk/ade/internal/forgesync"
+	"github.com/coredev-uk/ade/internal/git"
 	"github.com/coredev-uk/ade/internal/notify"
 	"github.com/coredev-uk/ade/internal/paths"
 	"github.com/coredev-uk/ade/internal/startwork"
@@ -922,4 +923,116 @@ func TestStartDialogBranchKeyPinsARepoBranch(t *testing.T) {
 	}
 	e.want("branch second-set (new)", "create branch second-set from main")
 	e.wantNot("branch " + startwork.ChildIIDPlaceholder + "-retry (new)")
+}
+
+// `s` on started work opens it without the dialog's questions: a missing
+// worktree is added and its install hooks run (the done view says so), and
+// when everything exists the dialog closes as the tab opens.
+func TestStartOnStartedWorkOpensItsWorktree(t *testing.T) {
+	e := newSWEnvWith(t, func(s string) string {
+		out := strings.Replace(s, "[repos.web]", "[repos.api.hooks]\ninstall = [\"echo run >> .installed\"]\n\n[repos.web]", 1)
+		if out == s {
+			t.Fatal("sandbox manifest has no [repos.web] table to insert before")
+		}
+		return out
+	})
+	e.app.Paths.DataDir = t.TempDir()
+	var opened []string
+	swWorkspace = func(*app.App) func(context.Context, startwork.WorkspaceRequest) error {
+		return func(_ context.Context, req startwork.WorkspaceRequest) error {
+			opened = append(opened, req.Worktree)
+			return nil
+		}
+	}
+	e.selectRow(trk(3).String())
+	e.press("s", "enter", "enter")
+	if e.m.sw == nil || e.m.sw.stage != swDone || e.m.sw.err != nil {
+		t.Fatalf("start work did not finish: %+v", e.m.sw)
+	}
+	tree := e.m.sw.result.Targets[0].Worktree
+	e.press("enter")
+
+	// The tree goes (work started on another machine looks the same), and
+	// the row says the work has started.
+	if _, err := (git.Client{}).Run(context.Background(), tree, "worktree", "remove", "--force", tree); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(tree, ".installed")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+	e.m.homeRows[e.m.homeSel].item.Stage = domain.StageDraft
+	before, opens := e.writes(), len(opened)
+	e.press("s")
+	if e.m.sw == nil || e.m.sw.stage != swDone || e.m.sw.err != nil {
+		t.Fatalf("s on started work: %+v", e.m.sw)
+	}
+	if e.writes() != before {
+		t.Error("reopening started work wrote to the forge")
+	}
+	if b, err := os.ReadFile(filepath.Join(tree, ".installed")); err != nil || string(b) != "run\n" {
+		t.Errorf("install hooks did not run once in the new tree: %q %v", b, err)
+	}
+	if len(opened) != opens+1 || opened[len(opened)-1] != tree {
+		t.Errorf("workspace opened on %v, want %s", opened[opens:], tree)
+	}
+	e.want("created", "worktree", "install hooks of api")
+	e.press("enter")
+
+	// Everything exists now: the tab opens and the dialog is gone.
+	e.press("s")
+	if e.m.sw != nil {
+		t.Errorf("dialog still open after reopening: stage %v warn %q", e.m.sw.stage, e.m.sw.warn)
+	}
+	if len(opened) != opens+2 {
+		t.Errorf("workspace opened %d times, want %d", len(opened), opens+2)
+	}
+	if e.writes() != before {
+		t.Error("reopening started work wrote to the forge")
+	}
+
+	// The palette's full dialog still asks, to add a repo or pin a branch.
+	next, cmd := e.m.openStartAsk()
+	e.m = next
+	e.settle(cmd)
+	if e.m.sw == nil || e.m.sw.stage != swChoose {
+		t.Fatalf("full dialog stage = %+v, want choose", e.m.sw)
+	}
+	e.press("esc")
+
+	// A lockfile changed in the existing tree: the install is due again, but
+	// the tree may be in use, so the confirm screen asks first.
+	if err := os.WriteFile(filepath.Join(tree, "go.sum"), []byte("changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.press("s")
+	if e.m.sw == nil || e.m.sw.stage != swConfirm {
+		t.Fatalf("stage = %+v, want confirm before installing in an existing tree", e.m.sw)
+	}
+	e.want("run install hooks in api")
+	e.press("enter")
+	if b, err := os.ReadFile(filepath.Join(tree, ".installed")); err != nil || string(b) != "run\nrun\n" {
+		t.Errorf("confirmed install did not run again: %q %v", b, err)
+	}
+}
+
+// Started work with a forge write left (here the MR of Branch only work) still
+// asks: the dialog opens on its choices.
+func TestStartOnStartedWorkWithAWriteLeftAsks(t *testing.T) {
+	e := newSWEnv(t)
+	e.selectRow(trk(3).String())
+	e.press("s", "m") // Branch only
+	e.press("enter", "enter")
+	if e.m.sw == nil || e.m.sw.stage != swDone || e.m.sw.err != nil {
+		t.Fatalf("branch only did not finish: %+v", e.m.sw)
+	}
+	e.press("enter")
+	e.m.homeRows[e.m.homeSel].item.Stage = domain.StageBranch
+	before := e.writes()
+	e.press("s")
+	if e.m.sw == nil || e.m.sw.stage != swChoose {
+		t.Fatalf("stage = %+v, want the choose stage (the default mode opens an MR)", e.m.sw)
+	}
+	if e.writes() != before {
+		t.Error("looking for the started work wrote to the forge")
+	}
 }

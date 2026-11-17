@@ -18,6 +18,7 @@ import (
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/git"
 	"github.com/coredev-uk/ade/internal/store"
+	"github.com/coredev-uk/ade/internal/workspace"
 )
 
 // Outcomes of a step.
@@ -82,6 +83,21 @@ func (r Result) Created() int {
 		}
 	}
 	return n
+}
+
+// Reopened reports that everything existed already and the workspace tab
+// opened (or was focused) on it: started work picked up again.
+func (r Result) Reopened() bool {
+	opened := false
+	for _, s := range r.Steps {
+		switch {
+		case s.Kind == StepWorkspace && s.Outcome == OutcomeCreated:
+			opened = true
+		case s.Outcome != OutcomeExists:
+			return false
+		}
+	}
+	return opened
 }
 
 // Failed lists the failed steps' errors.
@@ -244,6 +260,8 @@ func (e *Env) run(ctx context.Context, p Plan, m *config.Manifest, rt *runtime, 
 		err = e.createMR(ctx, p, m, rt, sr, res)
 	case StepWorktree:
 		err = e.addWorktree(ctx, p, m, rt, sr)
+	case StepInstall:
+		e.install(ctx, p, m, rt, sr)
 	case StepWorkspace:
 		err = e.openWorkspace(ctx, p, m, rt, sr, res, rts)
 	}
@@ -528,6 +546,39 @@ func (e *Env) runHooks(ctx context.Context, p Plan, m *config.Manifest, repo, di
 	}
 }
 
+// install runs the repo's install hooks in its worktree, inside the repo's dev
+// shell, as `ade ws install` does (same marker, so the workspace's services tab
+// finds them done). A failure is the step's, not the repo's: the tree is
+// usable, the workspace still opens, and the next start runs them again.
+func (e *Env) install(ctx context.Context, p Plan, m *config.Manifest, rt *runtime, sr *StepResult) {
+	if rt.worktree == "" {
+		sr.Outcome, sr.Error = OutcomeSkipped, "no worktree to install in"
+		return
+	}
+	mgr, err := workspace.NewManager(e.App)
+	if err != nil {
+		sr.Outcome, sr.Error = OutcomeFailed, err.Error()
+		return
+	}
+	t, ok := mgr.TreeInstallTarget(m, rt.tp.Target.Name, rt.worktree)
+	if !ok {
+		sr.Outcome = OutcomeSkipped
+		return
+	}
+	r := mgr.Install(ctx, t, workspace.InstallOptions{Out: e.InstallOut, Audit: func(t workspace.InstallTarget, cmd string, err error) {
+		e.audit(p, "git.hook", t.Tree, map[string]any{"hook": "install", "cmd": cmd, "repo": t.Repo}, "", err)
+	}})
+	sr.Ref = rt.worktree
+	switch r.Outcome {
+	case workspace.InstallUpToDate:
+		sr.Outcome = OutcomeExists
+	case workspace.InstallFailed:
+		sr.Outcome, sr.Error = OutcomeFailed, r.Detail+"; `ade ws install "+rt.worktree+"` shows the output"
+	default:
+		sr.Outcome = OutcomeCreated
+	}
+}
+
 func (e *Env) openWorkspace(ctx context.Context, p Plan, m *config.Manifest, rt *runtime, sr *StepResult, res *Result, rts map[string]*runtime) error {
 	if e.Workspace == nil {
 		sr.Outcome = OutcomeSkipped
@@ -589,13 +640,21 @@ func (e *Env) finish(p Plan, res Result) {
 	if p.in.Choices.OnlyChild {
 		kind, title = "work.child", "Child issue for "+p.Item.String()
 	}
-	if res.Created() == 0 {
+	// A Browse tree is the baseline, which nearly always exists: opening it is
+	// browsing, not resuming started work.
+	reopened := res.Reopened() && p.Mode != ModeBrowse
+	resumed := res.Created() == 0 || reopened
+	switch {
+	case res.Created() == 0:
 		kind = "work.resumed"
 		title = "Nothing to do for " + p.Item.String() + ": already started"
+	case reopened:
+		kind = "work.resumed"
+		title = "Opened the workspace of " + p.Item.String() + ": already started"
 	}
 	ev := events.New(kind, events.Success, title+" · "+strings.Join(parts, " · "))
 	ev.Project, ev.Subject = p.Project, p.Item.String()
-	ev.Transient = res.Created() == 0
+	ev.Transient = resumed
 	for _, t := range res.Targets {
 		if t.MRURL != "" {
 			ev.Link = t.MRURL
