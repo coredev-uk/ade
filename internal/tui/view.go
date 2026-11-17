@@ -556,7 +556,7 @@ func helpGroups(full bool) []helpGroup {
 				{"n = r", "notes; set weight; restart blocked services"},
 			}},
 			{"Pages", [][2]string{
-				{"S V", "standup; sprint review"},
+				{"S V", "standup; sprint retro"},
 				{"b L", "budget; audit log"},
 				{"i U", "notifications; refresh now"},
 			}},
@@ -598,7 +598,7 @@ func helpGroups(full bool) []helpGroup {
 		}},
 		{"Pages", [][2]string{
 			{"S", "standup: yesterday, today, blockers"},
-			{"V", "sprint review: committed, done, carried, velocity"},
+			{"V", "sprint retro: your done, in progress, not started, velocity; m: whole team"},
 			{"b", "budget: caps, spend by day, feature and model"},
 			{"L", "log: the audit trail"},
 			{"i", "notifications; enter goes to the subject, r/R mark read"},

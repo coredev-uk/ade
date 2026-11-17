@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Sprint retro:** `V` now opens on your own work in the sprint instead of everyone's: what you completed, what is in progress and how far it got (`in review`, `draft MR`, `branch`, with its open MRs), what you have not started, and your own velocity. The team's burn-down and epics are left out; `m` switches to the whole team's review. Both views, and `ade sprint review` with or without `--mine`, now split unfinished work into in progress and not started instead of one "carried" list (`--json` adds `progressed`, `not_started` and `progress_unknown` totals, and `stage`, `progressed` and `open_mrs` per item). With `--mine` the velocity is yours, and the AI narrative is a personal retro: Outcome, Completed, In progress, Not started, Velocity.
 - **Work items with several child issues** (one change across several repos, each with its own MR):
   - The stage is the slowest child's: one merged MR no longer marks the item merged while another child has no MR or an open one. The first sync after the upgrade can therefore move such an item's stage back, and with it its workflow label (`labels.workflow.sync`: written under `auto`, proposed under `ask`).
   - The court and reason consider every open MR and every child without an MR, and name the one they are about (`web!7 · pipeline failed · +1 more`, `docs#2 · no MR yet`). Your own move on an upstream MR (`api!1 · draft MR · mark ready`) now outranks `waits on api!1` there. A child someone else holds reads `docs#2 · no MR yet · Sam` in their court, not yours.

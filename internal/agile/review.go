@@ -45,11 +45,18 @@ type ReviewItem struct {
 	Done     bool       `json:"done"`
 	KeptOpen bool       `json:"kept_open,omitempty"` // done by its workflow label, tracker issue still open
 	DoneAt   *time.Time `json:"done_at,omitempty"`
-	Added    bool       `json:"added,omitempty"` // entered the sprint after it started
-	AddedAt  time.Time  `json:"added_at"`
-	Epic     string     `json:"epic,omitempty"`
-	Assigned bool       `json:"assigned"` // to you
-	MRs      []string   `json:"merged_mrs,omitempty"`
+	// Stage is how far an unfinished item got and OpenMRs its open MRs, as the
+	// sync cache sees them now; Stage is empty when the cache does not hold the
+	// item. Progressed marks one on which work began (a child issue, a branch
+	// or an MR).
+	Stage      string    `json:"stage,omitempty"`
+	Progressed bool      `json:"progressed,omitempty"`
+	OpenMRs    []string  `json:"open_mrs,omitempty"`
+	Added      bool      `json:"added,omitempty"` // entered the sprint after it started
+	AddedAt    time.Time `json:"added_at"`
+	Epic       string    `json:"epic,omitempty"`
+	Assigned   bool      `json:"assigned"` // to you
+	MRs        []string  `json:"merged_mrs,omitempty"`
 	// AssignedAt/MergedAt/CycleHours measure assigned → merged (PLAN 6.4).
 	// MergedAt is the last merged MR of the item; CycleHours is nil without a
 	// merge. AssignedFrom says whether AssignedAt is the forge's assignment
@@ -104,14 +111,18 @@ type Review struct {
 	Project string        `json:"project"`
 	Sprint  domain.Sprint `json:"sprint"`
 	Basis   string        `json:"basis"`
-	Mine    bool          `json:"mine,omitempty"` // only items assigned to you
+	Mine    bool          `json:"mine,omitempty"` // only items assigned to you: a personal retro
 
 	// Committed is what the sprint held at its start; Added came in later.
-	// Done and Carried split Committed+Added.
-	Committed Totals `json:"committed"`
-	Added     Totals `json:"added"`
-	Done      Totals `json:"done"`
-	Carried   Totals `json:"carried"`
+	// Done and Carried split Committed+Added. Progressed, NotStarted and
+	// Unknown split Carried: work began, did not, or the cache cannot say.
+	Committed  Totals `json:"committed"`
+	Added      Totals `json:"added"`
+	Done       Totals `json:"done"`
+	Carried    Totals `json:"carried"`
+	Progressed Totals `json:"progressed"`
+	NotStarted Totals `json:"not_started"`
+	Unknown    Totals `json:"progress_unknown"`
 
 	Items     []ReviewItem `json:"items"`
 	Epics     []EpicGroup  `json:"epics,omitempty"`
@@ -148,6 +159,14 @@ type ReviewInput struct {
 	// to their creation time). Both feed the cycle time.
 	MergedAt map[forge.Ref]time.Time
 	Assigned map[forge.Ref]time.Time
+	// Progress is, per cached tracker issue, how far its work has got.
+	Progress map[forge.Ref]Progress
+}
+
+// Progress is how far a tracker issue's work has got, from the sync cache.
+type Progress struct {
+	Stage   domain.Stage
+	OpenMRs []string // short refs
 }
 
 // PastSprint is a closed sprint with its issues, for velocity.
@@ -200,6 +219,8 @@ func BuildReview(in ReviewInput) Review {
 		it.Added = !it.AddedAt.Before(opening)
 		if it.Done {
 			it.DoneAt = doneAt(is, in.Manifest, h)
+		} else if p, ok := in.Progress[is.Ref]; ok {
+			it.Stage, it.Progressed, it.OpenMRs = p.Stage.String(), p.Stage > domain.StageAssigned, p.OpenMRs
 		}
 		if t, ok := in.MergedAt[is.Ref]; ok {
 			it.MergedAt = &t
@@ -224,6 +245,14 @@ func BuildReview(in ReviewInput) Review {
 			r.Done.add(it.Weight)
 		} else {
 			r.Carried.add(it.Weight)
+			switch {
+			case it.Progressed:
+				r.Progressed.add(it.Weight)
+			case it.Stage != "":
+				r.NotStarted.add(it.Weight)
+			default:
+				r.Unknown.add(it.Weight)
+			}
 		}
 	}
 	var cycles []float64
@@ -236,7 +265,19 @@ func BuildReview(in ReviewInput) Review {
 	r.Basis = basisOf(r.Committed.Weighted + r.Added.Weighted)
 	r.Epics = epicGroups(r.Items)
 	r.Burndown = burndown(r.Items, in, r.Basis)
-	r.Velocity = velocity(in.Past, in.Manifest)
+	past := in.Past
+	if in.Mine { // your velocity: only what you held in those sprints
+		past = make([]PastSprint, len(in.Past))
+		for i, p := range in.Past {
+			past[i] = PastSprint{Sprint: p.Sprint}
+			for _, is := range p.Issues {
+				if assignedTo(is, in.Me) {
+					past[i].Issues = append(past[i].Issues, is)
+				}
+			}
+		}
+	}
+	r.Velocity = velocity(past, in.Manifest)
 	return r
 }
 

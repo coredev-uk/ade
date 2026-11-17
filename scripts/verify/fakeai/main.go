@@ -24,6 +24,17 @@ The remaining carried work is mostly the scheduled exports and the webhook retri
 Two items have no weight and are counted as items, not as zero effort.
 Velocity over the last sprints is about 3.5 weight, so the carry-over is the thing to talk about.`
 
+const retro = `**Outcome**
+- You finished 8w of the 13w you took on; the export hotfix arrived mid-sprint.
+**Completed**
+- Wed 4 Nov: tracker#1 done, api!1 merged.
+**In progress**
+- tracker#5 is in review on api!9.
+**Not started**
+- tracker#6.
+**Velocity**
+- In line with your last sprints, about 4w each.`
+
 func main() {
 	http.HandleFunc("/chat/completions", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
@@ -33,8 +44,13 @@ func main() {
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		text := standup
-		if len(req.Messages) > 0 && strings.Contains(req.Messages[0].Content, "sprint review") {
-			text = sprint
+		if len(req.Messages) > 0 {
+			switch sys := req.Messages[0].Content; {
+			case strings.Contains(sys, "sprint retro"): // "personal sprint retrospective"
+				text = retro
+			case strings.Contains(sys, "sprint review"):
+				text = sprint
+			}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{

@@ -266,19 +266,72 @@ func TestZeroWeightIsUnweighted(t *testing.T) {
 }
 
 func TestRenderReviewMarkdownExport(t *testing.T) {
-	out := RenderReview(BuildReview(reviewFixture()), Markdown)
+	in := reviewFixture()
+	in.Progress = map[forge.Ref]Progress{
+		in.Issues[2].Ref: {Stage: domain.StageReview, OpenMRs: []string{"api!7"}},
+		in.Issues[3].Ref: {Stage: domain.StageAssigned},
+	}
+	out := RenderReview(BuildReview(in), Markdown)
 	for _, want := range []string{
 		"# Sprint review · Sprint 42 (2026-11-02 – 2026-11-13)",
 		"- Committed: 10w · 5 items (2 unweighted)",
 		"- Added mid-sprint: 8w · 1 item",
 		"- Done: 8w · 3 items (1 unweighted)",
-		"- Carried over: 10w · 3 items (1 unweighted)",
-		"tracker#2 · done (kept open) · 5w",
+		"- In progress: 2w · 1 item",
+		"- Not started: 0w · 1 item (1 unweighted)",
+		"- Carried, progress unknown: 8w · 1 item",
+		"## Burn-down", "## Completed", "## In progress", "## Not started", "## Carried, progress unknown",
+		"tracker#2 · done, kept open · 5w",
+		"tracker#3 · in review · 2w · issue C · open api!7",
+		"tracker#4 · not started · – · issue D",
 		"tracker#5 · carried · 8w · issue E · added mid-sprint",
-		"tracker#4 · carried · – · issue D",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("markdown lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestReviewSplitsUnfinishedByProgress(t *testing.T) {
+	in := reviewFixture()
+	in.Progress = map[forge.Ref]Progress{
+		in.Issues[0].Ref: {Stage: domain.StageDone},   // done wins over the cache
+		in.Issues[2].Ref: {Stage: domain.StageBranch}, // work began
+		in.Issues[3].Ref: {Stage: domain.StageAssigned},
+	}
+	r := BuildReview(in)
+	if want := (Totals{Count: 1, Weight: 2, Weighted: 1}); r.Progressed != want {
+		t.Errorf("progressed = %+v, want %+v", r.Progressed, want)
+	}
+	if want := (Totals{Count: 1, Unweighted: 1}); r.NotStarted != want {
+		t.Errorf("not started = %+v, want %+v", r.NotStarted, want)
+	}
+	if want := (Totals{Count: 1, Weight: 8, Weighted: 1}); r.Unknown != want {
+		t.Errorf("unknown = %+v, want %+v (not cached is not 'not started')", r.Unknown, want)
+	}
+	if r.Progressed.Count+r.NotStarted.Count+r.Unknown.Count != r.Carried.Count {
+		t.Error("progressed + not started + unknown differs from carried")
+	}
+}
+
+func TestRetroIsYoursOnly(t *testing.T) {
+	in := reviewFixture()
+	in.Issues[2].Assignees = []forge.User{rae}
+	in.Issues[2].Epic = "Self-serve exports"
+	in.Past = []PastSprint{pastSprint("Sprint 41", "2026-10-19", "2026-10-30",
+		iss(1, weight(4), "closed"), forge.Issue{Ref: forge.Ref{Project: "g/tracker", IID: 9}, State: "closed", Weight: weight(9), Assignees: []forge.User{rae}})}
+	in.Mine = true
+	r := BuildReview(in)
+	if len(r.Velocity.Sprints) != 1 || r.Velocity.Sprints[0].Done.Weight != 4 {
+		t.Fatalf("velocity = %+v, want only your 4w", r.Velocity.Sprints)
+	}
+	out := RenderReview(r, Markdown)
+	if !strings.Contains(out, "# Sprint retro · Sprint 42") || !strings.Contains(out, "## Your velocity") || strings.Contains(out, "tracker#3") {
+		t.Errorf("retro:\n%s", out)
+	}
+	for _, team := range []string{"Burn-down", "By epic"} {
+		if strings.Contains(out, team) {
+			t.Errorf("retro shows the team's %s:\n%s", team, out)
 		}
 	}
 }

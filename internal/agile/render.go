@@ -114,10 +114,10 @@ func plural(n int, noun string) string {
 	return fmt.Sprintf("%d %ss", n, noun)
 }
 
-// RenderReview renders the sprint review.
+// RenderReview renders the sprint review; with Mine, a personal retro.
 func RenderReview(r Review, f Format) string {
 	w := &writer{md: f == Markdown}
-	w.heading(1, fmt.Sprintf("Sprint review · %s (%s – %s)", r.Sprint.Title, r.Sprint.Start, r.Sprint.Due))
+	w.heading(1, fmt.Sprintf("%s · %s (%s – %s)", ReviewTitle(r), r.Sprint.Title, r.Sprint.Start, r.Sprint.Due))
 	w.line("")
 	if r.Narrative != "" {
 		w.line("%s", r.Narrative)
@@ -132,20 +132,24 @@ func RenderReview(r Review, f Format) string {
 	w.bullet("Committed: %s", FormatTotals(r.Committed, r.Basis))
 	w.bullet("Added mid-sprint: %s", FormatTotals(r.Added, r.Basis))
 	w.bullet("Done: %s", FormatTotals(r.Done, r.Basis))
-	w.bullet("Carried over: %s", FormatTotals(r.Carried, r.Basis))
+	w.bullet("In progress: %s", FormatTotals(r.Progressed, r.Basis))
+	w.bullet("Not started: %s", FormatTotals(r.NotStarted, r.Basis))
+	if r.Unknown.Count > 0 {
+		w.bullet("Carried, progress unknown: %s", FormatTotals(r.Unknown, r.Basis))
+	}
 	w.bullet("Cycle time (assigned → merged): %s", cycleSummaryText(r.Cycle))
 
 	w.line("")
-	w.heading(2, "Velocity")
+	w.heading(2, VelocityTitle(r))
 	renderVelocity(w, r.Velocity)
 
-	if len(r.Burndown) > 0 {
+	if !r.Mine && len(r.Burndown) > 0 {
 		w.line("")
 		w.heading(2, "Burn-down (remaining "+r.Basis+")")
 		renderBurndown(w, r.Burndown)
 	}
 
-	if len(r.Epics) > 0 {
+	if !r.Mine && len(r.Epics) > 0 {
 		w.line("")
 		w.heading(2, "By epic")
 		for _, g := range r.Epics {
@@ -157,13 +161,15 @@ func RenderReview(r Review, f Format) string {
 		}
 	}
 
-	w.line("")
-	w.heading(2, "Items")
-	for _, it := range r.Items {
-		w.bullet("%s", itemLine(it))
-		if it.Narrative != "" && w.md { // per-parent AI narrative: a Markdown export feature
-			for _, l := range strings.Split(it.Narrative, "\n") {
-				w.line("  %s", strings.TrimSpace(l))
+	for _, g := range ItemGroups(r.Items) {
+		w.line("")
+		w.heading(2, g.Title)
+		for _, it := range g.Items {
+			w.bullet("%s", itemLine(it))
+			if it.Narrative != "" && w.md { // per-parent AI narrative: a Markdown export feature
+				for _, l := range strings.Split(it.Narrative, "\n") {
+					w.line("  %s", strings.TrimSpace(l))
+				}
 			}
 		}
 	}
@@ -174,14 +180,87 @@ func RenderReview(r Review, f Format) string {
 	return w.String()
 }
 
-func itemLine(it ReviewItem) string {
-	state := "carried"
+// ReviewTitle names the report: a personal retro with Mine, else the team's
+// sprint review.
+func ReviewTitle(r Review) string {
+	if r.Mine {
+		return "Sprint retro"
+	}
+	return "Sprint review"
+}
+
+// VelocityTitle heads the velocity: yours with Mine, else the team's.
+func VelocityTitle(r Review) string {
+	if r.Mine {
+		return "Your velocity"
+	}
+	return "Velocity"
+}
+
+// ItemGroup is one part of the review's item list.
+type ItemGroup struct {
+	Title string
+	Items []ReviewItem
+}
+
+// ItemGroups splits items into Completed, In progress, Not started and
+// Carried (unfinished, progress not cached), in that order and each in the
+// items' order; empty groups are left out.
+func ItemGroups(items []ReviewItem) []ItemGroup {
+	groups := []ItemGroup{{Title: "Completed"}, {Title: "In progress"}, {Title: "Not started"}, {Title: "Carried, progress unknown"}}
+	for _, it := range items {
+		i := 3
+		switch {
+		case it.Done:
+			i = 0
+		case it.Progressed:
+			i = 1
+		case it.Stage != "":
+			i = 2
+		}
+		groups[i].Items = append(groups[i].Items, it)
+	}
+	out := groups[:0]
+	for _, g := range groups {
+		if len(g.Items) > 0 {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
+// ItemState is an item's state word: done, how far an unfinished one got
+// ("in review"), "not started", or "carried" when the cache cannot say.
+func ItemState(it ReviewItem) string {
 	switch {
 	case it.Done && it.KeptOpen:
-		state = "done (kept open)"
+		return "done, kept open"
 	case it.Done:
-		state = "done"
+		return "done"
+	case it.Progressed:
+		return progressWord(it.Stage)
+	case it.Stage != "":
+		return "not started"
 	}
+	return "carried"
+}
+
+func progressWord(stage string) string {
+	switch stage {
+	case "draft":
+		return "draft MR"
+	case "ci":
+		return "in CI"
+	case "review":
+		return "in review"
+	case "done":
+		return "merged"
+	}
+	return stage
+}
+
+func itemLine(it ReviewItem) string {
+	state := ItemState(it)
 	weight := "–"
 	if it.Weight != nil {
 		weight = fmt.Sprintf("%dw", *it.Weight)
@@ -189,6 +268,9 @@ func itemLine(it ReviewItem) string {
 	line := fmt.Sprintf("%s · %s · %s · %s", short(it.Ref), state, weight, it.Title)
 	if it.Added {
 		line += " · added mid-sprint"
+	}
+	if len(it.OpenMRs) > 0 {
+		line += " · open " + strings.Join(it.OpenMRs, ", ")
 	}
 	if len(it.MRs) > 0 {
 		line += " · merged " + strings.Join(it.MRs, ", ")

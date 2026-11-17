@@ -14,7 +14,7 @@ import (
 const (
 	barW     = 24 // cells of a progress or burn-down bar
 	narrowW  = 100
-	keyColW  = 11
+	keyColW  = 13
 	labelPad = "   "
 )
 
@@ -22,7 +22,7 @@ const (
 func (m model) agileHeaderLeft() string {
 	name := "Standup"
 	if m.ag.kind == agileReview {
-		name = "Sprint review"
+		name = agile.ReviewTitle(agile.Review{Mine: !m.ag.team})
 	}
 	return stBold.Render("ADE") + "  " + stFaint.Render("home "+m.g.Sep+" worktrees "+m.g.Sep+" ") + stBold.Render(name)
 }
@@ -39,18 +39,19 @@ func (m model) agileFooter(w int) string {
 	case m.ag.kind == agileStandup:
 		return " " + keys("j/k", "scroll", "r", "reload", "n", "AI narrative", "y", "copy as Markdown", "esc", "back", "t", "home", "i", "notifications", "?", "keys", "q", "quit")
 	case w < 150: // the review's keys no longer fit whole below this
-		kv := append([]string{"j/k", "scroll", "[ ]", "sprint", "m", "mine", "J/K", "item", ">", "move", "M", "move mine"}, proj...)
+		kv := append([]string{"j/k", "scroll", "[ ]", "sprint", "m", reviewToggle(m.ag.team), "J/K", "item", ">", "move", "M", "move mine"}, proj...)
 		return " " + keys(append(kv, "esc", "back", "?", "keys")...)
 	}
-	kv := append([]string{"j/k", "scroll", "[ ]", "sprint", "m", "mine: " + onOff(m.ag.mine), "J/K", "carried item", ">", "move to next sprint", "M", "move mine"}, proj...)
+	kv := append([]string{"j/k", "scroll", "[ ]", "sprint", "m", reviewToggle(m.ag.team), "J/K", "unfinished item", ">", "move to next sprint", "M", "move mine"}, proj...)
 	return " " + keys(append(kv, "r", "reload", "n", "AI narrative", "y", "copy", "esc", "back", "?", "keys", "q", "quit")...)
 }
 
-func onOff(b bool) string {
-	if b {
-		return "on"
+// reviewToggle names what `m` switches to.
+func reviewToggle(team bool) string {
+	if team {
+		return "my retro"
 	}
-	return "off"
+	return "whole team"
 }
 
 // agileBody draws the open page, scrolled, to exactly w×h cells.
@@ -309,12 +310,12 @@ func (m model) reviewLines(w int) []string {
 	line := ink(r.Project)
 	guide := fmtSpan(m.g, r.Sprint.Start.String(), r.Sprint.Due.String()) + " " + g.Sep + " by " + r.Basis
 	if r.Mine {
-		guide += " " + g.Sep + " mine"
+		guide += " " + g.Sep + " your items"
 	}
 	if m.ag.loading {
 		guide = g.Sync + " refreshing " + g.Sep + " " + guide
 	}
-	out := []string{section("Sprint review "+g.Sep+" "+r.Project+" "+g.Sep+" "+r.Sprint.Title, guide, w, g)}
+	out := []string{section(agile.ReviewTitle(*r)+" "+g.Sep+" "+r.Project+" "+g.Sep+" "+r.Sprint.Title, guide, w, g)}
 	if m.ag.reviewErr != nil {
 		out = append(out, " "+stWarn.Render(g.Warn+" refresh failed: ")+m.ag.reviewErr.Error())
 	}
@@ -328,13 +329,21 @@ func (m model) reviewLines(w int) []string {
 		kv("Committed", g.T(agile.FormatTotals(r.Committed, r.Basis))),
 		kv("Added", g.T(agile.FormatTotals(r.Added, r.Basis))+stFaint.Render(" after the first day")),
 		kv("Done", stBold.Render(g.T(agile.FormatTotals(r.Done, r.Basis)))),
-		kv("Carried", g.T(agile.FormatTotals(r.Carried, r.Basis))),
+		kv("In progress", g.T(agile.FormatTotals(r.Progressed, r.Basis))),
+		kv("Not started", g.T(agile.FormatTotals(r.NotStarted, r.Basis))),
 	)
+	if r.Unknown.Count > 0 {
+		out = append(out, kv("Carried", g.T(agile.FormatTotals(r.Unknown, r.Basis))+stFaint.Render(" progress not cached")))
+	}
 	total := metric(r.Committed, r.Basis) + metric(r.Added, r.Basis)
 	out = append(out, labelPad+stFaint.Render(pad(m.g, "", keyColW))+bar(g, line, metric(r.Done, r.Basis), total)+"  "+scopeWords(r, total))
 
-	out = append(out, "", section("Velocity", velocityGuide(g, r.Velocity), w, g))
+	out = append(out, "", section(agile.VelocityTitle(*r), velocityGuide(g, r.Velocity), w, g))
 	out = append(out, m.velocityLines(r.Velocity, line)...)
+
+	if r.Mine { // a retro of your own work: the team's burn-down and epics are on `m`
+		return append(append(out, m.reviewGroupLines(r, line, w)...), warningLines(g, r.Warnings, w)...)
+	}
 
 	if len(r.Burndown) > 0 {
 		out = append(out, "", section("Burn-down", "remaining "+r.Basis+" at the end of each working day", w, g))
@@ -359,15 +368,25 @@ func (m model) reviewLines(w int) []string {
 		}
 	}
 
-	out = append(out, "", section("Items", fmt.Sprintf("%d done %s %d carried", r.Done.Count, g.Sep, r.Carried.Count), w, g))
+	out = append(out, m.reviewGroupLines(r, line, w)...)
+	out = append(out, warningLines(g, r.Warnings, w)...)
+	return out
+}
+
+// reviewGroupLines lists the items under Completed, In progress, Not started
+// and Carried (progress not cached), one status column across all of them.
+func (m model) reviewGroupLines(r *agile.Review, line lipgloss.Style, w int) []string {
 	statusW := 0
 	for _, it := range r.Items {
-		statusW = max(statusW, lipgloss.Width(itemStatus(it)))
+		statusW = max(statusW, lipgloss.Width(agile.ItemState(it)))
 	}
-	for _, it := range r.Items {
-		out = append(out, m.reviewItemLines(it, line, statusW, w)...)
+	var out []string
+	for _, grp := range agile.ItemGroups(r.Items) {
+		out = append(out, "", section(grp.Title, countWord(len(grp.Items), "item"), w, m.g))
+		for _, it := range grp.Items {
+			out = append(out, m.reviewItemLines(it, line, statusW, w)...)
+		}
 	}
-	out = append(out, warningLines(g, r.Warnings, w)...)
 	return out
 }
 
@@ -437,26 +456,21 @@ func (m model) velocityLines(v agile.Velocity, line lipgloss.Style) []string {
 	return out
 }
 
-func itemStatus(it agile.ReviewItem) string {
-	switch {
-	case it.Done && it.KeptOpen:
-		return "done, kept open"
-	case it.Done:
-		return "done"
-	}
-	return "carried"
-}
-
-// reviewItemLines is one sprint item: mark, status word (the column is as wide
+// reviewItemLines is one sprint item: mark, state word (the column is as wide
 // as the widest word present), ref, title and weight. What else is known of it
 // follows the title when it fits whole, else sits on a faint second line.
 func (m model) reviewItemLines(it agile.ReviewItem, line lipgloss.Style, statusW, w int) []string {
 	g := m.g
-	mark, word := stFaint.Render(g.Ahead), stFaint.Render(itemStatus(it))
-	if it.Done {
-		mark, word = line.Render(g.Done), itemStatus(it)
-	} else if sel, ok := m.selectedCarried(); ok && sel.Ref == it.Ref {
-		mark = stBold.Render(g.Selected) // the carried item `>` moves
+	state := agile.ItemState(it)
+	mark, word := stFaint.Render(g.Ahead), stFaint.Render(state)
+	switch {
+	case it.Done:
+		mark, word = line.Render(g.Done), state
+	case it.Progressed:
+		word = state
+	}
+	if sel, ok := m.selectedCarried(); ok && !it.Done && sel.Ref == it.Ref {
+		mark = stBold.Render(g.Selected) // the unfinished item `>` moves
 	}
 	weight := stFaint.Render(m.g.T("–"))
 	if it.Weight != nil {
@@ -467,6 +481,9 @@ func (m model) reviewItemLines(it agile.ReviewItem, line lipgloss.Style, statusW
 	var meta []string
 	if it.Added {
 		meta = append(meta, "added mid-sprint")
+	}
+	if len(it.OpenMRs) > 0 {
+		meta = append(meta, "open "+strings.Join(it.OpenMRs, ", "))
 	}
 	if len(it.MRs) > 0 {
 		meta = append(meta, "merged "+strings.Join(it.MRs, ", "))

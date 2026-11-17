@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Capture the Sprint review page (V) for visual review with VHS. Output:
+# Capture the Sprint retro page (V: your issues) for visual review with VHS. Output:
 # .impeccable/review/sprint-{desktop,narrow,nocolor}-<state>.png, states:
-# empty, loading, down (error), ready, confirm, off, populated, scrolled, narrative,
-# mine (your issues only), previous (Sprint 41), count (Sprint 40: nothing weighted).
+# empty, loading, down (error), ready, confirm, off, populated (your retro), scrolled,
+# narrative, team (m: the whole team's review), previous (Sprint 41), count (Sprint 40:
+# nothing weighted).
 SURF=sprint KEY=V
 . scripts/verify/capture-agile-lib.sh
 page_body() {
@@ -12,7 +13,7 @@ page_body() {
   printf 'Type "g"\nType "n"\n'
   snap 3500ms narrative
   printf 'Type "m"\n'
-  snap 2500ms mine
+  snap 2500ms team
   printf 'Type "m"\nType "["\n'
   snap 2500ms previous
   printf 'Type "["\n'

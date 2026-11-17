@@ -46,7 +46,7 @@ func (n *AINarrator) Narrate(ctx context.Context, s Standup) (string, error) {
 // facts are the review as Markdown plus a timeline of when items finished.
 func (n *AINarrator) NarrateReview(ctx context.Context, r Review) (string, error) {
 	r.Narrative, r.Warnings = "", nil
-	return n.run(ctx, ai.SprintReviewJob(r.Project, r.Sprint.Title, r.Sprint.Start.Time, RenderReview(r, Markdown)+reviewTimeline(r)))
+	return n.run(ctx, ai.SprintReviewJob(r.Project, r.Sprint.Title, r.Sprint.Start.Time, r.Mine, RenderReview(r, Markdown)+reviewTimeline(r)))
 }
 
 // reviewTimeline lists, earliest first, when items were finished and when
