@@ -55,8 +55,7 @@ func reviewFixture() *agile.Review {
 		NotStarted: agile.Totals{Count: 1, Unweighted: 1},
 		Items: []agile.ReviewItem{
 			{Ref: forge.Ref{Project: "g/tracker", IID: 2}, Title: "Upgrade export worker", Weight: w(5), Done: true, KeptOpen: true},
-			{Ref: forge.Ref{Project: "g/tracker", IID: 5}, Title: "Hotfix export crash", Weight: w(8), Added: true, MRs: []string{"api!4"},
-				Stage: "review", Progressed: true, OpenMRs: []string{"api!9"}},
+			{Ref: forge.Ref{Project: "g/tracker", IID: 5}, Title: "Hotfix export crash", Weight: w(8), Added: true, MRs: []string{"api!4"}, Stage: "review", Progressed: true, OpenMRs: []string{"api!9"}},
 			{Ref: forge.Ref{Project: "g/tracker", IID: 6}, Title: "Billing export times out", Stage: "assigned"},
 		},
 		Burndown: []agile.BurnPoint{{Date: "2026-11-02", Remaining: 10, Ideal: 9}, {Date: "2026-11-03", Remaining: 7, Ideal: 8}},
@@ -201,8 +200,10 @@ func TestReviewOpensAsYourRetro(t *testing.T) {
 	r.Mine = true
 	m.ag.review = r
 	out := ansi.Strip(m.agileBody(120, 60))
-	for _, want := range []string{"Sprint retro · demo · Sprint 42", "your items", "Your velocity",
-		"Completed", "In progress", "Not started", "in review", "open api!9", "whole team"} {
+	for _, want := range []string{
+		"Sprint retro · demo · Sprint 42", "your items", "Your velocity",
+		"Completed", "In progress", "Not started", "in review", "open api!9", "whole team",
+	} {
 		if !strings.Contains(out+m.agileFooter(160), want) {
 			t.Errorf("retro lacks %q:\n%s", want, out)
 		}
