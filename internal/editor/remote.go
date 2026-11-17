@@ -7,13 +7,19 @@ import (
 	"time"
 )
 
-// remoteCLIGlobs locate the VS Code server's remote CLI under $HOME, newest
-// server layout first. The integrated terminal puts one of them on PATH, but
-// a shell that outlives the window (a zellij session, tmux) or a process
-// started by another tool may not have it.
+// remoteCLIGlobs locate the editor server's remote CLI, newest server layout
+// first: VS Code's server under $HOME (`code`), then code-server's (`code-server`,
+// the browser VS Code a CDE serves when the desktop app cannot connect) in its
+// Coder module, install.sh and package locations. A leading "~/" is $HOME. The
+// integrated terminal puts one of them on PATH, but a shell that outlives the
+// window (a zellij session, tmux) or a process started by another tool may not
+// have it.
 var remoteCLIGlobs = []string{
-	".vscode-server/cli/servers/*/server/bin/remote-cli/code",
-	".vscode-server/bin/*/bin/remote-cli/code",
+	"~/.vscode-server/cli/servers/*/server/bin/remote-cli/code",
+	"~/.vscode-server/bin/*/bin/remote-cli/code",
+	"/tmp/code-server/lib/vscode/bin/remote-cli/code-server",
+	"~/.local/lib/code-server-*/lib/vscode/bin/remote-cli/code-server",
+	"/usr/lib/code-server/lib/vscode/bin/remote-cli/code-server",
 }
 
 // ipcSocketGlobs find the sockets VS Code's remote CLI talks to, relative to
@@ -60,16 +66,34 @@ func isRemoteCLI(path string) bool {
 	return strings.Contains(filepath.ToSlash(path), "/remote-cli/")
 }
 
-// findRemoteCLI looks for the remote CLI the server installed under $HOME.
+// findRemoteCLI looks for a remote CLI an editor server installed.
 func (e Env) findRemoteCLI() string {
-	if e.Home == "" {
-		return ""
-	}
 	var all []string
 	for _, g := range remoteCLIGlobs {
-		all = append(all, e.glob(filepath.Join(e.Home, g))...)
+		if rest, ok := strings.CutPrefix(g, "~/"); ok {
+			if e.Home == "" {
+				continue
+			}
+			g = filepath.Join(e.Home, rest)
+		}
+		all = append(all, e.glob(g)...)
 	}
 	return e.newest(all)
+}
+
+// RemoteCLI finds a remote CLI an editor server installed on disk (VS Code's
+// server or code-server), "" when there is none. home is $HOME.
+func RemoteCLI(home string) string { return Env{Home: home}.findRemoteCLI() }
+
+// remoteOnPath is the remote CLI the integrated terminal put on PATH: `code`
+// in VS Code's, `code-server` in code-server's. "" when PATH names neither.
+func (e Env) remoteOnPath() string {
+	for _, name := range []string{"code", "code-server"} {
+		if p := e.look(name); isRemoteCLI(p) {
+			return p
+		}
+	}
+	return ""
 }
 
 // liveIPC returns the socket the remote CLI must use. The inherited
@@ -99,25 +123,27 @@ func (e Env) liveIPC() string {
 //
 // Inside a VS Code terminal it is the window's own CLI: on a remote machine
 // (a Coder CDE, SSH, WSL) the remote CLI, which opens files and folders in the
-// connected window. PATH is trusted when it already names the remote CLI;
-// when `code` there is something else, or missing, the server's remote CLI
-// under $HOME is used. A dead inherited IPC socket is replaced by the newest
-// live one.
+// connected window. In code-server (VS Code in the browser) that CLI is called
+// `code-server` and opens them in the browser tab. PATH is trusted when it
+// already names a remote CLI; when `code` there is something else, or missing,
+// the server's remote CLI found on disk is used. A dead inherited IPC socket is
+// replaced by the newest live one.
 //
 // Outside VS Code a `code` is only useful with a display: on a headless
 // session (web tty, plain ssh) no window can open, so there is no editor.
 func (e Env) codeEditor() (Editor, bool) {
 	if e.InVSCode() {
-		p := e.look("code")
-		if e.VSCodeIPC != "" && !isRemoteCLI(p) {
-			if r := e.findRemoteCLI(); r != "" {
-				p = r
-			}
+		p := e.remoteOnPath()
+		if p == "" && e.VSCodeIPC != "" {
+			p = e.findRemoteCLI()
+		}
+		if p == "" {
+			p = e.look("code")
 		}
 		if p == "" {
 			return Editor{}, false
 		}
-		return Editor{Kind: Code, Cmd: p, Name: "code", Remote: isRemoteCLI(p), IPC: e.liveIPC()}, true
+		return Editor{Kind: Code, Cmd: p, Name: filepath.Base(p), Remote: isRemoteCLI(p), IPC: e.liveIPC()}, true
 	}
 	if e.Headless {
 		return Editor{}, false
@@ -139,7 +165,8 @@ func (e Env) NoCodeHint(target string) string {
 			"or run `code " + target + "` in a VS Code terminal on this machine"
 	case e.InVSCode():
 		return "the VS Code remote CLI was not found: open " + target +
-			" from the VS Code window (File > Open…), or open a new VS Code terminal so it puts `code` on PATH"
+			" from the VS Code window (File > Open…), or open a new VS Code terminal so it puts `code` " +
+			"(`code-server` in code-server) on PATH"
 	}
 	return "code is not on PATH: open " + target + " in VS Code"
 }

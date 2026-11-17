@@ -48,6 +48,10 @@ func (m *model) mrKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 		return m.setTab((p.tab + tabCount - 1) % tabCount), true
 	case "1", "2", "3", "4", "5", "6":
 		return m.setTab(mrTab(ks[0] - '1')), true
+	case "w", "W":
+		next, cmd := m.openWorkspace(ks == "W")
+		*m = next
+		return cmd, true
 	case "[", "]":
 		if n := len(p.mrs); n > 1 {
 			step := 1
@@ -463,6 +467,7 @@ func mrHelpRows(ai bool) [][2]string {
 		{"Y s d", "accept all, severity, delete"},
 		{"S", "submit the review as one batch"},
 		{"a R m", "approve, ready/draft, merge"},
+		{"w W", "open this MR's worktree (W: other main pane)"},
 		{"P", "agent menu: plan, address comments"},
 		{"l", "CI: job log (full screen, / searches)"},
 		{"U", "reload from the forge"},

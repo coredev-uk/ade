@@ -380,10 +380,10 @@ func TestUpstream(t *testing.T) {
 	}{
 		{"web draft waits on api review", []forge.MR{mr("api", 1, nil), mr("web", 1, draft)}, CourtUpstream, "waits on " + grp + "/api!1", grp + "/api!1", StageDraft},
 		{"web ready waits on api ready (tie: dependent shown)", []forge.MR{mr("api", 1, nil), mr("web", 1, nil)}, CourtUpstream, "waits on " + grp + "/api!1", grp + "/api!1", StageReview},
-		{"api is the laggard: act on api", []forge.MR{mr("api", 1, draft), mr("web", 1, nil)}, CourtYou, "draft MR · mark ready", "", StageDraft},
-		{"api failing, web ready: act on api", []forge.MR{mr("api", 1, failed), mr("web", 1, nil)}, CourtYou, "pipeline failed", "", StageCI},
+		{"api is the laggard: act on api", []forge.MR{mr("api", 1, draft), mr("web", 1, nil)}, CourtYou, "api!1 · draft MR · mark ready", "", StageDraft},
+		{"api failing, web ready: act on api", []forge.MR{mr("api", 1, failed), mr("web", 1, nil)}, CourtYou, "api!1 · pipeline failed", "", StageCI},
 		{"api merged: web no longer waits", []forge.MR{mr("api", 1, func(m *forge.MR) { m.State = "merged" }), mr("web", 1, draft)}, CourtYou, "draft MR · mark ready", "", StageDraft},
-		{"api needs nothing from web", []forge.MR{mr("api", 1, draft), mr("web", 1, draft)}, CourtUpstream, "waits on " + grp + "/api!1", grp + "/api!1", StageDraft},
+		{"api draft too: act on api first", []forge.MR{mr("api", 1, draft), mr("web", 1, draft)}, CourtYou, "api!1 · draft MR · mark ready", "", StageDraft},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

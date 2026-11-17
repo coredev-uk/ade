@@ -51,6 +51,9 @@ func (f fakeFS) modTime(p string) (time.Time, bool) { at, ok := f[p]; return at,
 
 const remoteCLI = "/home/dev/.vscode-server/cli/servers/Stable-abc/server/bin/remote-cli/code"
 
+// codeServerCLI is the remote CLI code-server puts on its terminal's PATH.
+const codeServerCLI = "/tmp/code-server/lib/vscode/bin/remote-cli/code-server"
+
 // lookup finds only the given absolute program paths by base name.
 func lookup(progs map[string]string) func(string) (string, error) {
 	return func(name string) (string, error) {
@@ -147,6 +150,47 @@ func TestResolveRemoteCLI(t *testing.T) {
 			env:   Env{},
 			fs:    fakeFS{},
 			progs: map[string]string{"code": "/usr/bin/code"},
+			want:  Editor{Kind: Code, Cmd: "/usr/bin/code", Name: "code"},
+		},
+		{
+			name: "code-server terminal: its `code-server` remote CLI on PATH, no `code`", setting: "auto",
+			env:   Env{TermProgram: "vscode", VSCodeIPC: "/tmp/vscode-ipc-cs.sock", Headless: true, Home: "/home/dev"},
+			fs:    fakeFS{"/tmp/vscode-ipc-cs.sock": now},
+			progs: map[string]string{"code-server": codeServerCLI, "nvim": "/bin/nvim"},
+			want:  Editor{Kind: Code, Cmd: codeServerCLI, Name: "code-server", Remote: true},
+		},
+		{
+			name: "code-server's CLI beats a stale VS Code server left under $HOME", setting: "code",
+			env:   Env{TermProgram: "vscode", VSCodeIPC: "/tmp/vscode-ipc-cs.sock", Headless: true, Home: "/home/dev"},
+			fs:    fakeFS{remoteCLI: now.Add(-72 * time.Hour), "/tmp/vscode-ipc-cs.sock": now},
+			progs: map[string]string{"code-server": codeServerCLI},
+			want:  Editor{Kind: Code, Cmd: codeServerCLI, Name: "code-server", Remote: true},
+		},
+		{
+			name: "the `code-server` on PATH is the server itself: its install's remote CLI is used", setting: "auto",
+			env: Env{TermProgram: "vscode", VSCodeIPC: "/tmp/vscode-ipc-cs.sock", Headless: true, Home: "/home/dev"},
+			fs: fakeFS{
+				"/tmp/code-server/lib/vscode/bin/remote-cli/code-server": now,
+				"/tmp/vscode-ipc-cs.sock":                                now,
+			},
+			progs: map[string]string{"code-server": "/usr/bin/code-server", "nvim": "/bin/nvim"},
+			want:  Editor{Kind: Code, Cmd: "/tmp/code-server/lib/vscode/bin/remote-cli/code-server", Name: "code-server", Remote: true},
+		},
+		{
+			name: "zellij pane from a code-server terminal without PATH: install.sh layout under $HOME", setting: "auto",
+			env: Env{VSCodeIPC: "/tmp/vscode-ipc-cs.sock", Headless: true, Home: "/home/dev"},
+			fs: fakeFS{
+				"/home/dev/.local/lib/code-server-4.96.4/lib/vscode/bin/remote-cli/code-server": now,
+				"/tmp/vscode-ipc-cs.sock": now,
+			},
+			progs: map[string]string{"nvim": "/bin/nvim"},
+			want:  Editor{Kind: Code, Cmd: "/home/dev/.local/lib/code-server-4.96.4/lib/vscode/bin/remote-cli/code-server", Name: "code-server", Remote: true},
+		},
+		{
+			name: "desktop VS Code terminal with code-server installed: desktop code, not code-server", setting: "auto",
+			env:   Env{TermProgram: "vscode", Home: "/home/dev"},
+			fs:    fakeFS{codeServerCLI: now},
+			progs: map[string]string{"code": "/usr/bin/code", "code-server": "/usr/bin/code-server"},
 			want:  Editor{Kind: Code, Cmd: "/usr/bin/code", Name: "code"},
 		},
 	}

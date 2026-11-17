@@ -24,6 +24,7 @@ import (
 	"github.com/coredev-uk/ade/internal/notify"
 	"github.com/coredev-uk/ade/internal/paths"
 	"github.com/coredev-uk/ade/internal/records"
+	"github.com/coredev-uk/ade/internal/startwork"
 )
 
 type agEnv struct {
@@ -500,5 +501,57 @@ func TestAgentIsolatedRunIsDiscardedAfterConfirm(t *testing.T) {
 	}
 	if b := agGit(t, e.wt, "branch", "--list", "1-rate-limit-ai"); b != "" {
 		t.Errorf("the -ai branch must be removed: %q", b)
+	}
+}
+
+// A three-repo item: the menu targets the repo whose open MR has the most
+// unresolved threads, [ and ] move the target, and plan/address carry it.
+func TestAgentMenuTargetsOneRepoOfAMultiRepoItem(t *testing.T) {
+	e := newAgEnv(t, unicodeGlyphs, 120)
+	root := t.TempDir()
+	e.m.app.Root = root
+	dir := filepath.Join(root, "demo")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	man := "name = \"demo\"\nforge = \"f\"\n[repos.api]\npath = \"g/api\"\n[repos.web]\npath = \"g/web\"\n[repos.infra]\npath = \"g/infra\"\n"
+	if err := os.WriteFile(filepath.Join(dir, ".project.toml"), []byte("source = \"t\"\nmanifest = '''\n"+man+"'''\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	it := e.m.homeRows[e.m.homeSel].item
+	it.Repos = []string{"api", "web", "infra"}
+	mr := func(project string, iid, unresolved int) forge.MR {
+		return forge.MR{Ref: forge.Ref{Project: project, IID: iid, Kind: forge.KindMR}, State: "opened", Unresolved: unresolved}
+	}
+	it.MRs = []forge.MR{mr("g/api", 3, 1), mr("g/web", 5, 4), mr("g/infra", 8, 0)}
+
+	var gotRepo []string
+	agResolve = func(_ context.Context, _ *app.App, _ startwork.OpenFunc, _, repo string) (agent.Target, forge.Forge, error) {
+		gotRepo = append(gotRepo, repo)
+		return agent.Target{}, nil, os.ErrNotExist
+	}
+	t.Cleanup(func() { agResolve = agent.ResolveTarget })
+
+	e.press("a")
+	out := e.view()
+	if !strings.Contains(out, "web · !5 · 4 unresolved threads") || e.m.agt.repo() != "web" || e.m.agt.mr == nil || e.m.agt.mr.Ref.IID != 5 {
+		t.Errorf("the default is the repo with the most unresolved threads:\n%s", out)
+	}
+	e.press("]")
+	if e.m.agt.repo() != "infra" || e.m.agt.mr != nil || !strings.Contains(e.view(), "infra · no open MR") {
+		t.Errorf("] moves to the next repo: %q\n%s", e.m.agt.repo(), e.view())
+	}
+	e.press("c")
+	if len(gotRepo) != 0 || !strings.Contains(e.view(), "no open MR with unresolved threads") {
+		t.Errorf("address needs the targeted repo's MR: %v", gotRepo)
+	}
+	e.press("[")
+	e.press("[")
+	if e.m.agt.repo() != "api" {
+		t.Errorf("[ moves back: %q", e.m.agt.repo())
+	}
+	e.press("p")
+	if len(gotRepo) != 1 || gotRepo[0] != "api" {
+		t.Errorf("plan must carry the targeted repo, got %v", gotRepo)
 	}
 }

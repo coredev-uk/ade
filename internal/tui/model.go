@@ -310,6 +310,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	case wsOpenedMsg:
 		return m, m.onWsOpened(msg)
+	case wsPickMsg:
+		return m.openWsPicker(msg), nil
+	case wsManyMsg:
+		return m, m.onWsOpenedMany(msg)
 	case codeWsMsg:
 		m.onCodeWs(msg)
 		return m, nil

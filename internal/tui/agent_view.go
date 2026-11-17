@@ -89,6 +89,9 @@ func (m model) agListView(d *agentDialog, inner, h int) ([]string, string) {
 	hint := keys("enter", "open", "x", "cancel run", "esc", "close")
 	if d.item != nil {
 		l = append(l, section("Start", "work in the item's worktree", inner, g))
+		if len(d.repos) > 1 {
+			l = append(l, ansi.Truncate(stBold.Render("[ ]")+" repo                "+d.repoLine(), inner, m.g.Ell))
+		}
 		l = append(l, ansi.Truncate(stBold.Render("p")+" plan                "+stFaint.Render("read-only: issue, comments, AGENTS.md"), inner, m.g.Ell))
 		switch {
 		case d.mr != nil:
@@ -105,6 +108,9 @@ func (m model) agListView(d *agentDialog, inner, h int) ([]string, string) {
 		}
 		l = append(l, "")
 		hint = keys("p", "plan", "c", "address", "enter", "open", "x", "cancel", "esc", "close")
+		if len(d.repos) > 1 {
+			hint = keys("[ ]", "repo", "p", "plan", "c", "address", "enter", "open", "x", "cancel", "esc", "close")
+		}
 	}
 	guide := countWord(len(d.runs), "run")
 	if d.item == nil {
@@ -306,4 +312,17 @@ func agCount(sign string, n int, st lipgloss.Style) string {
 		return stFaint.Render(t)
 	}
 	return st.Render(t)
+}
+
+// repoLine says which repo and MR the agent targets: "api · !5 · 2 unresolved
+// threads", with the repo's place among the item's repos.
+func (d *agentDialog) repoLine() string {
+	r := d.repos[d.ri]
+	line := r.name
+	if r.mr != nil {
+		line += fmt.Sprintf(" · !%d · %s", r.mr.Ref.IID, countWord(r.mr.Unresolved, "unresolved thread"))
+	} else {
+		line += " · no open MR with unresolved threads"
+	}
+	return stBold.Render(line) + stFaint.Render(fmt.Sprintf(" · %d/%d", d.ri+1, len(d.repos)))
 }

@@ -110,6 +110,7 @@
                 pkgs.vimPlugins.mini-nvim
                 pkgs.vimPlugins.nvim-treesitter.withAllGrammars
                 pkgs.vimPlugins.nvim-lspconfig
+                pkgs.vimPlugins.nvim-lint # linters from the project's devshell (golangci-lint, eslint, …)
               ];
             };
           };

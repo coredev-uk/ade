@@ -2,7 +2,6 @@ package overview
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
@@ -194,7 +193,7 @@ func courtLines(g glyphs, it *domain.WorkItem, cw int) []string {
 	}
 	sep := " " + g.Sep + " "
 	w0 := lipgloss.Width(lead) + lipgloss.Width(sep)
-	failed := strings.HasPrefix(it.Reason, "pipeline failed")
+	failed := strings.Contains(it.Reason, "pipeline failed")
 	text := it.Reason
 	if failed {
 		text = g.Bad + " " + text
@@ -321,78 +320,8 @@ func plural(n int, word string) string {
 	return word + "s"
 }
 
-// group is a child issue with the merge requests of its repo that belong to
-// it; child is nil for merge requests no child issue claims.
-type group struct {
-	child *forge.Issue
-	mrs   []forge.MR
-}
-
-// groupMRs files each merge request under the child issue of the same repo.
-// With several children in one repo an MR goes to the one its branch, title
-// or description names (#N); one that names none stays with the repo's first
-// child.
-func groupMRs(it *domain.WorkItem) []group {
-	used := make([]bool, len(it.MRs))
-	var groups []group
-	for ci := range it.Children {
-		c := &it.Children[ci]
-		siblings := 0
-		for _, o := range it.Children {
-			if o.Ref.Project == c.Ref.Project {
-				siblings++
-			}
-		}
-		grp := group{child: c}
-		for i, mr := range it.MRs {
-			if used[i] || mr.Ref.Project != c.Ref.Project {
-				continue
-			}
-			if siblings > 1 && !mentions(mr, c.Ref.IID) && (!mentionsNone(mr, it.Children) || !firstInProject(it.Children, ci)) {
-				continue
-			}
-			used[i] = true
-			grp.mrs = append(grp.mrs, mr)
-		}
-		groups = append(groups, grp)
-	}
-	var rest group
-	for i, mr := range it.MRs {
-		if !used[i] {
-			rest.mrs = append(rest.mrs, mr)
-		}
-	}
-	if len(rest.mrs) > 0 {
-		groups = append(groups, rest)
-	}
-	return groups
-}
-
-func firstInProject(kids []forge.Issue, i int) bool {
-	for j := range i {
-		if kids[j].Ref.Project == kids[i].Ref.Project {
-			return false
-		}
-	}
-	return true
-}
-
-func mentions(mr forge.MR, iid int) bool {
-	re := regexp.MustCompile(`(?:^|\D)` + fmt.Sprint(iid) + `(?:\D|$)`)
-	return re.MatchString(mr.SourceBranch) || re.MatchString(mr.Title) || re.MatchString(mr.Description)
-}
-
-func mentionsNone(mr forge.MR, kids []forge.Issue) bool {
-	for _, k := range kids {
-		if k.Ref.Project == mr.Ref.Project && mentions(mr, k.Ref.IID) {
-			return false
-		}
-	}
-	return true
-}
-
 func codeLines(it *domain.WorkItem, g glyphs, cw int) []string {
-	groups := groupMRs(it)
+	groups := it.MRsByChild()
 	if len(groups) == 0 {
 		return []string{" " + stFaint.Render("no child issue yet")}
 	}
@@ -403,10 +332,10 @@ func codeLines(it *domain.WorkItem, g glyphs, cw int) []string {
 		}
 		repo := ""
 		switch {
-		case grp.child != nil:
-			repo = repoOf(grp.child.Ref.Project)
-		case len(grp.mrs) > 0:
-			repo = repoOf(grp.mrs[0].Ref.Project)
+		case grp.Child != nil:
+			repo = repoOf(grp.Child.Ref.Project)
+		case len(grp.MRs) > 0:
+			repo = repoOf(grp.MRs[0].Ref.Project)
 		}
 		bar := " " + ink(repo).Render(g.Vertical) + " "
 		inner := cw - 2
@@ -415,8 +344,8 @@ func codeLines(it *domain.WorkItem, g glyphs, cw int) []string {
 				out = append(out, bar+l)
 			}
 		}
-		if grp.child != nil {
-			c := grp.child
+		if grp.Child != nil {
+			c := grp.Child
 			ref := shortRef(c.Ref)
 			title := c.Title
 			if c.State == "closed" {
@@ -432,10 +361,10 @@ func codeLines(it *domain.WorkItem, g glyphs, cw int) []string {
 		} else {
 			emit(stFaint.Render(repo + " " + g.Sep + " no child issue"))
 		}
-		if len(grp.mrs) == 0 {
+		if len(grp.MRs) == 0 {
 			emit(stFaint.Render("no MR yet"))
 		}
-		for mi, mr := range grp.mrs {
+		for mi, mr := range grp.MRs {
 			if mi > 0 {
 				emit("")
 			}
