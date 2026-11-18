@@ -60,6 +60,14 @@ func TestAINarratorReviewAndFailures(t *testing.T) {
 	if j := r.jobs[0]; j.Feature != "sprint-review" || j.Forge != ai.SprintForge || j.Ref.IID != 20261102 || !strings.Contains(j.Prompt, "# Sprint review · Sprint 42") {
 		t.Fatalf("job = %+v", j)
 	}
+	rv.Mine = true
+	if _, err := WithReviewNarrative(context.Background(), n, rv); err != nil {
+		t.Fatal(err)
+	}
+	if team, mine := r.jobs[0], r.jobs[1]; mine.System == team.System || mine.PromptVersion == team.PromptVersion || !strings.Contains(mine.Prompt, "# Sprint retro · Sprint 42") {
+		t.Fatalf("your retro must use its own prompt: %+v", mine)
+	}
+	rv.Mine = false
 
 	off := &AINarrator{Svc: &fakeRunner{err: ai.ErrDisabled}}
 	got, err = WithReviewNarrative(context.Background(), off, rv)

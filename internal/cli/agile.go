@@ -212,7 +212,7 @@ func (s *sprintFlags) bind(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&s.project, "project", "", "ADE project (default: the only one, else the first with sprints)")
 	cmd.Flags().StringVar(&s.sprint, "sprint", "", "sprint title or key (default: the current sprint)")
 	cmd.Flags().IntVarP(&s.velocity, "last", "n", agile.DefaultVelocitySprints, "closed sprints in the velocity")
-	cmd.Flags().BoolVar(&s.mine, "mine", false, "only issues assigned to you")
+	cmd.Flags().BoolVar(&s.mine, "mine", false, "your retro: only issues assigned to you, with your velocity and no burn-down or epics")
 }
 
 func (s *sprintFlags) options() agile.ReviewOptions {

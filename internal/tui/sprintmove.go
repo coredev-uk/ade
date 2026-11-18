@@ -294,15 +294,18 @@ func (m model) auditSprintFailure(refs []forge.Ref, err error) {
 
 // --- Sprint review page ------------------------------------------------------
 
-// carriedItems are the review's unfinished items, in page order.
+// carriedItems are the review's unfinished items, in page order (In progress,
+// then Not started, then those whose progress is not cached).
 func (m model) carriedItems() []agile.ReviewItem {
 	if m.ag.review == nil {
 		return nil
 	}
 	var out []agile.ReviewItem
-	for _, it := range m.ag.review.Items {
-		if !it.Done {
-			out = append(out, it)
+	for _, grp := range agile.ItemGroups(m.ag.review.Items) {
+		for _, it := range grp.Items {
+			if !it.Done {
+				out = append(out, it)
+			}
 		}
 	}
 	return out
@@ -340,7 +343,7 @@ func (m *model) stepCarried(delta int) {
 	m.ag.selRef = items[i].Ref.String()
 	short := refShort(m.ag.selRef)
 	for at, ln := range m.reviewLines(m.w) {
-		if strings.Contains(ln, short) && strings.Contains(ansi.Strip(ln), "carried") {
+		if plain := ansi.Strip(ln); strings.Contains(plain, m.g.Selected) && strings.Contains(plain, short) {
 			bodyH := max(1, m.h-4)
 			switch {
 			case at < m.ag.scroll:

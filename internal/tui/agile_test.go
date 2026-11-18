@@ -46,15 +46,17 @@ func reviewFixture() *agile.Review {
 	w := func(n int) *int { return &n }
 	return &agile.Review{
 		Project: "demo", Basis: agile.BasisWeight,
-		Sprint:    domain.Sprint{Title: "Sprint 42", Start: forge.NewDate(2026, 11, 2), Due: forge.NewDate(2026, 11, 13)},
-		Committed: agile.Totals{Count: 5, Weight: 10, Weighted: 3, Unweighted: 2},
-		Added:     agile.Totals{Count: 1, Weight: 8, Weighted: 1},
-		Done:      agile.Totals{Count: 3, Weight: 8, Weighted: 2, Unweighted: 1},
-		Carried:   agile.Totals{Count: 3, Weight: 10, Weighted: 2, Unweighted: 1},
+		Sprint:     domain.Sprint{Title: "Sprint 42", Start: forge.NewDate(2026, 11, 2), Due: forge.NewDate(2026, 11, 13)},
+		Committed:  agile.Totals{Count: 5, Weight: 10, Weighted: 3, Unweighted: 2},
+		Added:      agile.Totals{Count: 1, Weight: 8, Weighted: 1},
+		Done:       agile.Totals{Count: 3, Weight: 8, Weighted: 2, Unweighted: 1},
+		Carried:    agile.Totals{Count: 3, Weight: 10, Weighted: 2, Unweighted: 1},
+		Progressed: agile.Totals{Count: 1, Weight: 8, Weighted: 1},
+		NotStarted: agile.Totals{Count: 1, Unweighted: 1},
 		Items: []agile.ReviewItem{
 			{Ref: forge.Ref{Project: "g/tracker", IID: 2}, Title: "Upgrade export worker", Weight: w(5), Done: true, KeptOpen: true},
-			{Ref: forge.Ref{Project: "g/tracker", IID: 5}, Title: "Hotfix export crash", Weight: w(8), Added: true, MRs: []string{"api!4"}},
-			{Ref: forge.Ref{Project: "g/tracker", IID: 6}, Title: "Billing export times out"},
+			{Ref: forge.Ref{Project: "g/tracker", IID: 5}, Title: "Hotfix export crash", Weight: w(8), Added: true, MRs: []string{"api!4"}, Stage: "review", Progressed: true, OpenMRs: []string{"api!9"}},
+			{Ref: forge.Ref{Project: "g/tracker", IID: 6}, Title: "Billing export times out", Stage: "assigned"},
 		},
 		Burndown: []agile.BurnPoint{{Date: "2026-11-02", Remaining: 10, Ideal: 9}, {Date: "2026-11-03", Remaining: 7, Ideal: 8}},
 		Velocity: agile.Velocity{Basis: agile.BasisWeight, Average: func() *float64 { v := 4.0; return &v }(), Sprints: []agile.SprintResult{
@@ -150,14 +152,15 @@ func TestReviewPageShowsCountAndWeight(t *testing.T) {
 		"Committed", "10w · 5 items (2 unweighted)",
 		"Added", "8w · 1 item",
 		"Done", "8w · 3 items (1 unweighted)",
-		"Carried", "10w · 3 items (1 unweighted)",
+		"In progress", "8w · 1 item",
+		"Not started", "1 item (1 unweighted)",
 		"8w of 18w done",
 		"Velocity", "average 4.0w per sprint",
 		"Sprint 40", "no weighted work", "not in the average",
 		"Sprint 41", "4w of 6w", "1 unweighted not counted",
 		"Burn-down", "Mon 2 Nov", "ideal 9.0",
 		"By epic", "Self-serve exports", "1 of 2 items done, 5w of 5w",
-		"done, kept open", "carried", "added mid-sprint", "merged api!4",
+		"Completed", "done, kept open", "in review", "added mid-sprint", "open api!9", "merged api!4",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("review lacks %q:\n%s", want, out)
@@ -186,6 +189,28 @@ func TestReviewPageCountBasis(t *testing.T) {
 	for _, want := range []string{"by count", "6 items", "2 of 3 items done"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("count review lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestReviewOpensAsYourRetro(t *testing.T) {
+	m := agileModel(unicodeGlyphs)
+	m.ag = agileUI{kind: agileReview}
+	r := reviewFixture()
+	r.Mine = true
+	m.ag.review = r
+	out := ansi.Strip(m.agileBody(120, 60))
+	for _, want := range []string{
+		"Sprint retro · demo · Sprint 42", "your items", "Your velocity",
+		"Completed", "In progress", "Not started", "in review", "open api!9", "whole team",
+	} {
+		if !strings.Contains(out+m.agileFooter(160), want) {
+			t.Errorf("retro lacks %q:\n%s", want, out)
+		}
+	}
+	for _, team := range []string{"Burn-down", "By epic"} {
+		if strings.Contains(out, team) {
+			t.Errorf("retro shows the team's %q:\n%s", team, out)
 		}
 	}
 }
@@ -330,8 +355,8 @@ func TestReviewKeysStepSprintsAndToggleMine(t *testing.T) {
 		t.Fatalf("] ] -> %q", m.ag.reviewSpr)
 	}
 	m, _ = press(m, "m")
-	if !m.ag.mine {
-		t.Fatal("m must switch to your items")
+	if !m.ag.team {
+		t.Fatal("m must switch to the whole team")
 	}
 }
 

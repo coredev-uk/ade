@@ -104,7 +104,7 @@ func (m model) paletteEntries() []palEntry {
 			return m, nil
 		}},
 		page("Standup", "ade standup", func(m model) (model, tea.Cmd) { return m.openStandup() }),
-		page("Sprint review", "ade sprint review", func(m model) (model, tea.Cmd) { return m.openReview() }),
+		page("Sprint review", "ade sprint review --mine", func(m model) (model, tea.Cmd) { return m.openReview() }),
 		page("Budget", "ade budget", func(m model) (model, tea.Cmd) { return m.openBudget() }),
 		page("Audit log", "ade audit", func(m model) (model, tea.Cmd) { return m.openLog() }),
 		{name: "Notifications", key: "i", cli: "ade inbox", run: func(m model) (model, tea.Cmd) {

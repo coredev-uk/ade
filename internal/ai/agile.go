@@ -10,7 +10,8 @@ import (
 
 const (
 	standupVersion = "standup-v2"
-	sprintVersion  = "sprint-review-v3"
+	sprintVersion  = "sprint-review-v4"
+	retroVersion   = "sprint-retro-v1"
 	parentVersion  = "sprint-parent-v2"
 	lastDayVersion = "lastday-v1"
 
@@ -25,6 +26,8 @@ var (
 	standupSystem string
 	//go:embed prompts/sprint.md
 	sprintSystem string
+	//go:embed prompts/sprint-mine.md
+	retroSystem string
 	//go:embed prompts/sprint-parent.md
 	sprintParentSystem string
 	//go:embed prompts/lastday.md
@@ -61,15 +64,21 @@ func LastDayJob(day time.Time, facts string) Job {
 	}
 }
 
-// SprintReviewJob turns the review facts (Markdown) into a structured retro.
-func SprintReviewJob(project, sprint string, start time.Time, facts string) Job {
-	return Job{
+// SprintReviewJob turns the review facts (Markdown) into a structured retro:
+// the team's, or with mine the personal one of your own items.
+func SprintReviewJob(project, sprint string, start time.Time, mine bool, facts string) Job {
+	j := Job{
 		Feature: "sprint-review", Role: RoleExplain, PromptVersion: sprintVersion,
 		System: sprintSystem, Prompt: facts,
 		Forge: SprintForge, Ref: forge.Ref{Project: project, IID: dayKey(start)},
 		Name: "review-" + fmt.Sprint(dayKey(start)), MaxTokens: 800,
 		Params: map[string]any{"sprint": sprint},
 	}
+	if mine {
+		j.PromptVersion, j.System, j.Name = retroVersion, retroSystem, "retro-"+fmt.Sprint(dayKey(start))
+		j.Params["mine"] = true
+	}
+	return j
 }
 
 // SprintParentJob turns the facts of one parent of a sprint review (a tracker

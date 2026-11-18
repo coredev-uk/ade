@@ -464,6 +464,9 @@ func BuildReviewLive(ctx context.Context, f Forge, in ReviewLiveInput) (Review, 
 		if !ok {
 			continue
 		}
+		if in.Mine {
+			pq.Assignee = in.Me.Username // your velocity, as BuildMyVelocity reads it
+		}
 		pis, err := f.ListIssues(ctx, pq)
 		if err != nil {
 			warns = append(warns, fmt.Sprintf("velocity: %s: %v", sp.Title, brief(err)))
@@ -475,7 +478,7 @@ func BuildReviewLive(ctx context.Context, f Forge, in ReviewLiveInput) (Review, 
 	r := BuildReview(ReviewInput{
 		Project: in.Project, Manifest: in.Manifest, Sprint: in.Sprint, Issues: issues, History: hist, Past: past,
 		Me: in.Me, Mine: in.Mine, Cal: in.Cal, Now: in.Now, Merged: mergedMRs(in.Items),
-		MergedAt: mergedAt, Assigned: assigned,
+		MergedAt: mergedAt, Assigned: assigned, Progress: progressOf(in.Items),
 	})
 	r.Warnings = warns
 	return r, nil
@@ -518,6 +521,21 @@ func mergedTimes(items []domain.WorkItem) map[forge.Ref]time.Time {
 				out[wi.Ref] = *mr.MergedAt
 			}
 		}
+	}
+	return out
+}
+
+// progressOf is, per cached tracker item, its stage and open MRs.
+func progressOf(items []domain.WorkItem) map[forge.Ref]Progress {
+	out := make(map[forge.Ref]Progress, len(items))
+	for _, wi := range items {
+		p := Progress{Stage: wi.Stage}
+		for _, mr := range wi.MRs {
+			if mr.State == "opened" {
+				p.OpenMRs = append(p.OpenMRs, short(mr.Ref))
+			}
+		}
+		out[wi.Ref] = p
 	}
 	return out
 }

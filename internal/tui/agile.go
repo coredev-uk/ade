@@ -44,7 +44,7 @@ type agileUI struct {
 	reviewProj string // ADE project; "" = the first with data
 	reviewSpr  string // sprint title; "" = the current one
 	selRef     string // carried item `>` moves (J/K); "" = the first
-	mine       bool
+	team       bool   // the whole team's review; false (the default) is your retro
 
 	loading   bool
 	narrating bool
@@ -137,7 +137,7 @@ func (m model) reload() (model, tea.Cmd) {
 			m.ag.reviewProj = m.reviewResult().Project // several projects: the first with sprints, not an error
 		}
 		gen, c, ctx := m.ag.reviewGen, m.collector(), m.ctx
-		o := agile.ReviewOptions{Project: m.ag.reviewProj, Sprint: m.ag.reviewSpr, Mine: m.ag.mine}
+		o := agile.ReviewOptions{Project: m.ag.reviewProj, Sprint: m.ag.reviewSpr, Mine: !m.ag.team}
 		return m, func() tea.Msg {
 			r, err := c.Review(ctx, o)
 			return reviewMsg{gen: gen, r: r, err: err}
@@ -266,14 +266,14 @@ func (m model) agileKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	return m, nil, true
 }
 
-// stepReview moves the review to another sprint ([ older, ] newer), toggles
-// "mine", or cycles the project.
+// stepReview moves the review to another sprint ([ older, ] newer), switches
+// between your retro and the team's review, or cycles the project.
 func (m *model) stepReview(key string) {
 	res := m.reviewResult()
 	m.ag.selRef = ""
 	switch key {
 	case "m":
-		m.ag.mine = !m.ag.mine
+		m.ag.team = !m.ag.team
 	case "p":
 		names := m.sprintProjects()
 		cur := -1
@@ -349,7 +349,8 @@ func (m model) copyAgile() (model, tea.Cmd) {
 	case m.ag.kind == agileStandup && m.ag.standup != nil:
 		text, what = agile.RenderStandup(*m.ag.standup, agile.Markdown), "standup"
 	case m.ag.kind == agileReview && m.ag.review != nil:
-		text, what = agile.RenderReview(*m.ag.review, agile.Markdown), "sprint review"
+		r := *m.ag.review
+		text, what = agile.RenderReview(r, agile.Markdown), strings.ToLower(agile.ReviewTitle(r))
 	default:
 		return m, nil
 	}
@@ -480,6 +481,9 @@ func (m model) narrativeDone(msg narrativeMsg) (tea.Model, tea.Cmd) {
 			subject = "run: ade standup --ai --yes"
 			if msg.review != nil {
 				subject = "run: ade sprint review --ai --yes"
+				if msg.review.Mine {
+					subject = "run: ade sprint review --mine --ai --yes"
+				}
 			}
 		}
 		e := events.New("ui.ai_skipped", events.Warn, text)
@@ -491,7 +495,7 @@ func (m model) narrativeDone(msg narrativeMsg) (tea.Model, tea.Cmd) {
 	if msg.standup != nil && m.ag.standup != nil && m.ag.standup.Date == msg.standup.Date {
 		m.ag.standup.Narrative = msg.standup.Narrative
 	}
-	if msg.review != nil && m.ag.review != nil && m.ag.review.Sprint.Title == msg.review.Sprint.Title {
+	if rv := m.ag.review; msg.review != nil && rv != nil && rv.Sprint.Title == msg.review.Sprint.Title && rv.Project == msg.review.Project && rv.Mine == msg.review.Mine {
 		m.ag.review.Narrative = msg.review.Narrative
 	}
 	cost := fmt.Sprintf("$%.4f", msg.res.CostUSD)

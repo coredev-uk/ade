@@ -313,20 +313,20 @@ A single column that scrolls (`j/k`, `g/G`); it has no preview pane, so it reads
 - **Narrative:** when an AI summary exists it sits under the first rule behind a faint `┃`, wrapped at word boundaries, one blank rail line between paragraphs.
 - **States:** `reading standup…` while loading (the page never blocks on the network), `⟳ refreshing` in the guide while reloading a page that already has data, an amber `▲ refresh failed: …` above stale data, `Nothing cached yet. U syncs now`. Sources that could not be read appear as faint `▲` warning lines at the end.
 - **Keys:** `r` reload, `n` write the AI narrative, `y` copy as Markdown (OSC 52, with a pop‑up saying so), `esc` back, `S` closes, `t` home.
-- **`n` narrative:** one cached, audited call. A pop‑up says `narrative written ($0.0012)` or `(cached, $0)`; with AI off or a needed confirmation it says so instead, naming the command in the pop‑up's second line (`run: ade standup --ai --yes`, `run: ade sprint review --ai --yes`). A reload keeps a narrative already bought for that day.
+- **`n` narrative:** one cached, audited call. A pop‑up says `narrative written ($0.0012)` or `(cached, $0)`; with AI off or a needed confirmation it says so instead, naming the command in the pop‑up's second line (`run: ade standup --ai --yes`, `run: ade sprint review --mine --ai --yes`). A reload keeps a narrative already bought for that day.
 
-### Sprint review page (`V`)
+### Sprint retro / Sprint review page (`V`)
 
-A single scrolling column, like Standup.
+A single scrolling column, like Standup. It opens as **your retro** (only your issues); `m` switches to the whole team's **sprint review** and back.
 
-- **Section rule:** `Sprint review · Sprint 42` with guide words `2–13 Nov · by weight` (`by count` when nothing is weighted; `· mine` when filtered to your issues).
-- **Totals block:** four faint‑keyed rows (`Committed`, `Added`, `Done`, `Carried`). Each value is `10w · 5 items (2 unweighted)`; the unweighted count is always shown beside the weight and is never folded into it as zero. By count the value is just `5 items`. `Added` means entered after the first day.
+- **Section rule:** `Sprint retro · demo · Sprint 42` (`Sprint review · …` for the team) with guide words `2–13 Nov · by weight` (`by count` when nothing is weighted; `· your items` on the retro).
+- **Totals block:** faint‑keyed rows `Committed`, `Added`, `Done`, `In progress`, `Not started`, and `Carried` (faint `progress not cached`) only when some unfinished item is not in the sync cache. Each value is `10w · 5 items (2 unweighted)`; the unweighted count is always shown beside the weight and is never folded into it as zero. By count the value is just `5 items`. `Added` means entered after the first day.
 - **Progress line:** under the block, a 24‑cell station line in the project's ink: `━` for the share done, faint `─` for what is left, then `8w of 18w done`.
-- **Velocity:** one row per closed sprint (`Sprint 41  ━━━━────  4w of 6w`). A sprint with no weighted work reads `○ no weighted work · not in the average` and is left out of the average in the rule's guide words (`by weight · last 3 sprints · average 4.0w per sprint`; velocity keeps its own basis even when the sprint under review is by count).
-- **Burn‑down:** one row per working day so far, a bar scaled to the sprint's peak, the remaining figure, and faint `ideal 9.0`.
-- **By epic** appears only when some issue has an epic (Premium).
-- **Items:** a mark (`●` in the line ink for done, faint `○` for carried), the word (`done`, `done, kept open`, `carried`; the column is as wide as the widest word present), bold ref, title, faint `added mid‑sprint · merged api!4`, and the weight right‑aligned.
-- **Keys:** `[` / `]` step through sprints, `m` toggles your issues only, `p` cycles projects, `r` reloads, `n` writes the AI narrative (behind a faint `┃` under the rule, like Standup's), `y` copies Markdown, `J`/`K` pick a carried item, `>` moves it to the next sprint and `M` moves all of yours (see the Sprint-move dialog), `esc` back.
+- **Velocity:** `Your velocity` on the retro (only issues assigned to you), `Velocity` for the team. One row per closed sprint (`Sprint 41  ━━━━────  4w of 6w`). A sprint with no weighted work reads `○ no weighted work · not in the average` and is left out of the average in the rule's guide words (`by weight · last 3 sprints · average 4.0w per sprint`; velocity keeps its own basis even when the sprint under review is by count).
+- **Burn‑down** (team view only): one row per working day so far, a bar scaled to the sprint's peak, the remaining figure, and faint `ideal 9.0`.
+- **By epic** (team view only) appears only when some issue has an epic (Premium).
+- **Items:** grouped under section rules `Completed`, `In progress`, `Not started` and `Carried, progress unknown` (each with its item count; empty groups are left out). Each row: a mark (`●` in the line ink for done, faint `○` otherwise), the state word (`done`, `done, kept open`, the stage reached such as `in review`, `draft MR`, `branch`, faint `not started` or `carried`; the column is as wide as the widest word present), bold ref, title, faint `added mid‑sprint · open api!9 · merged api!4`, and the weight right‑aligned.
+- **Keys:** `[` / `]` step through sprints, `m` switches between your retro and the whole team, `p` cycles projects, `r` reloads, `n` writes the AI narrative (behind a faint `┃` under the rule, like Standup's; the retro's has Outcome, Completed, In progress, Not started, Velocity), `y` copies Markdown, `J`/`K` pick an unfinished item in page order, `>` moves it to the next sprint and `M` moves all of yours (see the Sprint-move dialog), `esc` back.
 
 ## Markdown and code
 
