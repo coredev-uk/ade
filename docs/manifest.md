@@ -349,6 +349,12 @@ workspace's own tree last. With `services = "background"` they run when the work
 of the workspace's services tab, before any service starts. With `services = "manual"` nothing runs them on open: use
 `ade ws up` or `ade ws install <tree> [--force]`. A review tab runs no install.
 
+Start work (`s`, `ade start`) also runs them in each worktree it adds or opens, after every forge write and before the
+workspace opens, so the editor or agent starts on an installed tree in every host mode (also `services = "manual"`,
+VS Code and code-server). The confirm screen lists the step (`run install hooks in api: npm ci`); `ade start` streams
+their output to stderr. A failure fails that step only: the tree is usable, the workspace still opens, the error names
+`ade ws install <tree>` to see the output, and the next start runs them again.
+
 ADE remembers a success per worktree, keyed by a hash of the commands, of the content of the lockfiles at the
 worktree's root (`package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lockb`, `go.sum`, `Cargo.lock`,
 `poetry.lock`, `uv.lock`, `flake.lock`, when present) and of the worktree's creation. The commands run again only

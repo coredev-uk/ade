@@ -129,6 +129,7 @@ func runStart(cmd *cobra.Command, arg string, f startFlags, onlyMR bool) error {
 	}
 	env := newStartEnv(a, f.noWorkspace || onlyMR || f.onlyChild, f.session)
 	env.Forge = r.Forge
+	env.InstallOut = cmd.ErrOrStderr() // stdout may be --json
 	_, res, err := env.Start(ctx, r, ch, f.dryRun)
 	if !f.dryRun && res.Created() > 0 {
 		// The new child and MR belong in the cache now: a running dashboard

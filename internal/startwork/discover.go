@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"github.com/coredev-uk/ade/internal/domain"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/git"
+	"github.com/coredev-uk/ade/internal/workspace"
 )
 
 // Forge is what start work needs of a forge: the Phase 1 reads and the
@@ -52,6 +54,9 @@ type Env struct {
 	// Workspace opens the zellij tab (or VS Code window) once the worktree
 	// exists. Nil skips the step with a note.
 	Workspace func(ctx context.Context, req WorkspaceRequest) error
+	// InstallOut receives the output of the install hooks the install step
+	// runs; nil discards it (a failure still names the failed command).
+	InstallOut io.Writer
 	// Actor is the audit actor ("user" by default).
 	Actor string
 }
@@ -119,6 +124,7 @@ func (e *Env) discoverTarget(ctx context.Context, item domain.WorkItem, m *confi
 	if ch.Mode == ModeBrowse {
 		f.DefaultBranch = e.localDefault(ctx, m, t, bare, f.Cloned)
 		f.Worktree = e.treeOf(ctx, bare, f.Cloned, f.DefaultBranch)
+		f.Installed = e.installed(m, t.Name, f.Worktree)
 		return f, nil
 	}
 	def, err := e.Forge.DefaultBranch(ctx, t.Project)
@@ -144,6 +150,7 @@ func (e *Env) discoverTarget(ctx context.Context, item domain.WorkItem, m *confi
 		return f, err
 	}
 	f.Worktree = e.treeOf(ctx, bare, f.Cloned, f.Branch)
+	f.Installed = e.installed(m, t.Name, f.Worktree)
 	if ch.Mode == ModeDraft && f.MR == nil {
 		if err := e.findTemplate(ctx, m, ch, t, &f); err != nil {
 			return f, err
@@ -197,7 +204,9 @@ func (e *Env) localDefault(ctx context.Context, m *config.Manifest, t Target, ba
 	return "main"
 }
 
-// treeOf returns the path of the worktree checked out on branch, if any.
+// treeOf returns the path of the worktree checked out on branch, if any. A
+// tree deleted outside git (still listed until pruned) does not count: the
+// worktree step prunes it and adds the tree again.
 func (e *Env) treeOf(ctx context.Context, bare string, cloned bool, branch string) string {
 	if !cloned || branch == "" {
 		return ""
@@ -207,11 +216,27 @@ func (e *Env) treeOf(ctx context.Context, bare string, cloned bool, branch strin
 		return ""
 	}
 	for _, tr := range trees {
-		if tr.Branch == branch {
+		if tr.Branch == branch && exists(tr.Path) {
 			return tr.Path
 		}
 	}
 	return ""
+}
+
+// installed reports whether repo's install hooks already succeeded in tree for
+// their current commands and lockfiles; false when there is no tree, no hook,
+// or the install state cannot be read (the install step then runs, and it is a
+// no-op when the state was right after all).
+func (e *Env) installed(m *config.Manifest, repo, tree string) bool {
+	if tree == "" || len(m.Repos[repo].Hooks.Install) == 0 {
+		return false
+	}
+	mgr, err := workspace.NewManager(e.App)
+	if err != nil {
+		return false
+	}
+	t, ok := mgr.TreeInstallTarget(m, repo, tree)
+	return ok && mgr.InstallDone(t)
 }
 
 // findChild finds the open child of tracker in project: first through its

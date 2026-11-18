@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/devshell"
 )
 
@@ -64,15 +65,12 @@ func (m *Manager) InstallTargets(loc Location, p *Plan, own bool) []InstallTarge
 	var out []InstallTarget
 	seen := map[string]bool{}
 	add := func(repo, tree string) {
-		cmds := loc.Manifest.Repos[repo].Hooks.Install
-		if repo == "" || tree == "" || seen[tree] || len(cmds) == 0 {
+		t, ok := m.TreeInstallTarget(loc.Manifest, repo, tree)
+		if !ok || seen[t.Tree] {
 			return
 		}
-		seen[tree] = true
-		out = append(out, InstallTarget{
-			Repo: repo, Tree: tree, Commands: cmds,
-			Devshell: m.Devshell.Detect(tree, loc.Manifest.Repos[repo].Devshell),
-		})
+		seen[t.Tree] = true
+		out = append(out, t)
 	}
 	addOther := func(repo, tree string) {
 		if !own || tree != loc.Tree {
@@ -91,6 +89,20 @@ func (m *Manager) InstallTargets(loc Location, p *Plan, own bool) []InstallTarge
 		add(loc.Repo, loc.Tree)
 	}
 	return out
+}
+
+// TreeInstallTarget is the install target of one worktree of repo; ok is false
+// when the repo declares no install commands. The tree is symlink-resolved,
+// as Locate resolves it, so every caller keys the same install marker.
+func (m *Manager) TreeInstallTarget(man *config.Manifest, repo, tree string) (t InstallTarget, ok bool) {
+	cmds := man.Repos[repo].Hooks.Install
+	if repo == "" || tree == "" || len(cmds) == 0 {
+		return InstallTarget{}, false
+	}
+	if real, err := resolve(tree); err == nil {
+		tree = real
+	}
+	return InstallTarget{Repo: repo, Tree: tree, Commands: cmds, Devshell: m.Devshell.Detect(tree, man.Repos[repo].Devshell)}, true
 }
 
 // lockfiles are the dependency locks at a worktree's root whose content is part

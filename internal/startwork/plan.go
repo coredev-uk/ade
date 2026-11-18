@@ -187,6 +187,9 @@ type Found struct {
 	// Worktree is the existing local tree of Branch (of the default branch
 	// for Browse).
 	Worktree string `json:"worktree,omitempty"`
+	// Installed reports the repo's install hooks ([repos.<r>.hooks] install)
+	// already succeeded in Worktree for its current commands and lockfiles.
+	Installed bool `json:"installed,omitempty"`
 	// Templates are the template names the repo offers; TemplateBody is the
 	// chosen one's content ("" when the repo has none).
 	Templates    []string `json:"templates,omitempty"`
@@ -226,6 +229,7 @@ const (
 	StepBranch    StepKind = "branch"
 	StepMR        StepKind = "mr"
 	StepWorktree  StepKind = "worktree"
+	StepInstall   StepKind = "install"
 	StepWorkspace StepKind = "workspace"
 )
 
@@ -699,11 +703,14 @@ func workflowDone(in PlanInput, mv *WorkflowMove) bool {
 func planSteps(p *Plan) []Step {
 	in := p.in
 	ch := in.Choices
-	var steps []Step
+	var steps, installs []Step
 	add := func(s Step) { steps = append(steps, s) }
 	for i, tp := range p.Targets {
 		t, f := tp.Target, tp.Found
 		repo := t.Name
+		if st, ok := installStep(in, tp); ok {
+			installs = append(installs, st)
+		}
 		if ch.Mode == ModeBrowse {
 			add(worktreeStep(in, tp, f.Worktree != ""))
 			continue
@@ -725,6 +732,9 @@ func planSteps(p *Plan) []Step {
 		}
 		add(worktreeStep(in, tp, f.Worktree != ""))
 	}
+	// Installs run once every repo's forge work and tree exist, so a long
+	// install does not hold up another repo's writes.
+	steps = append(steps, installs...)
 	// The tab opens last, on the first repo's worktree, so it knows the item's
 	// worktrees in every repo (the services of one repo run from the item's tree of another).
 	if len(p.Targets) > 0 {
@@ -829,6 +839,23 @@ func worktreeStep(in PlanInput, tp TargetPlan, exists bool) Step {
 		return Step{Kind: StepWorktree, Repo: tp.Target.Name, Done: true, Path: dir, Text: "worktree " + dir + " exists"}
 	}
 	return Step{Kind: StepWorktree, Repo: tp.Target.Name, Path: dir, Text: "fetch, add worktree " + dir + " tracking origin/" + branch}
+}
+
+// installStep is the install step of a target whose repo declares install
+// hooks ([repos.<r>.hooks] install): it runs them in the worktree once it
+// exists, so the tree opens ready to run. It is done when they already
+// succeeded there for the current commands and lockfiles. ok is false when the
+// repo declares none.
+func installStep(in PlanInput, tp TargetPlan) (Step, bool) {
+	cmds := in.Manifest.Repos[tp.Target.Name].Hooks.Install
+	if tp.Target.Tracker || len(cmds) == 0 {
+		return Step{}, false
+	}
+	repo := tp.Target.Name
+	if tp.Found.Worktree != "" && tp.Found.Installed {
+		return Step{Kind: StepInstall, Repo: repo, Done: true, Text: "install hooks of " + repo + " up to date"}, true
+	}
+	return Step{Kind: StepInstall, Repo: repo, Text: "run install hooks in " + repo + ": " + strings.Join(cmds, "; ")}, true
 }
 
 func iterationName(it forge.Iteration) string {
