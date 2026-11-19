@@ -139,6 +139,10 @@ type Job struct {
 	// Override lets the call through the local period caps; it is audited as
 	// budget.override. The provider's own limits still apply.
 	Override bool
+	// Auto marks a call nobody asked for (the MR page's summary that starts
+	// by itself). On a day its profile hit a budget stop it is not made:
+	// Run answers from the cache or returns ErrAutoPaused (daystop.go).
+	Auto bool
 	// Confirm is asked when the pre-flight says so. nil means "cannot ask":
 	// a call that needs confirmation then fails with ErrNeedsConfirm.
 	Confirm func(Preflight) (bool, error)
@@ -216,6 +220,9 @@ func (s *Service) Run(ctx context.Context, j Job) (Result, error) {
 		if s.cutShortRecently(hash) {
 			return Result{}, ErrCutShortRecently
 		}
+	}
+	if j.Auto && s.stoppedToday(name) {
+		return Result{}, ErrAutoPaused
 	}
 
 	pf, err := s.preflight(ctx, j, name, p, d, model)
@@ -394,8 +401,8 @@ func (s *Service) finish(j Job, name string, p config.AIProfile, model, item, ha
 }
 
 // failed audits a driver error. A budget stop becomes a budget.stop entry
-// (and a notification); anything else an ai.* entry with outcome error, with
-// whatever cost the driver did report.
+// (and, once a day, a notification); anything else an ai.* entry with outcome
+// error, with whatever cost the driver did report.
 func (s *Service) failed(j Job, name string, p config.AIProfile, model, item string, resp Response, err error, pf Preflight) (Result, error) {
 	if stop, ok := AsStop(err); ok {
 		// A stop on the retry follows a first call that was paid for: the
@@ -422,17 +429,10 @@ func (s *Service) failed(j Job, name string, p config.AIProfile, model, item str
 	return Result{Preflight: pf, CostUSD: resp.CostUSD}, err
 }
 
-// recordStop writes the budget.stop audit entry and raises the event.
+// recordStop writes the budget.stop audit entry; the day's first for the
+// profile also raises the event (daystop.go).
 func (s *Service) recordStop(j Job, profile, model, item string, stop *StopError) {
-	s.record(audit.Entry{
-		Action: ledger.StopAction, Target: item, Item: item, Outcome: "error", Error: stop.Message,
-		Params: map[string]any{"feature": j.Feature, "profile": profile, "model": model, "source": stop.Source},
-	})
-	if s.Bus != nil {
-		e := events.New(ledger.StopAction, events.Error, "AI budget reached: "+stop.Message)
-		e.Subject = item
-		s.Bus.Publish(e)
-	}
+	RecordStop(s.Audit, s.Bus, s.Now(), s.Loc, Stopped{Item: item, Feature: j.Feature, Profile: profile, Model: model, Stop: stop})
 }
 
 // record appends an audit entry; the call it describes already happened, so
