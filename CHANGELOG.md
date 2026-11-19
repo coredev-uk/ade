@@ -1,9 +1,5 @@
 # Changelog
 
-## Unreleased
-
-- **Comments on the tracker issue:** when someone comments on a work item's tracker issue, Home's detail pane shows it after the description: `comments · 3 · C shows all`, then the newest two with author, age and the first line. `C` opens every comment, oldest first with the full text, and reads the issue again from the forge in the background (`o` opens it in the browser, `esc` goes back). `ade item <ref> --watch` shows the newest two under a `comments` rule. System notes never count, and only the tracker issue's comments are shown, not a child issue's or an MR's. The sync now stores them in `comments.json` beside the item's `item.md`; the first sync after the upgrade reads the comments of every item once to fill it.
-
 ## v0.3.0
 
 Editors and CDEs: workspaces open in a running code-server from any terminal, `ade doctor` checks the editor `host.editor` names (and `auto` honours `$EDITOR`), the config and manifests point editors at ADE's TOML schema, and releases are cut from this changelog. Also: your own sprint retro, start work that opens started work and runs install hooks, and work items with several child issues.
