@@ -162,6 +162,13 @@ func (s *Server) MergeMRAs(ref forge.Ref, username string) error {
 	return nil
 }
 
+// Now is the fake clock: what the next mutation is stamped with.
+func (s *Server) Now() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.st.clock
+}
+
 // Advance moves the fake clock forward; later mutations are stamped with it.
 func (s *Server) Advance(d time.Duration) {
 	s.mu.Lock()
