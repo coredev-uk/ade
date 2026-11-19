@@ -75,7 +75,7 @@ func LocateWith(ctx context.Context, f Forge, m *config.Manifest, ref forge.Ref)
 		return nil, fmt.Errorf("%s: %w", ref, err)
 	}
 	l := &Located{Project: m.Name, Manifest: m, Forge: f, Issue: is}
-	if ref.Project != m.Tracker.Project {
+	if !forge.SameProject(ref.Project, m.Tracker.Project) {
 		// Best effort: without the links the issue is simply read alone.
 		links, _ := f.Links(ctx, ref)
 		l.Parent = TrackerParent(ctx, f, m, is, links)
@@ -89,7 +89,7 @@ func LocateWith(ctx context.Context, f Forge, m *config.Manifest, ref forge.Ref)
 // unknown). It is nil when there is none or it cannot be read; a parent only
 // ever adds facets, so a failed read is not worth failing the caller.
 func TrackerParent(ctx context.Context, f forge.Forge, m *config.Manifest, is forge.Issue, links []forge.Link) *forge.Issue {
-	if m.Tracker.Project == "" || is.Ref.Project == m.Tracker.Project {
+	if m.Tracker.Project == "" || forge.SameProject(is.Ref.Project, m.Tracker.Project) {
 		return nil
 	}
 	var hier map[forge.Ref]forge.Ref
@@ -103,7 +103,7 @@ func TrackerParent(ctx context.Context, f forge.Forge, m *config.Manifest, is fo
 		}
 	}
 	for _, r := range refs {
-		if r.Project != m.Tracker.Project || r == is.Ref {
+		if !forge.SameProject(r.Project, m.Tracker.Project) || r == is.Ref {
 			continue
 		}
 		p, err := f.Issue(ctx, r)
