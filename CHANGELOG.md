@@ -1,9 +1,5 @@
 # Changelog
 
-## Unreleased
-
-- **Fix:** the `ade item <ref> --watch` pane no longer misses a sync: a reload that landed while `ade sync` or start work was committing read the old rows and then ignored the change for good, until the next write. The pane now asks SQLite whether the cache changed (`PRAGMA data_version`) instead of comparing the database files, and the polling fallback (where fsnotify is unavailable) signals a change again a moment after it sees it.
-
 ## v0.3.0
 
 Editors and CDEs: workspaces open in a running code-server from any terminal, `ade doctor` checks the editor `host.editor` names (and `auto` honours `$EDITOR`), the config and manifests point editors at ADE's TOML schema, and releases are cut from this changelog. Also: your own sprint retro, start work that opens started work and runs install hooks, and work items with several child issues.
