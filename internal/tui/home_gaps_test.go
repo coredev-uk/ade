@@ -189,7 +189,7 @@ func TestPaletteListsEveryAction(t *testing.T) {
 		have[e.key] = true
 		names += e.name + "\n"
 	}
-	for _, k := range []string{"s", "M", "c", "a", "A", "w", "y", "o", "n", "=", "r", "f", "p", "e", "/", "enter", "i", "U", "?", "q"} {
+	for _, k := range []string{"s", "M", "c", "C", "a", "A", "w", "y", "o", "n", "=", "r", "f", "p", "e", "/", "enter", "i", "U", "?", "q"} {
 		if !have[k] {
 			t.Errorf("no palette entry for key %q", k)
 		}

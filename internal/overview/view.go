@@ -12,6 +12,7 @@ import (
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/itemdoc"
 	"github.com/coredev-uk/ade/internal/mdrender"
+	"github.com/coredev-uk/ade/internal/records"
 )
 
 const (
@@ -24,13 +25,14 @@ const (
 func Render(s Snapshot, glyphName string, width int, now time.Time) string {
 	g := glyphSet(glyphName)
 	w := max(width, minWidth)
-	lines := body(s, g, w, false)
+	lines := body(s, g, w, false, now)
 	lines = append(lines, footer(s, w, now, nil))
 	return strings.Join(lines, "\n") + "\n"
 }
 
-// body is the scrolling part of the view, one string per line.
-func body(s Snapshot, g glyphs, w int, gone bool) []string {
+// body is the scrolling part of the view, one string per line; now dates the
+// comments.
+func body(s Snapshot, g glyphs, w int, gone bool, now time.Time) []string {
 	cw := w - 2
 	if !s.Found {
 		return []string{
@@ -66,6 +68,7 @@ func body(s Snapshot, g glyphs, w int, gone bool) []string {
 		out = append(out, "", section("Acceptance", progressGuide(done, total, "done"), w, g, false))
 		out = append(out, docLines(doc.Acceptance, cw, g)...)
 	}
+	out = append(out, commentLines(s.Comments, g, w, now)...)
 	out = append(out, "", section("notes", "", w, g, true))
 	if strings.TrimSpace(s.Notes) == "" {
 		out = append(out, " "+stFaint.Render("no notes yet"))
@@ -533,6 +536,35 @@ func docLines(text string, cw int, g glyphs) []string {
 	return out
 }
 
+// overviewComments is how many comments the pane shows: it is a glance, the
+// dashboard's `C` lists them all.
+const overviewComments = 2
+
+// commentLines is the tracker issue's human comments, newest first, one line
+// each: bold author, faint age, the body's first line cut with an ellipsis.
+// Nothing when there are none.
+func commentLines(cs []records.Comment, g glyphs, w int, now time.Time) []string {
+	if len(cs) == 0 {
+		return nil
+	}
+	guide := fmt.Sprintf("%d %s", len(cs), plural(len(cs), "comment"))
+	if len(cs) > overviewComments {
+		guide = fmt.Sprintf("newest %d of %d", overviewComments, len(cs))
+	}
+	cw := w - 2
+	out := []string{"", section("comments", guide, w, g, true)}
+	for i := len(cs) - 1; i >= max(len(cs)-overviewComments, 0); i-- {
+		c := cs[i]
+		head := stBold.Render(ansi.Truncate(c.Author, max(cw/3, 8), g.Ell)) + stFaint.Render(" "+g.Sep+" "+agoShort(now, c.At))
+		text := c.FirstLine()
+		if room := cw - lipgloss.Width(head) - 2; text != "" && room >= 4 {
+			head += "  " + ansi.Truncate(text, room, g.Ell)
+		}
+		out = append(out, " "+head)
+	}
+	return out
+}
+
 // --- footer ---------------------------------------------------------------------
 
 // footer is the faint last line: when the cache was last synced, then the
@@ -565,5 +597,20 @@ func ago(now, t time.Time) string {
 		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 	default:
 		return t.Format("2 Jan")
+	}
+}
+
+// agoShort is a compact age: now, 5m, 3h, 2d.
+func agoShort(now, t time.Time) string {
+	d := now.Sub(t)
+	switch {
+	case d < time.Minute:
+		return "now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 48*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd", int(d.Hours()/24))
 	}
 }

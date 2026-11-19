@@ -1,5 +1,4 @@
- acme/tracker#15  Rate-limit the export endpoint
- by Sam Smith (sam)
+ … 1 above
 
  ●━━●━━●━━●━━●━━◉──○  review
  as st br dr ci rv mg
@@ -34,12 +33,13 @@
  [ ] documented, with the `Retry-After` header explained in the reference
  [ ] dashboard shows it
 
+ comments ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── newest 2 of 3
+ Sandbox Dev · 3h  Confirmed on staging: the limiter trips at 50 requests per minute for every tenant
+ Kim Lee · 26h  Same for the PDF export
+
  notes ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  ask support about 50 req/min
 
  1. check the tenant list
  2. then `ade sync`
-
-
-
  synced 4m ago   j/k scroll   r reload   q quit

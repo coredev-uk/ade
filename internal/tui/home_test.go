@@ -165,7 +165,7 @@ func TestTruncLeftKeepsTail(t *testing.T) {
 // The help dialog lists every Home key in both its roomy and its tight form,
 // and the tight form fits a short terminal.
 func TestHelpListsEveryHomeKey(t *testing.T) {
-	want := []string{"j", "k", "g", "G", "tab", "t", "p", "e", "o", "n", "=", "r", ":", "f", "enter", "s", "M", "c", "a", "A", "w", "y", "S", "V", "b", "L", "i", "U", "esc", "?", "q"}
+	want := []string{"j", "k", "g", "G", "tab", "t", "p", "e", "o", "n", "=", "r", ":", "f", "enter", "s", "M", "c", "C", "a", "A", "w", "y", "S", "V", "b", "L", "i", "U", "esc", "?", "q"}
 	for _, full := range []bool{true, false} {
 		have := map[string]bool{}
 		for _, grp := range helpGroups(full) {
