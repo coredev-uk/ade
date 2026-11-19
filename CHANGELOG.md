@@ -1,10 +1,5 @@
 # Changelog
 
-## Unreleased
-
-- **Fix: running out of AI budget no longer spams notifications.** Every refused call is still audited as `budget.stop`, but only a profile's first refusal of the day raises a pop-up, an inbox entry and the `[notify.external]` command, whether it came from the dashboard, a CLI command or an agent. For the rest of that day the last-working-day summary, the sprint retro narrative and the MR page's automatic summary make no AI call on that profile (cached answers still show); the next day they try once more. A call you ask for is still tried and shows a refusal in its own dialog, section or CLI output (exit 4) without another pop-up.
-- **Budget banner on Home:** while a provider has refused a call for budget today or a cap is reached, Home shows one line under the header, `✕ AI budget reached · gw · automatic AI paused until tomorrow · b shows the budget`, and the header chip turns red (`✕ AI $0.40 / $2.00 day stopped`, or `cap` at a cap). Both clear by themselves when the day ends or spend is back under the cap.
-
 ## v0.3.0
 
 Editors and CDEs: workspaces open in a running code-server from any terminal, `ade doctor` checks the editor `host.editor` names (and `auto` honours `$EDITOR`), the config and manifests point editors at ADE's TOML schema, and releases are cut from this changelog. Also: your own sprint retro, start work that opens started work and runs install hooks, and work items with several child issues.
