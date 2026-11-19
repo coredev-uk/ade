@@ -54,7 +54,7 @@ tar xzf ade_${v}_${os}_${arch}.tar.gz && install -m 0755 ade ~/.local/bin/ade
 ade version
 ```
 
-The archive is the only thing you need besides the tools in the next section. Releases come from `CHANGELOG.md`: rename `## Unreleased` to the new version (`## v0.4.0`) in a PR, and once it is merged and CI passes on `main`, `.github/workflows/release.yml` tags that commit and runs goreleaser, with that section as the release notes. Pushing a `v*` tag by hand releases it too. Maintainers can try the build locally with `goreleaser build --snapshot --clean --single-target` (in `nix develop`).
+The archive is the only thing you need besides the tools in the next section. Releases are cut by release-please: it keeps a release PR open on `main` with the next version and its `CHANGELOG.md` section, written from the Conventional Commit titles merged since the last tag. Merging that PR, once CI passes on `main`, tags it, creates the GitHub release with that section as the notes, and `.github/workflows/release.yml` runs goreleaser to upload the archives. Maintainers can try the build locally with `goreleaser build --snapshot --clean --single-target` (in `nix develop`).
 
 ## 3. Tools ADE uses
 

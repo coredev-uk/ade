@@ -35,14 +35,14 @@ archives:
 checksum:
   name_template: checksums.txt
 
+# Release notes come from release-please (CHANGELOG.md), which creates the
+# GitHub release before goreleaser runs; goreleaser only uploads the archives
+# to it and leaves its notes alone.
 changelog:
-  sort: asc
-  filters:
-    exclude:
-      - "^docs:"
-      - "^test:"
+  disable: true
 
 release:
+  mode: keep-existing
   github:
     owner: coredev-uk
     name: ade
