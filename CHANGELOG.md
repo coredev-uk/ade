@@ -1,9 +1,5 @@
 # Changelog
 
-## Unreleased
-
-- **Short repo names on Home:** a review or item ref in a repo whose name is longer than 10 characters shows the repo's acronym (`customer-portal-frontend!7` reads `cpf!7`), or the name cut to 10 characters when it is one word, so one long repo name no longer widens the ref column and cuts every title short. The MR page keeps the full repo name.
-
 ## v0.3.0
 
 Editors and CDEs: workspaces open in a running code-server from any terminal, `ade doctor` checks the editor `host.editor` names (and `auto` honours `$EDITOR`), the config and manifests point editors at ADE's TOML schema, and releases are cut from this changelog. Also: your own sprint retro, start work that opens started work and runs install hooks, and work items with several child issues.
