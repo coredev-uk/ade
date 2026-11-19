@@ -555,7 +555,7 @@ func layoutSpec(ctx context.Context, p *prepared) LayoutSpec {
 }
 
 // DetectTools looks up the programs the layouts use on PATH; the editor is the
-// resolved host.editor and opens dir.
+// resolved host.editor and opens dir, and the shell is $SHELL.
 func DetectTools(ade string, ed editor.Editor, dir string) Tools {
 	find := func(name string) string {
 		if p, err := exec.LookPath(name); err == nil {
@@ -563,7 +563,7 @@ func DetectTools(ade string, ed editor.Editor, dir string) Tools {
 		}
 		return ""
 	}
-	t := Tools{Ade: ade, Lazygit: find("lazygit"), Delta: find("delta"), Omp: find("omp")}
+	t := Tools{Ade: ade, Lazygit: find("lazygit"), Delta: find("delta"), Omp: find("omp"), Shell: os.Getenv("SHELL")}
 	t.Editor, t.EditorArgs = ed.PaneCommand(dir)
 	return t
 }

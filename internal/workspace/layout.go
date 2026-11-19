@@ -37,6 +37,9 @@ type Tools struct {
 	Lazygit    string
 	Delta      string
 	Omp        string
+	// Shell is the user's shell ($SHELL as ADE sees it, outside any dev shell).
+	// Empty when unknown.
+	Shell string
 }
 
 // Pane is one command pane.
@@ -228,16 +231,27 @@ func (s LayoutSpec) stackPanes(b *kdl, depth int) {
 
 // wrap runs a pane's program inside the worktree's dev shell (direnv exec,
 // nix develop) so the editor, omp and the shell see the repo's tools. A plain
-// shell pane becomes an explicit `$SHELL`, because zellij needs a program to
-// wrap. Panes of a tree without a dev shell are untouched.
+// shell pane becomes an explicit program, because zellij needs one to wrap.
+// `nix develop` (and `nix print-dev-env`, which `use flake` loads) exports $SHELL as stdenv's bash,
+// which has no line editing, so the user's shell is restored inside it: the
+// shell pane runs it and every wrapped program (an editor's :terminal, omp's
+// shell) sees it as $SHELL. Panes of a tree without a dev shell are untouched.
 func (s LayoutSpec) wrap(c command) command {
 	if !s.Devshell.Active() {
 		return c
 	}
-	if c.prog == "" {
+	sh := s.Tools.Shell
+	switch {
+	case c.prog == "" && sh != "":
+		c.prog, c.args = sh, nil
+	case c.prog == "":
 		c.prog, c.args = "sh", []string{"-c", `exec "${SHELL:-sh}"`}
 	}
-	argv := s.Devshell.Wrap(append([]string{c.prog}, c.args...))
+	argv := append([]string{c.prog}, c.args...)
+	if sh != "" {
+		argv = append([]string{"env", "SHELL=" + sh}, argv...)
+	}
+	argv = s.Devshell.Wrap(argv)
 	c.prog, c.args = argv[0], argv[1:]
 	return c
 }
