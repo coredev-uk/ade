@@ -87,9 +87,13 @@ func (e *editor) view(w, rows int, placeholder string) []string {
 	return out
 }
 
-// editing is the editor that pasted text goes to: the open comment, reply,
-// edit, deny or submit dialog's, or the Start work dialog's MR body.
+// editing is the editor that pasted text goes to: the notes editor, the open
+// comment, reply, edit, deny or submit dialog's, or the Start work dialog's MR
+// body.
 func (m *model) editing() *editor {
+	if m.ne != nil {
+		return &m.ne.ed
+	}
 	if m.sw != nil && m.sw.body != nil {
 		return m.sw.body
 	}
@@ -106,7 +110,11 @@ func (m *model) editing() *editor {
 // paste puts bracketed-paste text into the open editor; the Deny reason is a
 // one-liner, so its newlines become spaces.
 func (m *model) paste(msg tea.PasteMsg) {
-	if m.nt != nil && m.nt.adding {
+	if m.ne != nil {
+		m.ne.ed.handle(msg)
+		return
+	}
+	if m.nt != nil && m.nt.rs == nil { // the quick-add line
 		m.nt.input += strings.Join(strings.Fields(msg.Content), " ")
 		return
 	}

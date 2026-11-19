@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/coredev-uk/ade/internal/domain"
 	"github.com/coredev-uk/ade/internal/forge"
+	"github.com/coredev-uk/ade/internal/forge/gitlab/fake"
 	"github.com/coredev-uk/ade/internal/records"
 )
 
@@ -19,6 +21,7 @@ func newNotesEnv(t *testing.T) (*swEnvT, *records.Store) {
 	t.Helper()
 	e := newClassifyEnv(t)
 	e.m.results[0].Forge = "sandbox-gitlab"
+	e.m.w = 220 // a preview pane wide enough that the notes keep their phrases on one line
 	st := records.New(e.app.RecordsDir)
 	wi := e.item(11, "Exports page sometimes shows stale totals")
 	if _, _, err := st.WriteSnapshot("sandbox-gitlab", wi, nil, 5); err != nil {
@@ -34,110 +37,168 @@ func (e *swEnvT) open(f func(model) (model, tea.Cmd)) {
 	e.settle(cmd)
 }
 
-func TestNotesDialogShowsYourNotesAndWhereTheyGo(t *testing.T) {
-	e, st := newNotesEnv(t)
-	if err := st.WriteNotes("sandbox-gitlab", trk(11), "support says totals lag only after a filter change\n\n- check the cache key"); err != nil {
-		t.Fatal(err)
-	}
-	e.open(model.openNotes)
-	if e.m.nt == nil {
-		t.Fatal("n on a Home item opens the dialog")
-	}
-	e.want("Notes · "+trk(11).String(), "Exports page sometimes shows stale totals", "yours · ADE never rewrites them",
-		"support says totals lag only after a filter change", "- check the cache key",
-		"Added to agent plans, runs and address-comments prompts", "--no-notes leaves them out", "e edit in", "esc close")
-	e.press("esc")
-	if e.m.nt != nil {
-		t.Fatal("esc closes")
-	}
-}
+func ctrlKey(r rune) tea.KeyPressMsg { return tea.KeyPressMsg{Code: r, Mod: tea.ModCtrl} }
 
-func TestNotesDialogWithoutNotesOrRecord(t *testing.T) {
-	e, _ := newNotesEnv(t)
-	e.open(model.openNotes)
-	e.want("no notes yet · press e to write some")
-	e.press("esc")
-
-	// An item the sync has not written a record for gets one from the cache:
-	// notes never wait for a sync.
-	e.m.results[0].Items = append(e.m.results[0].Items, e.item(12, "Never synced"))
-	e.m.rebuildHome("")
-	e.selectRow(trk(12).String())
-	called := false
-	old := notesExec
-	notesExec = func(*exec.Cmd, func(error) tea.Msg) tea.Cmd { called = true; return nil }
-	t.Cleanup(func() { notesExec = old })
-	e.open(model.openNotes)
-	e.want("no notes yet · press e to write some")
-	e.wantNot("press U")
-	if _, err := records.New(e.app.RecordsDir).Read("sandbox-gitlab", trk(12)); err != nil {
-		t.Fatalf("opening the dialog did not make the record: %v", err)
-	}
-	e.press("e")
-	if !called {
-		t.Error("e did not open the editor on the record made from the cache")
-	}
-}
-
-func TestNotesEditOpensTheRecordAtTheNotesAndReloads(t *testing.T) {
-	e, st := newNotesEnv(t)
-	e.app.Config.Host.Editor = "$EDITOR"
-	t.Setenv("VISUAL", "my-test-editor")
-	var got *exec.Cmd
-	old := notesExec
-	notesExec = func(c *exec.Cmd, done func(error) tea.Msg) tea.Cmd {
-		got = c
-		return func() tea.Msg { return done(nil) }
-	}
-	t.Cleanup(func() { notesExec = old })
-
-	e.open(model.openNotes)
-	rec, _ := st.Read("sandbox-gitlab", trk(11))
-	e.press("e")
-	if got == nil {
-		t.Fatal("e did not start the editor")
-	}
-	args := strings.Join(got.Args, " ")
-	if !strings.Contains(args, rec.Path) || !strings.Contains(args, "my-test-editor") {
-		t.Errorf("editor command %q: want host.editor and the record", args)
-	}
-	// The editor saves; the dialog shows what was written when it returns.
-	if err := st.WriteNotes("sandbox-gitlab", trk(11), "written in the editor"); err != nil {
-		t.Fatal(err)
-	}
-	next, cmd := e.m.Update(notesEditedMsg{d: e.m.nt, err: nil})
+func (e *swEnvT) pressMsg(k tea.KeyPressMsg) {
+	e.t.Helper()
+	next, cmd := e.m.Update(k)
 	e.m = next.(model)
 	e.settle(cmd)
-	e.want("written in the editor")
-	// The snapshot is still ADE's: the editor changed only the notes.
+}
+
+// Text written freely under `## Notes` (in $EDITOR, by hand) is the notes: the
+// detail pane shows it as written, not "none yet".
+func TestDetailPaneShowsFreeFormNotes(t *testing.T) {
+	e, st := newNotesEnv(t)
+	e.want("none yet · n writes one")
+	if err := st.WriteNotes("sandbox-gitlab", trk(11), "support says totals lag after a filter change\n\nask Rae about the cache key"); err != nil {
+		t.Fatal(err)
+	}
+	e.m.loadNotes()
+	e.want("support says totals lag after a filter change", "ask Rae about the cache key", "n edits")
+	e.wantNot("none yet")
+}
+
+// Long notes show their first lines, cut with a faint ellipsis like the
+// description preview.
+func TestDetailPaneCutsLongNotes(t *testing.T) {
+	e, st := newNotesEnv(t)
+	var lines []string
+	for i := range 30 {
+		lines = append(lines, fmt.Sprintf("line %02d of the notes", i))
+	}
+	if err := st.WriteNotes("sandbox-gitlab", trk(11), strings.Join(lines, "\n\n")); err != nil {
+		t.Fatal(err)
+	}
+	e.m.loadNotes()
+	e.want("line 00 of the notes", "…")
+	e.wantNot("line 29 of the notes")
+}
+
+// n turns the pane's notes into an editor prefilled with them; typing and esc
+// save only the notes section, and the pane shows the text at once, with no
+// sync. Home's keys type while it is open.
+func TestNotesEditInPlaceSavesOnEscWithoutASync(t *testing.T) {
+	e, st := newNotesEnv(t)
+	if err := st.WriteNotes("sandbox-gitlab", trk(11), "kept line"); err != nil {
+		t.Fatal(err)
+	}
+	e.m.loadNotes()
+	sel := e.m.homeSel
+	e.press("n")
+	if e.m.ne == nil {
+		t.Fatal("n on a Home item opens the notes editor")
+	}
+	e.want("editing", "kept line", "ctrl+s save", "esc save and close", "ctrl+e edit in")
+	e.typ("check the export job")
+	e.press("enter")
+	e.typ("q j k")
+	if e.m.ne == nil || e.m.homeSel != sel {
+		t.Fatal("Home's keys acted while the notes were edited")
+	}
+	e.press("esc")
+	if e.m.ne != nil {
+		t.Fatal("esc leaves the editor")
+	}
+	got, _ := st.ReadNotes("sandbox-gitlab", trk(11))
+	if got != "kept line\ncheck the export job\nq j k\n" {
+		t.Errorf("notes = %q", got)
+	}
+	e.want("check the export job", "q j k")
+	e.wantNot("editing")
+	if e.m.syncing || e.m.updating {
+		t.Error("saving the notes started a refresh")
+	}
+	rec, _ := st.Read("sandbox-gitlab", trk(11))
 	if b, _ := os.ReadFile(rec.Path); !strings.Contains(string(b), "# Exports page sometimes shows stale totals") {
 		t.Errorf("record lost its snapshot:\n%s", b)
 	}
 }
 
-func TestNotesDialogScrollsLongNotes(t *testing.T) {
-	e, st := newNotesEnv(t)
-	var lines []string
-	for i := range 60 {
-		lines = append(lines, "note line "+strings.Repeat("x", i%7)+" "+string(rune('A'+i%26)))
+// An item no sync has written a record for gets one from the cache: notes
+// never wait for a sync. ctrl+s saves like esc.
+func TestNotesEditMakesTheRecordFromTheCache(t *testing.T) {
+	e, _ := newNotesEnv(t)
+	e.m.results[0].Items = append(e.m.results[0].Items, e.item(12, "Never synced"))
+	e.m.rebuildHome("")
+	e.selectRow(trk(12).String())
+	e.press("n")
+	st := records.New(e.app.RecordsDir)
+	if _, err := st.Read("sandbox-gitlab", trk(12)); err != nil {
+		t.Fatalf("n did not make the record: %v", err)
 	}
-	if err := st.WriteNotes("sandbox-gitlab", trk(11), strings.Join(lines, "\n")); err != nil {
-		t.Fatal(err)
+	e.want("your notes on this item")
+	e.typ("first words")
+	e.pressMsg(ctrlKey('s'))
+	if e.m.ne != nil {
+		t.Fatal("ctrl+s leaves the editor")
 	}
-	e.m.h = 30
-	e.open(model.openNotes)
-	e.want("more lines · j scrolls")
-	e.wantNot("lines above")
-	e.press("j", "j")
-	e.want("2 lines above")
+	if got, _ := st.ReadNotes("sandbox-gitlab", trk(12)); got != "first words\n" {
+		t.Errorf("notes = %q", got)
+	}
+	e.want("first words")
 }
 
-func TestNotesDialogOnlyOpensOnAnItemRow(t *testing.T) {
+// ctrl+e saves what was typed and hands the record to the editor at the
+// notes; the pane shows what the editor wrote when it returns.
+func TestNotesEditCtrlEHandsTheRecordToTheEditor(t *testing.T) {
+	e, st := newNotesEnv(t)
+	e.app.Config.Host.Editor = "$EDITOR"
+	t.Setenv("VISUAL", "my-test-editor")
+	var got *exec.Cmd
+	var before string
+	old := notesExec
+	notesExec = func(c *exec.Cmd, done func(error) tea.Msg) tea.Cmd {
+		got = c
+		before, _ = st.ReadNotes("sandbox-gitlab", trk(11))
+		return func() tea.Msg {
+			if err := st.WriteNotes("sandbox-gitlab", trk(11), "written in the editor"); err != nil {
+				t.Error(err)
+			}
+			return done(nil)
+		}
+	}
+	t.Cleanup(func() { notesExec = old })
+
+	e.press("n")
+	e.typ("typed first")
+	e.pressMsg(ctrlKey('e'))
+	if got == nil {
+		t.Fatal("ctrl+e did not start the editor")
+	}
+	rec, _ := st.Read("sandbox-gitlab", trk(11))
+	if args := strings.Join(got.Args, " "); !strings.Contains(args, rec.Path) || !strings.Contains(args, "my-test-editor") {
+		t.Errorf("editor command %q: want host.editor and the record", args)
+	}
+	if before != "typed first\n" {
+		t.Errorf("notes when the editor started = %q: want what was typed", before)
+	}
+	if e.m.ne != nil {
+		t.Error("the inline editor stayed open behind $EDITOR")
+	}
+	e.want("written in the editor")
+}
+
+// Below 100 columns the editor takes the detail view without tab, and the
+// list comes back when it closes.
+func TestNotesEditOnANarrowTerminal(t *testing.T) {
+	e, _ := newNotesEnv(t)
+	e.m.w, e.m.h = 80, 30
+	e.press("n")
+	e.want("editing")
+	e.press("esc")
+	e.wantNot("editing")
+	if e.m.showDetail {
+		t.Error("closing the editor left the detail view on")
+	}
+}
+
+func TestNotesEditOnlyOnAnItemRow(t *testing.T) {
 	e, _ := newNotesEnv(t)
 	e.m.page = pageTrees
-	e.open(model.openNotes)
-	if e.m.nt != nil {
-		t.Error("the notes dialog opened off the Home page")
+	e.press("n")
+	if e.m.ne != nil {
+		t.Error("the notes editor opened off the Home page")
 	}
 }
 
@@ -168,9 +229,9 @@ func TestAgentMenuOffersNotesAndRemembersTheToggle(t *testing.T) {
 
 func TestNoteAddSavesADatedLineAndShowsItInTheDetailPane(t *testing.T) {
 	e, st := newNotesEnv(t)
-	e.m.w, e.m.h = 140, 48
+	e.m.w, e.m.h = 220, 48
 	e.press("N")
-	if e.m.nt == nil || !e.m.nt.adding {
+	if e.m.nt == nil || e.m.nt.rs != nil {
 		t.Fatal("N on a Home item opens the quick-add form")
 	}
 	e.want("Note · "+trk(11).String(), "enter save", "tab or !")
@@ -220,24 +281,9 @@ func TestNoteAddSavesADatedLineAndShowsItInTheDetailPane(t *testing.T) {
 	}
 }
 
-func TestNoteDetailPaneHintAndNewestThree(t *testing.T) {
-	e, st := newNotesEnv(t)
-	e.m.w, e.m.h = 140, 48
-	e.want("N adds one")
-	base := time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)
-	for i, txt := range []string{"first", "second", "third", "fourth"} {
-		if err := st.AppendNote("sandbox-gitlab", trk(11), txt, base.Add(time.Duration(i)*time.Hour), false); err != nil {
-			t.Fatal(err)
-		}
-	}
-	e.m.loadNotes()
-	e.want("fourth", "third", "second", "+ 1 older")
-	e.wantNot("first", "N adds one")
-}
-
 func TestNotesAreReadOncePerRefreshNotPerRender(t *testing.T) {
 	e, st := newNotesEnv(t)
-	e.m.w, e.m.h = 140, 48
+	e.m.w, e.m.h = 220, 48
 	if err := st.AppendNote("sandbox-gitlab", trk(11), "cached note", time.Now(), true); err != nil {
 		t.Fatal(err)
 	}
@@ -281,4 +327,38 @@ func TestNoteAddShowsTheTailOfALongInput(t *testing.T) {
 	e.typ("THE-HEAD-OF-IT " + strings.Repeat("and a long note ", 8) + "THE-END-OF-IT")
 	e.want("THE-END-OF-IT")
 	e.wantNot("THE-HEAD-OF-IT")
+}
+
+// On the MR page, n on Overview edits the item's notes the same way; on
+// Review, n stays deny.
+func TestMRPageOverviewEditsTheItemsNotes(t *testing.T) {
+	e := newMREnv(t, fake.Free)
+	e.m.app.RecordsDir = t.TempDir()
+	selectTracker(e)
+	e.press("enter")
+	if e.m.mr == nil || e.m.mr.tab != tabOverview || e.m.mr.item == nil {
+		t.Fatal("enter on the item did not open its MR page on Overview")
+	}
+	e.want("n edit notes")
+	e.press("n")
+	if e.m.ne == nil {
+		t.Fatal("n on Overview did not open the notes editor")
+	}
+	e.want("editing", "ctrl+s save")
+	e.typ("ask about the burst")
+	e.press("esc")
+	tr := forge.Ref{Project: grp + "/tracker", IID: 1}
+	if got, _ := records.New(e.m.app.RecordsDir).ReadNotes("f", tr); got != "ask about the burst\n" {
+		t.Errorf("notes = %q", got)
+	}
+	if e.m.mr == nil {
+		t.Fatal("esc in the editor left the MR page")
+	}
+	e.want("ask about the burst")
+
+	e.press("4")
+	e.press("n")
+	if e.m.ne != nil {
+		t.Error("n on Review opened the notes editor")
+	}
 }

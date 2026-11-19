@@ -67,6 +67,11 @@ func (m *model) mrKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 		if p.tab != tabDiff && p.tab != tabReview || p.data == nil {
 			return m.copyMR(), true
 		}
+	case "n":
+		if p.tab == tabOverview && p.item != nil { // n is deny on Diff and Review
+			*m = m.beginNoteEdit(p.item)
+			return nil, true
+		}
 	}
 	if p.data == nil {
 		return m.overviewKey(ks), true
@@ -407,6 +412,9 @@ func (m model) mrFooter(w int) string {
 			tabKeys = append(tabKeys, "d", "summary/raw", "s", "new summary")
 		}
 	}
+	if p.tab == tabOverview && p.item != nil {
+		tabKeys = append(tabKeys, "n", "edit notes")
+	}
 	act := []string{"a", "approve", "R", "ready/draft", "m", "merge", "S", "submit review"}
 	if m.aiOn() {
 		act = append(act, "A", "agent review", "B", "AI description")
@@ -464,6 +472,7 @@ func mrHelpRows(ai bool) [][2]string {
 		{"c", "comment on the diff line"},
 		{"D", "Diff: open delta (or your pager)"},
 		{"y n e", "accept, deny, edit a draft"},
+		{"n", "Overview: edit your notes on the item"},
 		{"Y s d", "accept all, severity, delete"},
 		{"S", "submit the review as one batch"},
 		{"a R m", "approve, ready/draft, merge"},
