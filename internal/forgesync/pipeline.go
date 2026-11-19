@@ -301,7 +301,7 @@ func mergeIssues(lists ...[]forge.Issue) []forge.Issue {
 func (p *pipeline) myOpenIssues(me forge.User, repos []repoData) []forge.Issue {
 	var out []forge.Issue
 	for _, r := range repos {
-		if r.path == p.m.Tracker.Project {
+		if forge.SameProject(r.path, p.m.Tracker.Project) {
 			continue
 		}
 		for _, is := range r.issues {
@@ -315,7 +315,7 @@ func (p *pipeline) myOpenIssues(me forge.User, repos []repoData) []forge.Issue {
 
 // inTracker keeps the refs that are issues of the tracker project.
 func (p *pipeline) inTracker(refs []forge.Ref) []forge.Ref {
-	return slices.DeleteFunc(slices.Clone(refs), func(r forge.Ref) bool { return r.Project != p.m.Tracker.Project })
+	return slices.DeleteFunc(slices.Clone(refs), func(r forge.Ref) bool { return !forge.SameProject(r.Project, p.m.Tracker.Project) })
 }
 
 // parents finds the tracker issue of each code-repo issue that belongs to one,
@@ -336,7 +336,7 @@ func (p *pipeline) parents(ctx context.Context, me forge.User, repos []repoData)
 	out := map[forge.Ref]forge.Ref{}
 	var asked []forge.Ref
 	for _, r := range repos {
-		if r.path == p.m.Tracker.Project {
+		if forge.SameProject(r.path, p.m.Tracker.Project) {
 			continue
 		}
 		for _, is := range r.issues {
@@ -354,7 +354,7 @@ func (p *pipeline) parents(ctx context.Context, me forge.User, repos []repoData)
 			maps.Copy(out, p.previousParents())
 		default:
 			for child, parent := range got {
-				if parent.Project == p.m.Tracker.Project {
+				if forge.SameProject(parent.Project, p.m.Tracker.Project) {
 					out[child] = parent
 				}
 			}
@@ -373,7 +373,7 @@ func (p *pipeline) parents(ctx context.Context, me forge.User, repos []repoData)
 			return fmt.Errorf("%s: %w", rest[i].Ref, err)
 		}
 		for _, l := range links {
-			if domain.IsChildLink(l) && l.Ref.Project == p.m.Tracker.Project {
+			if domain.IsChildLink(l) && forge.SameProject(l.Ref.Project, p.m.Tracker.Project) {
 				found[i] = l.Ref
 				break
 			}
@@ -525,11 +525,11 @@ func (p *pipeline) candidates(ctx context.Context, repos []repoData, links [][]f
 }
 
 func (p *pipeline) knownProject(path string) bool {
-	if path == p.m.Tracker.Project {
+	if forge.SameProject(path, p.m.Tracker.Project) {
 		return true
 	}
 	for _, r := range p.m.Repos {
-		if r.Path == path {
+		if forge.SameProject(r.Path, path) {
 			return true
 		}
 	}
@@ -571,7 +571,7 @@ func (p *pipeline) roots(me forge.User, tracker []forge.Issue, links [][]forge.L
 		out = append(out, root{issue: t, links: links[i], mrs: mrsFor(index, refs)})
 	}
 	for _, r := range repos {
-		if r.path == p.m.Tracker.Project {
+		if forge.SameProject(r.path, p.m.Tracker.Project) {
 			continue
 		}
 		for _, is := range r.issues {

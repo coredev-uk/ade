@@ -502,7 +502,7 @@ func useChild(m *config.Manifest, ch Choices, t Target) bool {
 	case ch.Child == ChildAlways:
 		return true
 	}
-	return t.Project != m.Tracker.Project
+	return !forge.SameProject(t.Project, m.Tracker.Project)
 }
 
 func planTarget(in PlanInput, t Target) TargetPlan {

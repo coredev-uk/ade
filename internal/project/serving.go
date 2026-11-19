@@ -9,6 +9,7 @@ import (
 
 	"github.com/coredev-uk/ade/internal/app"
 	"github.com/coredev-uk/ade/internal/config"
+	"github.com/coredev-uk/ade/internal/forge"
 )
 
 // ManifestLoader reads the manifest of a registered project: FetchManifest,
@@ -23,7 +24,7 @@ var (
 
 // Serves reports whether m's tracker or one of its repos is the project at path.
 func Serves(m *config.Manifest, path string) bool {
-	return m.Tracker.Project == path || slices.ContainsFunc(slices.Collect(maps.Values(m.Repos)), func(r config.Repo) bool { return r.Path == path })
+	return forge.SameProject(m.Tracker.Project, path) || slices.ContainsFunc(slices.Collect(maps.Values(m.Repos)), func(r config.Repo) bool { return forge.SameProject(r.Path, path) })
 }
 
 // Serving returns the manifest of the first registered project whose tracker

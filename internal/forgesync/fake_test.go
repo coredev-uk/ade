@@ -73,7 +73,7 @@ func (f *memForge) ListIssues(_ context.Context, q forge.IssueQuery) ([]forge.Is
 	}
 	var out []forge.Issue
 	for _, is := range f.issues {
-		if is.Ref.Project != q.Project || !stateMatches(q.State, is.State) {
+		if !forge.SameProject(is.Ref.Project, q.Project) || !stateMatches(q.State, is.State) { // paths are case-insensitive, as on GitLab
 			continue
 		}
 		if q.Assignee != "" && !hasUser(is.Assignees, q.Assignee) {
@@ -123,7 +123,7 @@ func (f *memForge) ListMRs(_ context.Context, q forge.MRQuery) ([]forge.MR, erro
 	defer f.mu.Unlock()
 	var out []forge.MR
 	for _, mr := range f.mrs {
-		if mr.Ref.Project != q.Project || !stateMatches(q.State, mr.State) {
+		if !forge.SameProject(mr.Ref.Project, q.Project) || !stateMatches(q.State, mr.State) {
 			continue
 		}
 		if q.Reviewer != "" && !hasUser(mr.Reviewers, q.Reviewer) {
