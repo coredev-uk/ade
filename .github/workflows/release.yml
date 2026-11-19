@@ -1,22 +1,89 @@
 name: Release
 
+# A release is cut when main's CHANGELOG.md starts with a version heading
+# (`## v1.2.3`, renamed from `## Unreleased` in the PR) whose tag does not exist
+# yet, once CI has passed on that commit. Pushing a `v*` tag by hand still
+# releases that tag. Release notes are the version's CHANGELOG section.
+#
+# The tag is pushed with GITHUB_TOKEN, which starts no other workflow run, so
+# goreleaser runs here in the same job rather than from a tag-push trigger.
+
 on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
   push:
     tags: ["v*"]
 
 permissions:
   contents: write
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   goreleaser:
+    if: >-
+      github.event_name == 'push' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
           fetch-depth: 0
+
+      - name: Decide the version
+        id: version
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            tag=$GITHUB_REF_NAME
+          else
+            tag=$(scripts/release/changelog.sh version)
+            if [ -z "$tag" ]; then
+              echo "CHANGELOG.md starts with no version heading: nothing to release"
+              exit 0
+            fi
+            if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+              echo "$tag is already tagged: nothing to release"
+              exit 0
+            fi
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Tag the commit
+        if: steps.version.outputs.tag != '' && github.event_name == 'workflow_run'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "$TAG"
+          git push origin "refs/tags/$TAG"
+
+      - name: Release notes from CHANGELOG.md
+        if: steps.version.outputs.tag != ''
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if scripts/release/changelog.sh notes "$TAG" > "$RUNNER_TEMP/notes.md"; then
+            echo "NOTES=$RUNNER_TEMP/notes.md" >> "$GITHUB_ENV"
+          else
+            echo "no '## $TAG' section in CHANGELOG.md: goreleaser writes the notes from the commits"
+          fi
+
       - uses: DeterminateSystems/nix-installer-action@main
+        if: steps.version.outputs.tag != ''
       - uses: DeterminateSystems/magic-nix-cache-action@main
+        if: steps.version.outputs.tag != ''
+
       - name: Release
-        run: nix develop -c goreleaser release --clean
+        if: steps.version.outputs.tag != ''
+        run: |
+          set --
+          if [ -n "${NOTES:-}" ]; then set -- --release-notes "$NOTES"; fi
+          nix develop -c goreleaser release --clean "$@"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
