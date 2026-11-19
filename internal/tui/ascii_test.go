@@ -38,7 +38,7 @@ func assertASCII(t *testing.T, name, screen string) {
 func TestAsciiGlyphSetDrawsOnlyASCII(t *testing.T) {
 	for _, w := range []int{140, 80} {
 		// Home, its pages and every dialog opened from an item row.
-		keys := []string{"", "?", ":", "i", "s", "n", "=", ">", "c", "a", "A", "S", "V", "b", "L", "w", "v", "W", "M", "f", "/", "e", "tab"}
+		keys := []string{"", "?", ":", "i", "s", "n", "=", ">", "c", "C", "a", "A", "S", "V", "b", "L", "w", "v", "W", "M", "f", "/", "e", "tab"}
 		for _, k := range keys {
 			e := newSWEnv(t)
 			e.m.g, e.m.w, e.m.h = asciiGlyphs, w, 44

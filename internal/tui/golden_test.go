@@ -4,13 +4,16 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/exp/teatest/v2"
 
+	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/forge/gitlab/fake"
 	"github.com/coredev-uk/ade/internal/forgesync"
 	"github.com/coredev-uk/ade/internal/goldentest"
+	"github.com/coredev-uk/ade/internal/records"
 )
 
 // Golden-file tests (internal/tui/testdata/golden/*.golden): the dashboard
@@ -206,5 +209,50 @@ func TestGoldenStartWork(t *testing.T) {
 			name: "startwork_confirm", w: s.w, h: s.h, asciiToo: true, noColorToo: true,
 			build: func(t *testing.T, a bool) (model, goldentest.Drive) { return swGolden(t, a, true) },
 		}.run(t)
+	}
+}
+
+// --- Tracker issue comments -----------------------------------------------------
+
+// commentsGolden is Home with two stored comments on tracker#1 (the selected
+// row); open shows the comments view as the forge answered it. The ages are
+// relative to now, far enough from a unit boundary to read the same however
+// long the test takes.
+func commentsGolden(t *testing.T, ascii, open bool) (model, goldentest.Drive) {
+	h := homeHarness(t, 160)
+	if ascii {
+		h.m.g = asciiGlyphs
+	}
+	h.m.app.RecordsDir = t.TempDir()
+	res := sampleResult()
+	res.Forge = "f"
+	now := time.Now()
+	notes := []forge.Note{
+		{Author: forge.User{Username: "reviewer-rae", Name: "Rae Reviewer"}, Body: "Support says the **CSV** export fails too.\n\n- seen during the nightly batch\n- only for tenants with more than 10k rows", CreatedAt: now.Add(-50 * time.Hour)},
+		{Author: forge.User{Username: "dev", Name: "Sandbox Dev"}, Body: "assigned to @dev", System: true, CreatedAt: now.Add(-49 * time.Hour)},
+		{Author: forge.User{Username: "dev", Name: "Sandbox Dev"}, Body: "Confirmed on staging: the limiter trips at 50 requests, see `ade items`.", CreatedAt: now.Add(-3*time.Hour - 10*time.Minute)},
+	}
+	if err := records.New(h.m.app.RecordsDir).WriteComments("f", res.Items[1].Ref, notes, 20); err != nil {
+		t.Fatal(err)
+	}
+	next, _ := h.m.Update(resultsMsg{results: []forgesync.Result{res}})
+	h.m = next.(model)
+	h.m.homeLoaded = true
+	if open {
+		h.m, _ = h.m.openComments() // the forge read is answered below, not run
+		next, _ = h.m.Update(commentsMsg{d: h.m.cm, comments: records.CommentsFrom(notes, 20)})
+		h.m = next.(model)
+	}
+	return h.m, nil
+}
+
+func TestGoldenComments(t *testing.T) {
+	golden{name: "home_comments", w: 160, h: 45, asciiToo: true, noColorToo: true, build: func(t *testing.T, a bool) (model, goldentest.Drive) {
+		return commentsGolden(t, a, false)
+	}}.run(t)
+	for _, s := range goldenSizes {
+		golden{name: "comments", w: s.w, h: s.h, asciiToo: true, noColorToo: true, build: func(t *testing.T, a bool) (model, goldentest.Drive) {
+			return commentsGolden(t, a, true)
+		}}.run(t)
 	}
 }

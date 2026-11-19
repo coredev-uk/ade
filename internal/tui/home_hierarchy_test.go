@@ -45,6 +45,14 @@ app  = ["web"]
 // syncHierarchy syncs a fake GitLab seeded with the hierarchy cases.
 func syncHierarchy(t *testing.T, mutate func(*fake.Server, fake.HierarchyCases)) (forgesync.Result, fake.HierarchyCases) {
 	t.Helper()
+	_, _, res, cases := syncHierarchyEnv(t, mutate)
+	return res, cases
+}
+
+// syncHierarchyEnv is syncHierarchy that also returns the fake and the app
+// whose records the sync wrote.
+func syncHierarchyEnv(t *testing.T, mutate func(*fake.Server, fake.HierarchyCases)) (*fake.Server, *app.App, forgesync.Result, fake.HierarchyCases) {
+	t.Helper()
 	srv := fake.New(fake.Free)
 	t.Cleanup(srv.Close)
 	cases := srv.SeedHierarchyCases()
@@ -75,7 +83,7 @@ func syncHierarchy(t *testing.T, mutate func(*fake.Server, fake.HierarchyCases))
 	if err != nil || len(res) != 1 || res[0].Err != "" {
 		t.Fatalf("sync: %+v %v", res, err)
 	}
-	return res[0], cases
+	return srv, a, res[0], cases
 }
 
 func sectionOf(rows []homeRow, ref forge.Ref) (homeSection, bool) {

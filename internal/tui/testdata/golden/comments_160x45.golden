@@ -1,0 +1,18 @@
+ ADE  Home · worktrees                                                                                                                                no unread
+                              ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+                              │ Comments · g/tracker#1                                                                           │
+                              │                                                                                                  │
+                              │ Rate-limit the export endpoint                                                                   │
+                              │                                                                                                  │
+                              │  Tracker issue ───────────────────────────────────────────────────── 2 comments · read just now  │
+                              │ Rae Reviewer · 2d                                                                                │
+                              │   Support says the CSV export fails too.                                                         │
+                              │                                                                                                  │
+                              │   • seen during the nightly batch                                                                │
+                              │   • only for tenants with more than 10k rows                                                     │
+                              │                                                                                                  │
+                              │ Sandbox Dev · 3h                                                                                 │
+                              │   Confirmed on staging: the limiter trips at 50 requests, see `ade items`.                       │
+                              │                                                                                                  │
+                              │ j/k scroll   o browser   esc back                                                                │
+                              ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯

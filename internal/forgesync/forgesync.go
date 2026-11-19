@@ -221,19 +221,32 @@ func (s *Service) writeRecords(ctx context.Context, f forge.Forge, m *config.Man
 		}
 	}
 	var warns []string
+	keep := s.App.Config.Records.SnapshotComments
 	for _, wi := range res.Items {
-		if at, ok := prevUpdated[wi.Ref.String()]; ok && at.Equal(wi.Issue.UpdatedAt) {
+		// An unchanged issue is skipped, unless its record has no comments
+		// file yet (written before there was one, or by the notes dialog).
+		if at, ok := prevUpdated[wi.Ref.String()]; ok && at.Equal(wi.Issue.UpdatedAt) && rs.CommentsSynced(m.Forge, wi.Ref) {
 			continue
 		}
 		var notes []forge.Note
+		read := true
 		// A listing that says "no human comments" needs no discussion fetch.
 		if c := wi.Issue.Comments; c == nil || *c > 0 {
 			var err error
 			if notes, err = issueNotes(ctx, f, wi.Ref); err != nil {
+				read = false
 				warns = append(warns, fmt.Sprintf("%s: notes: %v", wi.Ref, err))
 			}
 		}
-		if _, _, err := rs.WriteSnapshot(m.Forge, wi, notes, s.App.Config.Records.SnapshotComments); err != nil {
+		// The comments file is written before the record, so a reader that
+		// follows the record (the overview pane) finds both new. A failed
+		// read keeps the comments already stored.
+		if read {
+			if err := rs.WriteComments(m.Forge, wi.Ref, notes, keep); err != nil {
+				warns = append(warns, fmt.Sprintf("%s: comments: %v", wi.Ref, err))
+			}
+		}
+		if _, _, err := rs.WriteSnapshot(m.Forge, wi, notes, keep); err != nil {
 			warns = append(warns, fmt.Sprintf("%s: record: %v", wi.Ref, err))
 		}
 	}
