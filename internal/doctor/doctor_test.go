@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -220,7 +222,7 @@ func TestToolChecks(t *testing.T) {
 	bin := t.TempDir()
 	fakeTool(t, bin, "git", "git version 2.37.9")
 	fakeTool(t, bin, "lazygit", "commit=abc123, build date=2024-01-01, version=0.40.2, os=linux")
-	fakeTool(t, bin, "nvim", "no version here")
+	fakeTool(t, bin, "gh", "no version here")
 	t.Setenv("PATH", bin)
 
 	checks := toolChecks(context.Background(), Options{Timeout: 5 * time.Second})
@@ -229,11 +231,11 @@ func TestToolChecks(t *testing.T) {
 		status Status
 		detail string
 	}{
-		{"git", Error, "2.37.9"},        // below 2.38
-		{"zellij", Warn, "not found"},   // recommended, absent
-		{"lazygit", OK, "0.40.2"},       // version parsed past the commit hash
-		{"nvim", OK, "version unknown"}, // present, unparsable, no minimum
-		{"gh", OK, "optional"},          // optional, absent
+		{"git", Error, "2.37.9"},      // below 2.38
+		{"zellij", Warn, "not found"}, // recommended, absent
+		{"lazygit", OK, "0.40.2"},     // version parsed past the commit hash
+		{"gh", OK, "version unknown"}, // present, unparsable, no minimum
+		{"glab", OK, "optional"},      // optional, absent
 	}
 	for _, tt := range tests {
 		c := byName(checks, tt.name)
@@ -385,5 +387,50 @@ func TestFileWatchingCheckReportsTheMode(t *testing.T) {
 	c = byName(pathChecks(Options{Records: filepath.Join(t.TempDir(), "new", "records")}), "file watching")
 	if c.Status != OK {
 		t.Errorf("missing records dir: %+v", c)
+	}
+}
+
+// The editor line checks the editor host.editor names, not a fixed nvim.
+func TestEditorCheckFollowsTheSetting(t *testing.T) {
+	tests := []struct {
+		name    string
+		setting string
+		env     map[string]string
+		have    []string
+		status  Status
+		detail  string
+		fix     string
+	}{
+		{"auto takes $EDITOR", "auto", map[string]string{"EDITOR": "vim"}, []string{"vim", "nvim"}, OK, "auto: $EDITOR (vim)", ""},
+		{"auto with no $EDITOR finds nano", "", nil, []string{"nano"}, OK, "auto: nano", ""},
+		{"auto with $EDITOR not installed", "auto", map[string]string{"EDITOR": "hx --flag"}, []string{"nvim"}, Warn, "`hx` is not on PATH", "point $EDITOR"},
+		{"auto with no editor at all", "auto", nil, nil, Warn, "auto: vi: no editor found", "export EDITOR"},
+		{"ade-nvim missing and no editor at all: both fixes", "ade-nvim", nil, nil, Warn, "no editor found", "github:coredev-uk/ade#ade-nvim; meanwhile export EDITOR"},
+		{"ade-nvim installed", "ade-nvim", nil, []string{"ade-nvim"}, OK, "ade-nvim (/bin/ade-nvim)", ""},
+		{"ade-nvim missing: bare nvim under its app name", "ade-nvim", nil, []string{"nvim"}, Warn, "without ADE's config", "github:coredev-uk/ade#ade-nvim"},
+		{"ade-nvim and nvim missing", "ade-nvim", map[string]string{"EDITOR": "vim"}, []string{"vim"}, Warn, "using $EDITOR (vim)", "github:coredev-uk/ade#ade-nvim"},
+		{"nvim missing", "nvim", nil, []string{"vim"}, Warn, "nvim is not on PATH; using vim", "nixpkgs#neovim"},
+		{"$EDITOR unset", "$EDITOR", nil, []string{"nvim"}, Warn, "neither $VISUAL nor $EDITOR", "export EDITOR"},
+		{"code with no launcher outside VS Code", "code", nil, []string{"nvim"}, Warn, "no `code` can open a window from this terminal (see the cde group); using nvim", "VS Code terminal"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := config.Defaults()
+			cfg.Host.Editor = tt.setting
+			o := Options{
+				Config: &cfg,
+				Getenv: func(k string) string { return tt.env[k] },
+				LookPath: func(name string) (string, error) {
+					if slices.Contains(tt.have, name) {
+						return "/bin/" + name, nil
+					}
+					return "", exec.ErrNotFound
+				},
+			}
+			c := editorCheck(o, tt.setting)
+			if c.Status != tt.status || !strings.Contains(c.Detail, tt.detail) || !strings.Contains(c.Fix, tt.fix) {
+				t.Fatalf("got %s %q (fix %q), want %s containing %q (fix %q)", c.Status, c.Detail, c.Fix, tt.status, tt.detail, tt.fix)
+			}
+		})
 	}
 }

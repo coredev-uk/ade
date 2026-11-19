@@ -21,8 +21,9 @@ type Kind string
 const (
 	// Code is VS Code's `code` launcher: `code -g file:line`, `code <dir>`.
 	Code Kind = "code"
-	// Nvim is neovim or ade-nvim: `nvim +line file`.
-	Nvim Kind = "nvim"
+	// Term is a terminal editor on PATH that takes `+line file`: neovim,
+	// ade-nvim, vim, vi, nano.
+	Term Kind = "term"
 	// Shell is whatever $VISUAL / $EDITOR names, run through sh so that values
 	// with arguments ("emacs -nw") work. No line is passed.
 	Shell Kind = "env"
@@ -107,7 +108,7 @@ func (e Env) fromEnv() string {
 // Editor is a resolved editor. The zero value is not usable; use Resolve.
 type Editor struct {
 	Kind Kind
-	// Cmd is the program path (Code, Nvim) or the shell command text (Shell).
+	// Cmd is the program path (Code, Term) or the shell command text (Shell).
 	Cmd string
 	// Name is how the resolution reads in messages: code, ade-nvim, nvim, $EDITOR, vi.
 	Name string
@@ -133,8 +134,8 @@ type Editor struct {
 //   - "ade-nvim": the ade-nvim wrapper, else nvim under NVIM_APPNAME=ade-nvim
 //   - "nvim": nvim
 //   - "$EDITOR": $VISUAL, else $EDITOR
-//   - "auto" (or empty): `code` inside a VS Code terminal, else nvim, else
-//     $VISUAL / $EDITOR, else vi
+//   - "auto" (or empty): `code` inside a VS Code terminal, else $VISUAL,
+//     else $EDITOR, else the first of nvim, vim, vi, nano on PATH (fallback)
 //
 // An explicit choice whose program is missing falls back the way "auto" does
 // outside VS Code, so a stale setting never leaves ADE without an editor.
@@ -146,14 +147,14 @@ func Resolve(setting string, env Env) Editor {
 		}
 	case SettingADENvim:
 		if p := env.look("ade-nvim"); p != "" {
-			return Editor{Kind: Nvim, Cmd: p, Name: "ade-nvim"}
+			return Editor{Kind: Term, Cmd: p, Name: "ade-nvim"}
 		}
 		if p := env.look("nvim"); p != "" {
-			return Editor{Kind: Nvim, Cmd: p, Name: "ade-nvim", AppName: "ade-nvim"}
+			return Editor{Kind: Term, Cmd: p, Name: "ade-nvim", AppName: "ade-nvim"}
 		}
 	case SettingNvim:
 		if p := env.look("nvim"); p != "" {
-			return Editor{Kind: Nvim, Cmd: p, Name: "nvim"}
+			return Editor{Kind: Term, Cmd: p, Name: "nvim"}
 		}
 	case SettingEnv:
 		if c := env.fromEnv(); c != "" {
@@ -166,11 +167,23 @@ func Resolve(setting string, env Env) Editor {
 			}
 		}
 	}
-	if p := env.look("nvim"); p != "" {
-		return Editor{Kind: Nvim, Cmd: p, Name: "nvim"}
-	}
-	if c := env.fromEnv(); c != "" {
+	return env.fallback()
+}
+
+// TerminalEditors are the editors fallback looks for on PATH, in order.
+var TerminalEditors = []string{"nvim", "vim", "vi", "nano"}
+
+// fallback is the editor when no setting picks one: $VISUAL, else $EDITOR,
+// else the first of TerminalEditors on PATH, else vi (which then fails to
+// start; `ade doctor` says so).
+func (e Env) fallback() Editor {
+	if c := e.fromEnv(); c != "" {
 		return Editor{Kind: Shell, Cmd: c, Name: "$EDITOR"}
+	}
+	for _, name := range TerminalEditors {
+		if p := e.look(name); p != "" {
+			return Editor{Kind: Term, Cmd: p, Name: name}
+		}
 	}
 	return Editor{Kind: Shell, Cmd: "vi", Name: "vi"}
 }
@@ -196,7 +209,7 @@ func (e Editor) Argv(path string, line int, wait bool) []string {
 			return append(argv, "-g", path+":"+strconv.Itoa(line))
 		}
 		return append(argv, path)
-	case Nvim:
+	case Term:
 		if line > 0 {
 			return []string{e.Cmd, "+" + strconv.Itoa(line), path}
 		}
@@ -278,7 +291,10 @@ func (e Editor) String() string {
 		return e.Name
 	}
 	if e.Kind == Shell {
-		return e.Name + " (" + strings.TrimSpace(e.Cmd) + ")"
+		if c := strings.TrimSpace(e.Cmd); c != e.Name {
+			return e.Name + " (" + c + ")"
+		}
+		return e.Name
 	}
 	if e.Remote {
 		return e.Name + " (remote CLI " + filepath.Clean(e.Cmd) + ")"

@@ -214,7 +214,7 @@ var schemaDocs = map[string]string{
 	"config:records.audit_retain":                 "\"forever\" (default) or a day count such as \"365d\": whole monthly audit files older than that are deleted; the current month never is.",
 	"config:records.snapshot_comments":            "Latest comments copied into item.md.",
 	"config:host.mode":                            "Where workspaces open: zellij tabs, VS Code, or plain terminal supervision (auto detects).",
-	"config:host.editor":                          "auto: code inside a VS Code terminal, else nvim, else $EDITOR. ade-nvim opens the Nix-wrapped Neovim; $EDITOR uses the environment.",
+	"config:host.editor":                          "auto: code inside a VS Code terminal, else $VISUAL, else $EDITOR, else the first of nvim, vim, vi, nano on PATH. ade-nvim opens the Nix-wrapped Neovim; $EDITOR uses the environment.",
 	"config:host.glyphs":                          "Glyph set of the dashboard.",
 	"config:host.layout":                          "Default tab layout: code (editor main pane), agent (omp with the ADE implement skill) or manual (shell). Overrides the manifest workspace's layout; empty keeps it.",
 	"config:ai.mode":                              "off disables every AI call; ask confirms over the budget threshold; auto runs within caps.",

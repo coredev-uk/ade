@@ -30,18 +30,22 @@ func TestResolveMatrix(t *testing.T) {
 	}{
 		{"auto in VS Code terminal uses code", "auto", Env{TermProgram: "vscode"}, []string{"code", "nvim"}, "code", Code, "/bin/code"},
 		{"auto detects VS Code by the IPC socket (zellij pane inside it)", "", Env{VSCodeIPC: "/run/vscode.sock"}, []string{"code", "nvim"}, "code", Code, "/bin/code"},
-		{"auto in VS Code without code on PATH falls to nvim", "auto", vs, []string{"nvim"}, "nvim", Nvim, "/bin/nvim"},
-		{"auto outside VS Code prefers nvim over $EDITOR", "auto", Env{Editor: "emacs"}, []string{"code", "nvim"}, "nvim", Nvim, "/bin/nvim"},
-		{"auto without nvim uses $VISUAL first", "auto", Env{Visual: "hx", Editor: "emacs"}, nil, "$EDITOR", Shell, "hx"},
-		{"auto without nvim uses $EDITOR", "auto", Env{Editor: "emacs -nw"}, nil, "$EDITOR", Shell, "emacs -nw"},
+		{"auto in VS Code without code on PATH falls to nvim", "auto", vs, []string{"nvim"}, "nvim", Term, "/bin/nvim"},
+		{"auto outside VS Code uses $EDITOR before nvim", "auto", Env{Editor: "emacs"}, []string{"code", "nvim"}, "$EDITOR", Shell, "emacs"},
+		{"auto uses $VISUAL before $EDITOR", "auto", Env{Visual: "hx", Editor: "emacs"}, []string{"nvim"}, "$EDITOR", Shell, "hx"},
+		{"auto keeps $EDITOR arguments", "auto", Env{Editor: "emacs -nw"}, nil, "$EDITOR", Shell, "emacs -nw"},
+		{"auto without $EDITOR takes nvim first", "auto", Env{}, []string{"nano", "vim", "nvim"}, "nvim", Term, "/bin/nvim"},
+		{"auto without $EDITOR or nvim takes vim", "auto", Env{}, []string{"nano", "vim", "vi"}, "vim", Term, "/bin/vim"},
+		{"auto with only nano", "auto", Env{}, []string{"nano"}, "nano", Term, "/bin/nano"},
 		{"auto with nothing falls back to vi", "auto", Env{}, nil, "vi", Shell, "vi"},
 		{"code is honoured outside VS Code", "code", Env{}, []string{"code", "nvim"}, "code", Code, "/bin/code"},
-		{"code missing falls back to nvim", "code", Env{}, []string{"nvim"}, "nvim", Nvim, "/bin/nvim"},
-		{"nvim inside VS Code stays nvim", "nvim", vs, []string{"code", "nvim"}, "nvim", Nvim, "/bin/nvim"},
-		{"ade-nvim wrapper", "ade-nvim", Env{}, []string{"ade-nvim", "nvim"}, "ade-nvim", Nvim, "/bin/ade-nvim"},
-		{"ade-nvim without wrapper runs nvim under its app name", "ade-nvim", Env{}, []string{"nvim"}, "ade-nvim", Nvim, "/bin/nvim"},
+		{"code missing falls back to nvim", "code", Env{}, []string{"nvim"}, "nvim", Term, "/bin/nvim"},
+		{"code missing falls back to $EDITOR first", "code", Env{Editor: "vim"}, []string{"nvim"}, "$EDITOR", Shell, "vim"},
+		{"nvim inside VS Code stays nvim", "nvim", vs, []string{"code", "nvim"}, "nvim", Term, "/bin/nvim"},
+		{"ade-nvim wrapper", "ade-nvim", Env{}, []string{"ade-nvim", "nvim"}, "ade-nvim", Term, "/bin/ade-nvim"},
+		{"ade-nvim without wrapper runs nvim under its app name", "ade-nvim", Env{}, []string{"nvim"}, "ade-nvim", Term, "/bin/nvim"},
 		{"$EDITOR setting", "$EDITOR", Env{Editor: "nano"}, []string{"nvim"}, "$EDITOR", Shell, "nano"},
-		{"$EDITOR setting unset falls back to nvim", "$EDITOR", Env{}, []string{"nvim"}, "nvim", Nvim, "/bin/nvim"},
+		{"$EDITOR setting unset falls back to nvim", "$EDITOR", Env{}, []string{"nvim"}, "nvim", Term, "/bin/nvim"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -60,7 +64,7 @@ func TestResolveMatrix(t *testing.T) {
 
 func TestArgv(t *testing.T) {
 	code := Editor{Kind: Code, Cmd: "/bin/code"}
-	nvim := Editor{Kind: Nvim, Cmd: "/bin/nvim"}
+	nvim := Editor{Kind: Term, Cmd: "/bin/nvim"}
 	sh := Editor{Kind: Shell, Cmd: "emacs -nw"}
 	tests := []struct {
 		name string
@@ -93,11 +97,11 @@ func TestArgv(t *testing.T) {
 }
 
 func TestCommandSetsNvimAppName(t *testing.T) {
-	cmd := Editor{Kind: Nvim, Cmd: "/bin/nvim", AppName: "ade-nvim"}.Command("/w/a.go", 0, false)
+	cmd := Editor{Kind: Term, Cmd: "/bin/nvim", AppName: "ade-nvim"}.Command("/w/a.go", 0, false)
 	if !slices.Contains(cmd.Env, "NVIM_APPNAME=ade-nvim") {
 		t.Fatalf("env lacks NVIM_APPNAME: %v", cmd.Env)
 	}
-	if cmd := (Editor{Kind: Nvim, Cmd: "/bin/nvim"}).Command("/w/a.go", 0, false); cmd.Env != nil {
+	if cmd := (Editor{Kind: Term, Cmd: "/bin/nvim"}).Command("/w/a.go", 0, false); cmd.Env != nil {
 		t.Fatalf("plain nvim must inherit the environment untouched, got %v", cmd.Env)
 	}
 }
@@ -107,10 +111,10 @@ func TestPaneCommand(t *testing.T) {
 	if prog != "sh" || args[len(args)-2] != "/bin/code" || args[len(args)-1] != "/w" {
 		t.Fatalf("code pane = %s %q: it must open the window with the directory and keep a shell", prog, args)
 	}
-	if prog, args := (Editor{Kind: Nvim, Cmd: "/bin/nvim"}).PaneCommand("/w"); prog != "/bin/nvim" || args != nil {
+	if prog, args := (Editor{Kind: Term, Cmd: "/bin/nvim"}).PaneCommand("/w"); prog != "/bin/nvim" || args != nil {
 		t.Fatalf("nvim pane = %s %q", prog, args)
 	}
-	prog, args = Editor{Kind: Nvim, Cmd: "/bin/nvim", AppName: "ade-nvim"}.PaneCommand("/w")
+	prog, args = Editor{Kind: Term, Cmd: "/bin/nvim", AppName: "ade-nvim"}.PaneCommand("/w")
 	if prog != "env" || !slices.Contains(args, "NVIM_APPNAME=ade-nvim") {
 		t.Fatalf("ade-nvim pane = %s %q", prog, args)
 	}

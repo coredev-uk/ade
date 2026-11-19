@@ -138,14 +138,14 @@ func TestResolveRemoteCLI(t *testing.T) {
 			env:   Env{Headless: true, Home: "/home/dev"},
 			fs:    fakeFS{remoteCLI: now},
 			progs: map[string]string{"code": "/usr/bin/code", "nvim": "/bin/nvim"},
-			want:  Editor{Kind: Nvim, Cmd: "/bin/nvim", Name: "nvim"},
+			want:  Editor{Kind: Term, Cmd: "/bin/nvim", Name: "nvim"},
 		},
 		{
 			name: "auto in a web tty is nvim", setting: "auto",
 			env:   Env{Headless: true},
 			fs:    fakeFS{},
 			progs: map[string]string{"code": "/usr/bin/code", "nvim": "/bin/nvim"},
-			want:  Editor{Kind: Nvim, Cmd: "/bin/nvim", Name: "nvim"},
+			want:  Editor{Kind: Term, Cmd: "/bin/nvim", Name: "nvim"},
 		},
 		{
 			name: "a desktop session outside VS Code keeps honouring code", setting: "code",
@@ -208,7 +208,7 @@ func TestResolveRemoteCLI(t *testing.T) {
 			env:   Env{Headless: true, Home: "/home/dev"},
 			fs:    fakeFS{},
 			progs: map[string]string{"code-server": "/usr/bin/code-server", "nvim": "/bin/nvim"},
-			want:  Editor{Kind: Nvim, Cmd: "/bin/nvim", Name: "nvim"},
+			want:  Editor{Kind: Term, Cmd: "/bin/nvim", Name: "nvim"},
 		},
 		{
 			name: "web tty, socket open but no code-server launcher: no code", setting: "code",
@@ -216,7 +216,7 @@ func TestResolveRemoteCLI(t *testing.T) {
 			fs:    fakeFS{codeServerCLI: now},
 			progs: map[string]string{"code-server": codeServerCLI, "nvim": "/bin/nvim"},
 			open:  []string{"/home/dev/.local/share/code-server/code-server-ipc.sock"},
-			want:  Editor{Kind: Nvim, Cmd: "/bin/nvim", Name: "nvim"},
+			want:  Editor{Kind: Term, Cmd: "/bin/nvim", Name: "nvim"},
 		},
 		{
 			name: "Coder module's code-server off PATH, socket under XDG_DATA_HOME", setting: "code",
@@ -248,7 +248,7 @@ func TestResolveRemoteCLI(t *testing.T) {
 			fs:    fakeFS{},
 			progs: map[string]string{"code-server": "/usr/bin/code-server", "nvim": "/bin/nvim"},
 			open:  []string{"/home/dev/.local/share/code-server/code-server-ipc.sock"},
-			want:  Editor{Kind: Nvim, Cmd: "/bin/nvim", Name: "nvim"},
+			want:  Editor{Kind: Term, Cmd: "/bin/nvim", Name: "nvim"},
 		},
 	}
 	for _, tt := range tests {

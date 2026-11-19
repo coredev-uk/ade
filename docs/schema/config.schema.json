@@ -249,7 +249,7 @@
       "additionalProperties": false,
       "properties": {
         "editor": {
-          "description": "auto: code inside a VS Code terminal, else nvim, else $EDITOR. ade-nvim opens the Nix-wrapped Neovim; $EDITOR uses the environment.",
+          "description": "auto: code inside a VS Code terminal, else $VISUAL, else $EDITOR, else the first of nvim, vim, vi, nano on PATH. ade-nvim opens the Nix-wrapped Neovim; $EDITOR uses the environment.",
           "enum": [
             "auto",
             "nvim",

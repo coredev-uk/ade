@@ -143,7 +143,7 @@ agent_run_usd    = 1.50    # passed as --max-cost to omp runs
 
 [host]
 mode   = "auto"            # auto | zellij | vscode | plain
-editor = "auto"            # auto: `code` inside a VS Code terminal, else nvim, else $EDITOR; or ade-nvim | nvim | code | $EDITOR
+editor = "auto"            # auto: `code` inside a VS Code terminal, else $VISUAL/$EDITOR, else nvim/vim/vi/nano; or ade-nvim | nvim | code | $EDITOR
 glyphs = "unicode"         # unicode | nerd | ascii
 
 [records]
@@ -616,7 +616,7 @@ Global conventions: `j/k` move, `enter` open, `esc` back, `tab` switch pane, `/`
   - **CI:** jobs, failing job log tail, retry
   - **History:** this item's audit events interleaved with its AI artifacts, plans, and runs (4.1, 4.2)
 - Actions: reply, resolve, approve, mark ready, merge (with an explicit confirm), retry pipeline. AI actions: summarise MR, summarise thread, draft reply, "address comments" (hands off to agent, 6.6).
-- The body editor is `$EDITOR` in a zellij floating pane (or a VS Code tab), so long replies never get typed into a cramped text field. Wherever ADE opens an editor (the MR body of Start work, the agent plan, `ade item --edit`, the workspace's editor pane) it uses the one resolution of `host.editor`: `auto` is `code` inside a VS Code terminal (also from a zellij pane started there), else nvim, else `$VISUAL`/`$EDITOR`; `ade-nvim`, `nvim`, `code` and `$EDITOR` pick one outright. `code` opens `code -g file:line` (and `code <dir>` for a workspace; `--wait` when ADE reads the file back); neovim gets `+line`.
+- The body editor is `$EDITOR` in a zellij floating pane (or a VS Code tab), so long replies never get typed into a cramped text field. Wherever ADE opens an editor (the MR body of Start work, the agent plan, `ade item --edit`, the workspace's editor pane) it uses the one resolution of `host.editor`: `auto` is `code` inside a VS Code terminal (also from a zellij pane started there), else `$VISUAL`/`$EDITOR`, else the first of nvim, vim, vi and nano on PATH; `ade-nvim`, `nvim`, `code` and `$EDITOR` pick one outright. `code` opens `code -g file:line` (and `code <dir>` for a workspace; `--wait` when ADE reads the file back); neovim gets `+line`.
 - **As built in phase 2** (details in DESIGN.md, MR page and Review surface):
   - The page opens with `enter` on a Home row and has a fifth tab, **Review** (the drafts and their triage, 6.9), between Diff and CI; History is the sixth and lists the audit entries of the MR and its item.
   - Keys: `r` reply (Threads) or retry (CI), `x` resolve/reopen, `a` approve/withdraw, `R` ready/draft, `m` merge, `S` submit review, `c` comment on a diff line, `l` job log.

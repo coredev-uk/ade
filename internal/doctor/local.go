@@ -68,7 +68,6 @@ var tools = []tool{
 	{"git", required, [2]int{2, 38}, "bare clones and worktrees"},
 	{"zellij", recommended, [2]int{}, "the work-tab host"},
 	{"lazygit", recommended, [2]int{}, "the git pane"},
-	{"nvim", recommended, [2]int{}, "the default editor"},
 	{"gh", optional, [2]int{}, "GitHub credential helper"},
 	{"glab", optional, [2]int{}, "GitLab credential helper"},
 	{"omp", optional, [2]int{}, "agent driver"},
@@ -257,7 +256,6 @@ func hostChecks(o Options) []Check {
 	if o.Config != nil {
 		setting = o.Config.Host.Editor
 	}
-	ed := editor.Resolve(setting, editorEnv(o))
 	keys := "your own zellij config"
 	if (host.Env{InsideVSCode: insideVSCode, WebTTY: web}).UsesUnlockFirst(o.Getenv) {
 		keys = "ADE's unlock-first preset (the session starts locked; Ctrl-g unlocks zellij)"
@@ -266,7 +264,76 @@ func hostChecks(o Options) []Check {
 	}
 	return []Check{
 		{Group: "host", Name: "host", Status: OK, Detail: detail},
-		{Group: "host", Name: "editor", Status: OK, Detail: ed.String()},
+		editorCheck(o, setting),
 		{Group: "host", Name: "zellij keys", Status: OK, Detail: keys},
 	}
+}
+
+// editorCheck reports the editor host.editor resolves to. A setting that
+// names an editor (ade-nvim, nvim, code, $EDITOR) warns when that editor is
+// missing and says what ADE uses instead; auto reports what it found. Either
+// way the command must exist: $EDITOR naming a program that is not installed,
+// or no editor at all, warns too.
+func editorCheck(o Options, setting string) Check {
+	env := editorEnv(o)
+	ed := editor.Resolve(setting, env)
+	c := Check{Group: "host", Name: "editor", Status: OK, Detail: ed.String()}
+	if setting == "" {
+		setting = editor.SettingAuto
+	}
+	missing := func(why, fix string) {
+		c.Status, c.Fix = Warn, fix
+		c.Detail = "host.editor = \"" + setting + "\" but " + why + "; using " + ed.String()
+	}
+	switch setting {
+	case editor.SettingADENvim:
+		switch {
+		case ed.Name != editor.SettingADENvim:
+			missing("neither the ade-nvim wrapper nor nvim is on PATH", "nix profile install github:coredev-uk/ade#ade-nvim")
+		case ed.AppName != "":
+			missing("the ade-nvim wrapper is not on PATH: nvim runs under NVIM_APPNAME=ade-nvim without ADE's config and plugins",
+				"nix profile install github:coredev-uk/ade#ade-nvim")
+		}
+	case editor.SettingNvim:
+		if ed.Name != editor.SettingNvim {
+			missing("nvim is not on PATH", "nix profile install nixpkgs#neovim, or set host.editor = \"auto\"")
+		}
+	case editor.SettingCode:
+		if ed.Kind != editor.Code {
+			missing("no `code` can open a window from this terminal (see the cde group)", "run ADE from a VS Code terminal, or set host.editor = \"auto\"")
+		}
+	case editor.SettingEnv:
+		if ed.Name != editor.SettingEnv {
+			missing("neither $VISUAL nor $EDITOR is set", "export EDITOR in your shell, or set host.editor = \"auto\"")
+		}
+	default:
+		c.Detail = "auto: " + ed.String()
+	}
+	if ed.Kind != editor.Shell {
+		return c
+	}
+	look := o.LookPath
+	if look == nil {
+		look = exec.LookPath
+	}
+	fields := strings.Fields(ed.Cmd)
+	if len(fields) == 0 {
+		return c
+	}
+	if _, err := look(fields[0]); err == nil {
+		return c
+	}
+	c.Status = Warn
+	fix := "export EDITOR in your shell, or install one of " + strings.Join(editor.TerminalEditors, ", ")
+	if ed.Name == editor.SettingEnv {
+		c.Detail += ": `" + fields[0] + "` is not on PATH"
+		fix = "install " + fields[0] + ", or point $EDITOR at an installed editor"
+	} else {
+		c.Detail += ": no editor found ($VISUAL and $EDITOR are unset and none of " + strings.Join(editor.TerminalEditors, ", ") + " is on PATH)"
+	}
+	if c.Fix != "" {
+		fix = c.Fix + "; meanwhile " + fix
+	}
+	c.Fix = fix
+	return c
 }
