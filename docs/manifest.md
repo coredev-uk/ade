@@ -684,7 +684,7 @@ Next steps, which the command also prints: try the file locally with `ade init -
 
 A `*.local.toml` beside a manifest (`acme.ade.toml` → `acme.ade.local.toml`) holds per-machine changes that are never shared, e.g. a clone URL or a fixed port. It is merged over the manifest before validation: tables merge key by key (so `[repos.api]` can change one key and keep the rest), every other value, arrays included, replaces the base. A manifest fetched from `git+…` or `https://…` has no file beside it, so its override lives in ADE's config directory under the manifest's file name (`~/.config/ade/acme.ade.local.toml`). `ade config check` names the override it applied, and `ade project add` / `ade update` store the merged manifest in the project snapshot.
 
-`ade config schema --manifest` prints a JSON Schema of the manifest (`docs/schema/manifest.schema.json`), for completion and typo detection in taplo or VS Code Even Better TOML: put `#:schema …/manifest.schema.json` on the first line.
+`ade config schema --manifest` prints a JSON Schema of the manifest (`docs/schema/manifest.schema.json`), for completion and typo detection in taplo or VS Code Even Better TOML. `ade project bootstrap` writes `#:schema https://raw.githubusercontent.com/coredev-uk/ade/main/docs/schema/manifest.schema.json` as the first line (the release tag instead of `main` in a release build); add the same line by hand to an existing manifest.
 
 ## Checking a manifest
 

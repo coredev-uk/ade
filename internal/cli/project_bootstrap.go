@@ -148,7 +148,7 @@ func runBootstrap(cmd *cobra.Command, f bootstrapFlags) error {
 	if err != nil {
 		return err
 	}
-	opts := bootstrap.Options{ForgeName: forgeName, Group: f.group, Tracker: f.tracker, Name: f.name, Match: f.match}
+	opts := bootstrap.Options{ForgeName: forgeName, Group: f.group, Tracker: f.tracker, Name: f.name, Match: f.match, Version: Version}
 	if pr != nil {
 		opts.Chooser = promptChooser{pr}
 	}

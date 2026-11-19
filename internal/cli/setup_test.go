@@ -313,7 +313,7 @@ func TestSetupConfigFromTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup: %v\n%s", err, p)
 	}
-	if got, _ := os.ReadFile(e.configPath()); string(got) != body {
+	if got, _ := os.ReadFile(e.configPath()); string(got) != "#:schema ./config.schema.json\n"+body {
 		t.Errorf("config is not the template:\n%s", got)
 	}
 	if !res.ConfigCreated {

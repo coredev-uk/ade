@@ -489,4 +489,4 @@ It never touches your real config. `--record` additionally writes `demo.gif`.
 | Cache (disposable) | `~/.cache/ade/cache.db` (`$XDG_CACHE_HOME/ade/`) |
 | Clones and worktrees | `~/ade/<project>/<repo>/` (`ade init --root` or `paths.root`) |
 
-Schemas for editor completion: `ade config schema` or [schema/](schema); put `#:schema <path or URL>` on the first line of a TOML file.
+Schemas for editor completion: `ade init` and `ade setup` write `config.schema.json` and `manifest.schema.json` beside `config.toml` and put `#:schema ./config.schema.json` on its first line; for an existing config run `ade config schema --install`, and `ade doctor` warns when the line is missing or the schema is stale. Manifests carry `#:schema https://raw.githubusercontent.com/coredev-uk/ade/main/docs/schema/manifest.schema.json` on the first line (`ade project bootstrap` writes it). The files are also in [schema/](schema).

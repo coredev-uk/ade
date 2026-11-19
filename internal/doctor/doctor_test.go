@@ -434,3 +434,42 @@ func TestEditorCheckFollowsTheSetting(t *testing.T) {
 		})
 	}
 }
+
+func TestSchemaCheck(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Defaults()
+	file := filepath.Join(dir, "config.toml")
+	check := func() Check { return byName(configChecks(Options{ConfigFile: file, Config: &cfg}), "schema") }
+	put := func(name, s string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(s), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if c := check(); c.Status != "absent" {
+		t.Errorf("no config file: %+v", c)
+	}
+	put("config.toml", "[user]\n")
+	if c := check(); c.Status != Warn || c.Fix != "ade config schema --install" {
+		t.Errorf("missing directive: %+v", c)
+	}
+	put("config.toml", "#:schema ./config.schema.json\n")
+	if c := check(); c.Status != Warn || c.Fix == "" {
+		t.Errorf("missing schema file: %+v", c)
+	}
+	put("config.schema.json", "{}")
+	if c := check(); c.Status != Warn || !strings.Contains(c.Detail, "another version") {
+		t.Errorf("stale schema: %+v", c)
+	}
+	if _, err := config.InstallSchemas(dir); err != nil {
+		t.Fatal(err)
+	}
+	if c := check(); c.Status != OK {
+		t.Errorf("current schema: %+v", c)
+	}
+	put("config.toml", "#:schema https://example.com/s.json\n")
+	if c := check(); c.Status != OK || !strings.Contains(c.Detail, "example.com") {
+		t.Errorf("url: %+v", c)
+	}
+}

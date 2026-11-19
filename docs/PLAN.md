@@ -246,7 +246,7 @@ default = { layout = "code",  run = "dev" }
 agentic = { layout = "agent", run = "dev" }
 ```
 
-`ade doctor` validates config, tokens and scopes, tools on PATH, and host capabilities. A JSON Schema generated from the Go structs gives editor completion (taplo / VS Code Even Better TOML): `ade config schema` prints the user config schema and `--manifest` the manifest one. Both are committed under `docs/schema/` (`#:schema …/config.schema.json` on the first line of a file) and a test fails when they are stale; `ade config schema --write docs/schema` regenerates them.
+`ade doctor` validates config, tokens and scopes, tools on PATH, and host capabilities. A JSON Schema generated from the Go structs gives editor completion (taplo / VS Code Even Better TOML): `ade config schema` prints the user config schema and `--manifest` the manifest one. Both are committed under `docs/schema/` (`#:schema …/config.schema.json` on the first line of a file) and a test fails when they are stale; `ade config schema --write docs/schema` regenerates them. `ade init` and `ade setup` write `config.schema.json` beside `config.toml` with a `#:schema ./config.schema.json` first line, `ade config schema --install` does the same for an existing config, `ade project bootstrap` points its manifest at the committed schema by URL, and `ade doctor` warns when the directive is missing or the installed schema is stale.
 
 ### 2.1 Repo and task dependencies
 

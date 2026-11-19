@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/editor"
 	"github.com/coredev-uk/ade/internal/host"
 	"github.com/coredev-uk/ade/internal/watch"
@@ -31,6 +33,9 @@ func configChecks(o Options) []Check {
 		}}
 	}
 	checks := []Check{{Group: group, Name: "config file", Status: OK, Detail: o.ConfigFile}}
+	if c, ok := schemaCheck(o.ConfigFile); ok {
+		checks = append(checks, c)
+	}
 	issues := o.Config.Validate()
 	if len(issues) == 0 {
 		return append(checks, Check{Group: group, Name: "config values", Status: OK})
@@ -43,6 +48,43 @@ func configChecks(o Options) []Check {
 		checks = append(checks, Check{group, "config " + i.Path, status, i.Msg, "run `ade config check` for details"})
 	}
 	return checks
+}
+
+// schemaCheck reports whether the config file points an editor at the current
+// schema. ok is false when there is no file to look at.
+func schemaCheck(file string) (Check, bool) {
+	const fix = "ade config schema --install"
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return Check{}, false
+	}
+	c := Check{Group: "config", Name: "schema", Fix: fix}
+	target, ok := config.SchemaDirectiveTarget(data)
+	if !ok || target == "" {
+		c.Status, c.Detail = Warn, "no #:schema line on the first line of "+file+"; editors give no completion"
+		return c, true
+	}
+	if strings.Contains(target, "://") {
+		return Check{Group: c.Group, Name: c.Name, Status: OK, Detail: target}, true
+	}
+	local := target
+	if !filepath.IsAbs(local) {
+		local = filepath.Join(filepath.Dir(file), local)
+	}
+	want, err := config.Schema(config.SchemaConfig)
+	if err != nil {
+		return Check{Group: c.Group, Name: c.Name, Status: Warn, Detail: err.Error()}, true
+	}
+	have, err := os.ReadFile(local)
+	switch {
+	case err != nil:
+		c.Status, c.Detail = Warn, target+" not found"
+	case !bytes.Equal(have, want):
+		c.Status, c.Detail = Warn, target+" differs from this ade's schema (written by another version)"
+	default:
+		return Check{Group: c.Group, Name: c.Name, Status: OK, Detail: target}, true
+	}
+	return c, true
 }
 
 type need int

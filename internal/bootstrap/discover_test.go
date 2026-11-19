@@ -546,3 +546,17 @@ func TestPublishOnGitHub(t *testing.T) {
 	}
 	var _ forge.Forge = c
 }
+
+func TestManifestStartsWithSchemaDirective(t *testing.T) {
+	c, _ := gitlabFake(t, fake.Free)
+	for version, ref := range map[string]string{"": "main", "0.3.0": "v0.3.0"} {
+		d, err := bootstrap.Discover(context.Background(), c, opts(func(o *bootstrap.Options) { o.Version = version }))
+		if err != nil {
+			t.Fatal(err)
+		}
+		first, _, _ := strings.Cut(d.TOML, "\n")
+		if want := "#:schema https://raw.githubusercontent.com/coredev-uk/ade/" + ref + "/docs/schema/manifest.schema.json"; first != want {
+			t.Errorf("version %q: first line %q, want %q", version, first, want)
+		}
+	}
+}

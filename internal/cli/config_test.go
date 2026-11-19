@@ -93,3 +93,50 @@ func TestConfigCheckManifestWithBrokenUserConfig(t *testing.T) {
 		t.Errorf("reports = %+v, want a config warning first", reports)
 	}
 }
+
+func TestConfigSchemaInstall(t *testing.T) {
+	dir := t.TempDir()
+	cfgFile := filepath.Join(dir, "config.toml")
+	t.Setenv("ADE_CONFIG", cfgFile)
+	if err := os.WriteFile(cfgFile, []byte("[user]\nhandle = \"a\"\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	own := "#:schema https://example.com/s.json\n[user]\n"
+	local := filepath.Join(dir, "config.local.toml")
+	if err := os.WriteFile(local, []byte(own), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run := func() string {
+		t.Helper()
+		cmd := newConfigCmd()
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetErr(&bytes.Buffer{})
+		cmd.SetArgs([]string{"schema", "--install"})
+		cmd.SilenceUsage, cmd.SilenceErrors = true, true
+		if err := cmd.ExecuteContext(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		return out.String()
+	}
+	out := run()
+	got, _ := os.ReadFile(cfgFile)
+	if !strings.HasPrefix(string(got), "#:schema ./config.schema.json\n[user]") {
+		t.Errorf("config.toml = %q", got)
+	}
+	if st, _ := os.Stat(cfgFile); st.Mode().Perm() != 0o640 {
+		t.Errorf("mode = %v", st.Mode().Perm())
+	}
+	if l, _ := os.ReadFile(local); string(l) != own {
+		t.Errorf("config.local.toml with a directive was touched: %q", l)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "manifest.schema.json")); err != nil {
+		t.Error(err)
+	}
+	if !strings.Contains(out, "updated "+cfgFile) {
+		t.Errorf("output = %q", out)
+	}
+	if out := run(); out != "schemas up to date\n" {
+		t.Errorf("second run = %q", out)
+	}
+}

@@ -240,6 +240,7 @@ func WriteConfig(path string, data []byte, force bool, now time.Time) (backup st
 	case !errors.Is(err, fs.ErrNotExist):
 		return "", err
 	}
+	data = config.WithSchemaDirective(data, "./"+config.SchemaFile(config.SchemaConfig))
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
@@ -259,7 +260,11 @@ func WriteConfig(path string, data []byte, force bool, now time.Time) (backup st
 	if err := os.Chmod(tmp.Name(), 0o600); err != nil {
 		return "", err
 	}
-	return backup, os.Rename(tmp.Name(), path)
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return "", err
+	}
+	_, err = config.InstallSchemas(dir)
+	return backup, err
 }
 
 // writeBackup copies old beside path as <path>.bak-<timestamp>, never

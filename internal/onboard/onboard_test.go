@@ -106,6 +106,7 @@ func TestRenderRejectsIncompleteAnswers(t *testing.T) {
 func TestWriteConfig(t *testing.T) {
 	now := time.Date(2026, 11, 11, 9, 30, 0, 0, time.UTC)
 	path := filepath.Join(t.TempDir(), "nested", "ade", "config.toml")
+	d := "#:schema ./config.schema.json\n"
 
 	if _, err := WriteConfig(path, []byte("first\n"), false, now); err != nil {
 		t.Fatalf("fresh write: %v", err)
@@ -119,7 +120,7 @@ func TestWriteConfig(t *testing.T) {
 	if !errors.Is(err, ErrExists) {
 		t.Fatalf("err = %v, want ErrExists", err)
 	}
-	if got, _ := os.ReadFile(path); string(got) != "first\n" {
+	if got, _ := os.ReadFile(path); string(got) != d+"first\n" {
 		t.Errorf("refused write still changed the file: %q", got)
 	}
 
@@ -131,10 +132,10 @@ func TestWriteConfig(t *testing.T) {
 	if want := path + ".bak-20261111-093000"; backup != want {
 		t.Errorf("backup = %s, want %s", backup, want)
 	}
-	if got, _ := os.ReadFile(backup); string(got) != "first\n" {
+	if got, _ := os.ReadFile(backup); string(got) != d+"first\n" {
 		t.Errorf("backup holds %q, want the original", got)
 	}
-	if got, _ := os.ReadFile(path); string(got) != "second\n" {
+	if got, _ := os.ReadFile(path); string(got) != d+"second\n" {
 		t.Errorf("config holds %q after force", got)
 	}
 
@@ -146,10 +147,10 @@ func TestWriteConfig(t *testing.T) {
 	if backup2 == backup {
 		t.Fatal("second backup reused the first backup's name")
 	}
-	if got, _ := os.ReadFile(backup); string(got) != "first\n" {
+	if got, _ := os.ReadFile(backup); string(got) != d+"first\n" {
 		t.Errorf("first backup overwritten: %q", got)
 	}
-	if got, _ := os.ReadFile(backup2); string(got) != "second\n" {
+	if got, _ := os.ReadFile(backup2); string(got) != d+"second\n" {
 		t.Errorf("second backup holds %q", got)
 	}
 
@@ -226,5 +227,41 @@ func TestForgeName(t *testing.T) {
 		if (err != nil) != tt.wantErr || got != tt.want {
 			t.Errorf("ForgeName(%v) = %q, %v", tt.named, got, err)
 		}
+	}
+}
+
+func TestWriteConfigInstallsSchemaBeside(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "n", "config.toml")
+	if _, err := WriteConfig(path, []byte("x\n"), false, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(path), "config.schema.json")); err != nil {
+		t.Errorf("schema not installed: %v", err)
+	}
+}
+
+func TestWriteConfigKeepsOwnDirective(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	in := "#:schema https://example.com/s.json\n[user]\n"
+	if _, err := WriteConfig(path, []byte(in), false, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != in {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestWriteConfigRenderStartsWithDirective(t *testing.T) {
+	data, err := Render(Answers{ForgeName: "f", Kind: "gitlab", TokenEnv: "T", GitProtocol: "ssh", Root: "~/ade"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if _, err := WriteConfig(path, data, false, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(path)
+	if !strings.HasPrefix(string(got), "#:schema ./config.schema.json\n# ADE user config.") {
+		t.Errorf("head = %q", got[:80])
 	}
 }
