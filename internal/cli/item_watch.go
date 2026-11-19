@@ -49,6 +49,7 @@ func watchItem(cmd *cobra.Command, a *app.App, ref forge.Ref) error {
 	}
 	st := records.New(a.RecordsDir)
 	l := &overview.Loader{Cache: cache, Records: st, Ref: ref}
+	defer l.Close() //nolint:errcheck // a read-only connection: nothing to lose
 
 	out := cmd.OutOrStdout()
 	if f, ok := out.(*os.File); !ok || !isTerminal(f) || !readerIsTerminal(cmd.InOrStdin()) {
