@@ -44,6 +44,7 @@ type Options struct {
 	Match     string // glob on repository names (or paths) to include; all when empty
 	Now       func() time.Time
 	Chooser   Chooser
+	Version   string // ADE version, picks the schema the manifest points at; main when empty
 }
 
 // issueWindow is how far back the issues that teach label conventions reach:
@@ -66,7 +67,7 @@ func Discover(ctx context.Context, f Forge, o Options) (*Draft, error) {
 	if o.Now != nil {
 		now = o.Now
 	}
-	d := &Draft{Group: o.Group}
+	d := &Draft{Group: o.Group, Version: o.Version}
 
 	repos, err := d.listRepos(ctx, f, o)
 	if err != nil {

@@ -158,3 +158,46 @@ func TestSchemaEnumsAgreeWithValidation(t *testing.T) {
 		t.Errorf("audit_retain pattern %v", retain["pattern"])
 	}
 }
+
+func TestWithSchemaDirective(t *testing.T) {
+	got := WithSchemaDirective([]byte("[a]\n"), "./x.json")
+	if string(got) != "#:schema ./x.json\n[a]\n" {
+		t.Fatalf("got %q", got)
+	}
+	if again := WithSchemaDirective(got, "./x.json"); string(again) != string(got) {
+		t.Errorf("not idempotent: %q", again)
+	}
+	own := []byte("#:schema https://e.com/s.json\n[a]\n")
+	if string(WithSchemaDirective(own, "./x.json")) != string(own) {
+		t.Error("an existing directive was replaced")
+	}
+	if tg, ok := SchemaDirectiveTarget(own); !ok || tg != "https://e.com/s.json" {
+		t.Errorf("target = %q %v", tg, ok)
+	}
+}
+
+func TestInstallSchemas(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "d")
+	w, err := InstallSchemas(dir)
+	if err != nil || len(w) != 2 {
+		t.Fatalf("first: %v %v", w, err)
+	}
+	if w, err = InstallSchemas(dir); err != nil || len(w) != 0 {
+		t.Fatalf("second: %v %v", w, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.schema.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if w, _ = InstallSchemas(dir); len(w) != 1 {
+		t.Errorf("stale file not rewritten: %v", w)
+	}
+}
+
+func TestSchemaURL(t *testing.T) {
+	const base = "https://raw.githubusercontent.com/coredev-uk/ade/"
+	for v, ref := range map[string]string{"0.3.0": "v0.3.0", "dev": "main", "abc1234": "main"} {
+		if got, want := SchemaURL(SchemaManifest, v), base+ref+"/docs/schema/manifest.schema.json"; got != want {
+			t.Errorf("%s: %s, want %s", v, got, want)
+		}
+	}
+}

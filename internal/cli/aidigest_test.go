@@ -164,8 +164,11 @@ func TestAIDigestListsTheCommentsWithAIOff(t *testing.T) {
 		t.Fatal("a listed digest also moves the marker")
 	}
 	asJSON(t)
+	// The fake forge stamps notes with its own clock, not the wall clock: a
+	// relative --since (7d) stopped reaching them a week after that date.
+	since := e.srv.Now().Add(-7 * 24 * time.Hour).Format(time.RFC3339)
 	var res digestOut
-	if err := json.Unmarshal([]byte(e.mustAI("digest", digestIssue, "--no-ai", "--since", "7d")), &res); err != nil {
+	if err := json.Unmarshal([]byte(e.mustAI("digest", digestIssue, "--no-ai", "--since", since)), &res); err != nil {
 		t.Fatal(err)
 	}
 	if res.Source != "list" || res.NewComments != 1 || res.Since == nil || res.Until == nil || res.CostUSD != 0 {

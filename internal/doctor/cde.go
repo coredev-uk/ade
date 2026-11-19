@@ -15,6 +15,7 @@ func editorEnv(o Options) editor.Env {
 		Visual: o.Getenv("VISUAL"), Editor: o.Getenv("EDITOR"),
 		Headless: headless(o),
 		Home:     o.Getenv("HOME"), RuntimeDir: o.Getenv("XDG_RUNTIME_DIR"),
+		CodeServerSession: o.Getenv("CODE_SERVER_SESSION_SOCKET"), DataHome: o.Getenv("XDG_DATA_HOME"),
 		LookPath: o.LookPath,
 	}
 }
@@ -67,6 +68,8 @@ func vscodeRemoteCheck(o Options, env editor.Env) Check {
 		if ed.IPC != "" {
 			c.Detail += "; the inherited VSCODE_IPC_HOOK_CLI is stale, using " + ed.IPC
 		}
+	case ed.Kind == editor.Code && ed.Session != "":
+		c.Status, c.Detail = OK, ed.String()+": `v` and `ade vscode workspace --open` open in code-server's browser window (it must be open)"
 	case ed.Kind == editor.Code && env.InVSCode():
 		c.Status, c.Detail = OK, ed.String()+" (the VS Code window's own CLI)"
 	case ed.Kind == editor.Code:
@@ -77,7 +80,7 @@ func vscodeRemoteCheck(o Options, env editor.Env) Check {
 		c.Fix = "open a new VS Code terminal (it puts the remote `code` on PATH), or run: Shell Command: Install 'code' command in PATH"
 	case headless(o):
 		c.Status = OK
-		c.Detail = "no VS Code client on this terminal (web tty or plain ssh): `v` prints the workspace path and how to open it"
+		c.Detail = "no VS Code client on this terminal (web tty or plain ssh) and no running code-server (session socket " + env.CodeServerSocket() + "): `v` prints the workspace path and how to open it"
 	default:
 		c.Status, c.Detail = OK, "not in a VS Code terminal"
 	}

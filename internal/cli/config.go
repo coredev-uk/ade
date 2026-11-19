@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -11,6 +12,7 @@ import (
 
 	"github.com/coredev-uk/ade/internal/app"
 	"github.com/coredev-uk/ade/internal/config"
+	"github.com/coredev-uk/ade/internal/paths"
 	"github.com/coredev-uk/ade/internal/project"
 )
 
@@ -69,6 +71,7 @@ func newConfigSchemaCmd() *cobra.Command {
 	var (
 		manifest bool
 		write    string
+		install  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "schema",
@@ -77,9 +80,14 @@ func newConfigSchemaCmd() *cobra.Command {
 			"completion and typo detection in config.toml and *.ade.toml (taplo, VS Code Even Better\n" +
 			"TOML: put `#:schema <path or URL>` on the first line). The user config schema is printed by\n" +
 			"default, --manifest prints the manifest one, and --write DIR writes both as\n" +
-			"config.schema.json and manifest.schema.json (what docs/schema/ holds).",
+			"config.schema.json and manifest.schema.json (what docs/schema/ holds). --install writes\n" +
+			"both beside the user config and adds `#:schema ./config.schema.json` to config.toml and\n" +
+			"config.local.toml when they exist and have no #:schema line.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if install {
+				return installSchemas(cmd.OutOrStdout())
+			}
 			if write != "" {
 				if err := os.MkdirAll(write, 0o755); err != nil {
 					return err
@@ -111,7 +119,77 @@ func newConfigSchemaCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&manifest, "manifest", false, "print the manifest schema instead of the user config schema")
 	cmd.Flags().StringVar(&write, "write", "", "write config.schema.json and manifest.schema.json into this directory")
+	cmd.Flags().BoolVar(&install, "install", false, "write both schemas beside the user config and add the #:schema line to config.toml and config.local.toml")
+	cmd.MarkFlagsMutuallyExclusive("install", "write")
+	cmd.MarkFlagsMutuallyExclusive("install", "manifest")
 	return cmd
+}
+
+// installSchemas is `ade config schema --install`: schemas beside the user
+// config, and the directive on the config files that lack one.
+func installSchemas(w io.Writer) error {
+	p, err := paths.Default()
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(p.ConfigFile)
+	changed, err := config.InstallSchemas(dir)
+	if err != nil {
+		return err
+	}
+	for _, f := range changed {
+		fmt.Fprintln(w, "wrote", f)
+	}
+	for _, f := range []string{p.ConfigFile, config.LocalPath(p.ConfigFile)} {
+		ok, err := addSchemaDirective(f, "./"+config.SchemaFile(config.SchemaConfig))
+		if err != nil {
+			return err
+		}
+		if ok {
+			fmt.Fprintln(w, "updated", f)
+			changed = append(changed, f)
+		}
+	}
+	if len(changed) == 0 {
+		fmt.Fprintln(w, "schemas up to date")
+	}
+	return nil
+}
+
+// addSchemaDirective inserts the directive as the first line of the file at
+// path, atomically and keeping its mode. A missing file or one that already has
+// a #:schema line is left alone.
+func addSchemaDirective(path, target string) (bool, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if _, ok := config.SchemaDirectiveTarget(data); ok {
+		return false, nil
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		return false, err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".schema-*.toml")
+	if err != nil {
+		return false, err
+	}
+	defer os.Remove(tmp.Name()) //nolint:errcheck // gone after a successful rename
+	_, werr := tmp.Write(config.WithSchemaDirective(data, target))
+	if cerr := tmp.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		return false, werr
+	}
+	if err := os.Chmod(tmp.Name(), st.Mode().Perm()); err != nil {
+		return false, err
+	}
+	return true, os.Rename(tmp.Name(), path)
 }
 
 func checkConfig(cmd *cobra.Command, files []string) []fileReport {

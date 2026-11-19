@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/coredev-uk/ade/internal/app"
 	"github.com/coredev-uk/ade/internal/audit"
@@ -352,20 +354,39 @@ func codeWorkspaceFor(ctx context.Context, a *app.App, req CodeRequest) (out Cod
 
 // OpenCodeWorkspace opens file in VS Code through the editor helper. Inside a
 // VS Code terminal that is the window's own CLI (on a remote machine the
-// remote CLI, which opens it in the connected window). Where no window can be
-// reached (no `code`, or a web tty with no VS Code client) nothing is started
-// and hint says how to open it by hand; that is not an error.
+// remote CLI, which opens it in the connected window). Outside one, a running
+// code-server (its session socket open) opens it in its browser window. Where
+// no window can be reached (no `code`, or a web tty with neither a VS Code
+// client nor code-server) nothing is started and hint says how to open it by
+// hand; that is not an error.
 func OpenCodeWorkspace(ctx context.Context, file string) (opened bool, hint string, err error) {
 	env := editor.FromOS()
 	ed := editor.Resolve(editor.SettingCode, env)
 	if ed.Kind != editor.Code {
 		return false, env.NoCodeHint(file), nil
 	}
-	argv := ed.ArgvDir(file)
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-	cmd.Env = ed.Environ()
-	if err := cmd.Run(); err != nil {
-		return false, "", fmt.Errorf("code: %w", err)
+	if err := runCode(ctx, ed, ed.ArgvDir(file)); err != nil {
+		return false, "", err
 	}
 	return true, "", nil
+}
+
+// runCode runs a VS Code launcher's argv; a failure carries what it printed
+// on stderr (code-server's launcher says why, e.g. no browser window is
+// open). WaitDelay keeps a GUI child that inherits the pipe from holding the
+// call open once the launcher has exited.
+func runCode(ctx context.Context, ed editor.Editor, argv []string) error {
+	var stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Env = ed.Environ()
+	cmd.Stderr = &stderr
+	cmd.WaitDelay = time.Second
+	err := cmd.Run()
+	if err == nil || errors.Is(err, exec.ErrWaitDelay) {
+		return nil
+	}
+	if msg := strings.TrimSpace(stderr.String()); msg != "" {
+		return fmt.Errorf("%s: %w: %s", ed.Name, err, msg)
+	}
+	return fmt.Errorf("%s: %w", ed.Name, err)
 }

@@ -584,10 +584,8 @@ func openVSCode(ctx context.Context, p *prepared, res *OpenResult) error {
 		res.Hint = env.NoCodeHint(p.loc.Tree)
 		return nil
 	}
-	cmd := exec.CommandContext(ctx, ed.Cmd, "--new-window", p.loc.Tree)
-	cmd.Env = ed.Environ()
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("code: %w", err)
+	if err := runCode(ctx, ed, ed.ArgvWindow(p.loc.Tree)); err != nil {
+		return err
 	}
 	res.Created = true
 	return nil
