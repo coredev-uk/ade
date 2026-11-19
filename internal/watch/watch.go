@@ -50,7 +50,8 @@ type Target struct {
 type Options struct {
 	// Debounce is how long a burst of changes must go quiet before it is
 	// signalled (DefaultDebounce when zero). A burst that never goes quiet is
-	// signalled every five debounce periods.
+	// signalled every five debounce periods. In poll mode a change is
+	// signalled when a poll sees it and again one debounce later.
 	Debounce time.Duration
 	// PollInterval is the stat interval in poll mode (DefaultPollInterval
 	// when zero).
@@ -66,7 +67,8 @@ type Watcher struct {
 	mode atomic.Value // string
 }
 
-// C yields one value per coalesced burst of changes. It is closed once the
+// C yields one value per coalesced burst of changes (two in poll mode, see
+// Options.Debounce). It is closed once the
 // context passed to Watch is done and every resource is released. Nothing is
 // signalled for the state at the time Watch was called: start watching, then
 // read.
@@ -105,7 +107,7 @@ func Watch(ctx context.Context, targets []Target, opts Options) (*Watcher, error
 		last := fingerprint(ts) // before returning: a change after Watch is seen
 		go func() {
 			defer close(w.c)
-			w.poll(ctx, ts, opts.PollInterval, last, false)
+			w.poll(ctx, ts, opts.PollInterval, opts.Debounce, last, false)
 		}()
 		return w, nil
 	}
@@ -114,7 +116,7 @@ func Watch(ctx context.Context, targets []Target, opts Options) (*Watcher, error
 		defer close(w.c)
 		if w.runFS(ctx, set, opts) {
 			w.mode.Store(ModePoll)
-			w.poll(ctx, ts, opts.PollInterval, fingerprint(ts), true)
+			w.poll(ctx, ts, opts.PollInterval, opts.Debounce, fingerprint(ts), true)
 		}
 	}()
 	return w, nil
@@ -289,15 +291,20 @@ func (w *Watcher) runFS(ctx context.Context, s *watchSet, opts Options) (fallbac
 
 // --- polling -----------------------------------------------------------------
 
-// poll stats the targets every interval and signals when anything differs.
-// changed signals once on entry (the state between the last fsnotify event
-// and now is unknown).
-func (w *Watcher) poll(ctx context.Context, ts []Target, interval time.Duration, last uint64, changed bool) {
+// poll stats the targets every interval and signals when anything differs,
+// and once more settle later: a tick can land inside a write, and a SQLite
+// commit writes its log before readers can see it, with no later change of
+// the files to say so. changed signals once on entry (the state between the
+// last fsnotify event and now is unknown).
+func (w *Watcher) poll(ctx context.Context, ts []Target, interval, settle time.Duration, last uint64, changed bool) {
 	if changed {
 		w.emit()
 	}
 	tk := time.NewTicker(interval)
 	defer tk.Stop()
+	again := time.NewTimer(settle)
+	again.Stop()
+	defer again.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -306,7 +313,10 @@ func (w *Watcher) poll(ctx context.Context, ts []Target, interval time.Duration,
 			if fp := fingerprint(ts); fp != last {
 				last = fp
 				w.emit()
+				again.Reset(settle)
 			}
+		case <-again.C:
+			w.emit()
 		}
 	}
 }

@@ -6,6 +6,8 @@
 package overview
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -71,22 +73,31 @@ func owns(wi domain.WorkItem, ref forge.Ref) bool {
 }
 
 // Loader reads snapshots and tells, cheaply, when a new one is worth reading.
-// Safe for concurrent use.
+// Safe for concurrent use. Poll holds one connection of Cache (so a pool
+// limited to one, store.OpenReadOnly, does not do) until Close.
 type Loader struct {
 	Cache   *store.Store
 	Records *records.Store
 	Ref     forge.Ref
 
 	mu         sync.Mutex
+	conn       *sql.Conn // held: PRAGMA data_version is per connection
 	fp         fingerprint
 	recordPath string
 	loaded     bool
 }
 
-// fingerprint is what a Poll compares: size and modification time of the
-// cache database, its write-ahead log (sync writes land there first), the
-// item's record (notes edits) and its comments file.
-type fingerprint [4]stamp
+// fingerprint is what a Poll compares: the cache's data version and the size
+// and modification time of the item's record (notes edits) and of its comments
+// file. The version moves on every commit by another connection, in this
+// process or another. The database files' stamps would not do: a commit writes
+// the write-ahead log before readers can see it, so a read in between sees the
+// old rows under the new stamps, and no later change of the files says the
+// rows moved.
+type fingerprint struct {
+	data             int64
+	record, comments stamp
+}
 
 type stamp struct {
 	mod  int64
@@ -104,8 +115,33 @@ func stampOf(path string) stamp {
 	return stamp{fi.ModTime().UnixNano(), fi.Size()}
 }
 
-func (l *Loader) fingerprint() fingerprint {
-	return fingerprint{stampOf(l.Cache.Path), stampOf(l.Cache.Path + "-wal"), stampOf(l.recordPath), stampOf(commentsPath(l.recordPath))}
+// fingerprint must be called with l.mu held. ok is false when the data
+// version cannot be read: the caller then reads the cache regardless.
+func (l *Loader) fingerprint() (fp fingerprint, ok bool) {
+	fp.record, fp.comments = stampOf(l.recordPath), stampOf(commentsPath(l.recordPath))
+	if l.conn == nil {
+		c, err := l.Cache.DB.Conn(context.Background())
+		if err != nil {
+			return fp, false
+		}
+		l.conn = c
+	}
+	if err := l.conn.QueryRowContext(context.Background(), "PRAGMA data_version").Scan(&fp.data); err != nil {
+		return fp, false
+	}
+	return fp, true
+}
+
+// Close releases the connection the data version is read on.
+func (l *Loader) Close() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.conn == nil {
+		return nil
+	}
+	err := l.conn.Close()
+	l.conn = nil
+	return err
 }
 
 // commentsPath is the comments file beside a record file.
@@ -128,7 +164,7 @@ func (l *Loader) Load() (Snapshot, error) {
 func (l *Loader) Poll() (snap Snapshot, reloaded bool, err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.loaded && l.fingerprint() == l.fp {
+	if fp, ok := l.fingerprint(); ok && l.loaded && fp == l.fp {
 		return Snapshot{}, false, nil
 	}
 	snap, err = l.load()
@@ -138,14 +174,14 @@ func (l *Loader) Poll() (snap Snapshot, reloaded bool, err error) {
 // load must be called with l.mu held. The fingerprint is taken before the
 // read, so a write that lands during it is seen by the next poll.
 func (l *Loader) load() (Snapshot, error) {
-	fp := l.fingerprint()
+	fp, ok := l.fingerprint()
 	snap, err := l.read()
 	if err == nil || errors.Is(err, ErrNotCached) {
 		if snap.NotesPath != "" && snap.NotesPath != l.recordPath {
 			l.recordPath = snap.NotesPath
-			fp[2], fp[3] = stampOf(l.recordPath), stampOf(commentsPath(l.recordPath))
+			fp.record, fp.comments = stampOf(l.recordPath), stampOf(commentsPath(l.recordPath))
 		}
-		l.fp, l.loaded = fp, true
+		l.fp, l.loaded = fp, ok
 	}
 	return snap, err
 }
