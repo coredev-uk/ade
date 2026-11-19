@@ -50,12 +50,18 @@ type Env struct {
 	// Home and RuntimeDir (XDG_RUNTIME_DIR) locate the VS Code server's remote
 	// CLI and its IPC sockets when PATH or the inherited environment is stale.
 	Home, RuntimeDir string
+	// CodeServerSession (CODE_SERVER_SESSION_SOCKET) and DataHome
+	// (XDG_DATA_HOME) locate a running code-server's session socket.
+	CodeServerSession, DataHome string
 	// LookPath finds a program on PATH; exec.LookPath when nil.
 	LookPath func(string) (string, error)
 	// Glob and ModTime read the file system (filepath.Glob and os.Stat when
 	// nil); tests replace them. ModTime reports false for a missing path.
 	Glob    func(pattern string) ([]string, error)
 	ModTime func(path string) (time.Time, bool)
+	// SocketOpen reports whether a Unix socket accepts connections (a dial
+	// when nil); tests replace it.
+	SocketOpen func(path string) bool
 }
 
 // FromOS reads the real environment.
@@ -69,6 +75,9 @@ func FromOS() Env {
 		Headless:    runtime.GOOS == "linux" && os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "",
 		Home:        home,
 		RuntimeDir:  os.Getenv("XDG_RUNTIME_DIR"),
+
+		CodeServerSession: os.Getenv("CODE_SERVER_SESSION_SOCKET"),
+		DataHome:          os.Getenv("XDG_DATA_HOME"),
 	}
 }
 
@@ -112,6 +121,10 @@ type Editor struct {
 	// socket is gone (VS Code reconnected after this shell started), so the
 	// newest live one is used instead.
 	IPC string
+	// Session is a running code-server's session socket: Cmd is then
+	// code-server's launcher, which opens paths in code-server's browser
+	// window through it (`--session-socket <Session> --reuse-window`).
+	Session string
 }
 
 // Resolve applies host.editor (setting) to the environment:
@@ -169,8 +182,15 @@ func (e Editor) Argv(path string, line int, wait bool) []string {
 	switch e.Kind {
 	case Code:
 		argv := []string{e.Cmd}
+		if e.Session != "" {
+			argv = append(argv, "--session-socket", e.Session, "--reuse-window")
+		}
 		if wait {
 			argv = append(argv, "--wait")
+		}
+		if line > 0 && e.Session != "" {
+			// code-server's launcher has no -g: it always reads path:line.
+			return append(argv, path+":"+strconv.Itoa(line))
 		}
 		if line > 0 {
 			return append(argv, "-g", path+":"+strconv.Itoa(line))
@@ -185,12 +205,24 @@ func (e Editor) Argv(path string, line int, wait bool) []string {
 	return []string{"sh", "-c", e.Cmd + ` "$1"`, "sh", path}
 }
 
-// ArgvDir is the command line that opens directory dir as a workspace.
+// ArgvDir is the command line that opens directory dir (or a .code-workspace
+// file) as a workspace.
 func (e Editor) ArgvDir(dir string) []string {
-	if e.Kind == Code {
+	if e.Kind == Code && e.Session == "" {
 		return []string{e.Cmd, dir}
 	}
 	return e.Argv(dir, 0, false)
+}
+
+// ArgvWindow is the command line that opens directory dir as a workspace in
+// a new window. code-server opens it in its browser window instead (see
+// Session): a window the server opens unprompted is a pop-up the browser
+// blocks.
+func (e Editor) ArgvWindow(dir string) []string {
+	if e.Kind == Code && e.Session == "" {
+		return []string{e.Cmd, "--new-window", dir}
+	}
+	return e.ArgvDir(dir)
 }
 
 // Command returns the exec.Cmd for Argv, with the environment the editor
@@ -223,6 +255,9 @@ func (e Editor) Environ() []string {
 // the window and stays a shell.
 func (e Editor) PaneCommand(dir string) (prog string, args []string) {
 	if e.Kind == Code {
+		if e.Session != "" {
+			return "sh", append([]string{"-c", `"$@"; exec "${SHELL:-sh}"`, "sh"}, e.ArgvDir(dir)...)
+		}
 		if e.IPC != "" {
 			return "sh", []string{"-c", `export VSCODE_IPC_HOOK_CLI="$3"; "$1" "$2"; exec "${SHELL:-sh}"`, "sh", e.Cmd, dir, e.IPC}
 		}
@@ -247,6 +282,9 @@ func (e Editor) String() string {
 	}
 	if e.Remote {
 		return e.Name + " (remote CLI " + filepath.Clean(e.Cmd) + ")"
+	}
+	if e.Session != "" {
+		return e.Name + " (" + filepath.Clean(e.Cmd) + ", session socket " + e.Session + ")"
 	}
 	return e.Name + " (" + filepath.Clean(e.Cmd) + ")"
 }

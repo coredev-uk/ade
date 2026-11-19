@@ -3,6 +3,7 @@ package editor
 import (
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -74,6 +75,7 @@ func TestResolveRemoteCLI(t *testing.T) {
 		fs      fakeFS
 		progs   map[string]string
 		want    Editor
+		open    []string // Unix sockets that accept connections
 	}{
 		{
 			name: "auto in the remote terminal uses the remote CLI from PATH", setting: "auto",
@@ -193,11 +195,67 @@ func TestResolveRemoteCLI(t *testing.T) {
 			progs: map[string]string{"code": "/usr/bin/code", "code-server": "/usr/bin/code-server"},
 			want:  Editor{Kind: Code, Cmd: "/usr/bin/code", Name: "code"},
 		},
+		{
+			name: "web tty with code-server running: its launcher through the session socket", setting: "code",
+			env:   Env{Headless: true, Home: "/home/dev"},
+			fs:    fakeFS{},
+			progs: map[string]string{"code-server": "/usr/bin/code-server", "nvim": "/bin/nvim"},
+			open:  []string{"/home/dev/.local/share/code-server/code-server-ipc.sock"},
+			want:  Editor{Kind: Code, Cmd: "/usr/bin/code-server", Name: "code-server", Session: "/home/dev/.local/share/code-server/code-server-ipc.sock"},
+		},
+		{
+			name: "web tty, code-server installed but its session socket is closed: no code", setting: "code",
+			env:   Env{Headless: true, Home: "/home/dev"},
+			fs:    fakeFS{},
+			progs: map[string]string{"code-server": "/usr/bin/code-server", "nvim": "/bin/nvim"},
+			want:  Editor{Kind: Nvim, Cmd: "/bin/nvim", Name: "nvim"},
+		},
+		{
+			name: "web tty, socket open but no code-server launcher: no code", setting: "code",
+			env:   Env{Headless: true, Home: "/home/dev"},
+			fs:    fakeFS{codeServerCLI: now},
+			progs: map[string]string{"code-server": codeServerCLI, "nvim": "/bin/nvim"},
+			open:  []string{"/home/dev/.local/share/code-server/code-server-ipc.sock"},
+			want:  Editor{Kind: Nvim, Cmd: "/bin/nvim", Name: "nvim"},
+		},
+		{
+			name: "Coder module's code-server off PATH, socket under XDG_DATA_HOME", setting: "code",
+			env:   Env{Headless: true, Home: "/home/dev", DataHome: "/data"},
+			fs:    fakeFS{"/tmp/code-server/bin/code-server": now},
+			progs: map[string]string{},
+			open:  []string{"/data/code-server/code-server-ipc.sock"},
+			want:  Editor{Kind: Code, Cmd: "/tmp/code-server/bin/code-server", Name: "code-server", Session: "/data/code-server/code-server-ipc.sock"},
+		},
+		{
+			name: "CODE_SERVER_SESSION_SOCKET names the socket", setting: "code",
+			env:   Env{Headless: true, Home: "/home/dev", CodeServerSession: "/run/cs.sock"},
+			fs:    fakeFS{},
+			progs: map[string]string{"code-server": "/usr/bin/code-server"},
+			open:  []string{"/run/cs.sock", "/home/dev/.local/share/code-server/code-server-ipc.sock"},
+			want:  Editor{Kind: Code, Cmd: "/usr/bin/code-server", Name: "code-server", Session: "/run/cs.sock"},
+		},
+		{
+			name: "desktop session: desktop code before a running code-server", setting: "code",
+			env:   Env{Home: "/home/dev"},
+			fs:    fakeFS{},
+			progs: map[string]string{"code": "/usr/bin/code", "code-server": "/usr/bin/code-server"},
+			open:  []string{"/home/dev/.local/share/code-server/code-server-ipc.sock"},
+			want:  Editor{Kind: Code, Cmd: "/usr/bin/code", Name: "code"},
+		},
+		{
+			name: "auto in a web tty stays nvim with code-server running", setting: "auto",
+			env:   Env{Headless: true, Home: "/home/dev"},
+			fs:    fakeFS{},
+			progs: map[string]string{"code-server": "/usr/bin/code-server", "nvim": "/bin/nvim"},
+			open:  []string{"/home/dev/.local/share/code-server/code-server-ipc.sock"},
+			want:  Editor{Kind: Nvim, Cmd: "/bin/nvim", Name: "nvim"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.env.LookPath = lookup(tt.progs)
 			tt.env.Glob, tt.env.ModTime = tt.fs.glob, tt.fs.modTime
+			tt.env.SocketOpen = func(p string) bool { return slices.Contains(tt.open, p) }
 			got := Resolve(tt.setting, tt.env)
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("Resolve(%q) = %+v\nwant %+v", tt.setting, got, tt.want)
@@ -242,5 +300,30 @@ func TestNoCodeHint(t *testing.T) {
 	}
 	if h := (Env{}).NoCodeHint("/w"); !strings.Contains(h, "not on PATH") {
 		t.Errorf("desktop without code: %q", h)
+	}
+}
+
+// code-server's launcher opens through the session socket in the existing
+// browser window: never a bare `code-server <path>`, which starts a second
+// server when no window takes it.
+func TestCodeServerSessionArgv(t *testing.T) {
+	const sock = "/home/dev/.local/share/code-server/code-server-ipc.sock"
+	cs := Editor{Kind: Code, Cmd: "/usr/bin/code-server", Name: "code-server", Session: sock}
+	base := []string{"/usr/bin/code-server", "--session-socket", sock, "--reuse-window"}
+	if got := cs.ArgvDir("/w/x.code-workspace"); !reflect.DeepEqual(got, append(slices.Clone(base), "/w/x.code-workspace")) {
+		t.Errorf("ArgvDir = %q", got)
+	}
+	if got := cs.ArgvWindow("/w"); !reflect.DeepEqual(got, append(slices.Clone(base), "/w")) {
+		t.Errorf("ArgvWindow = %q: a server-opened browser window is a blocked pop-up, reuse the window", got)
+	}
+	if got := cs.Argv("/w/a.go", 7, true); !reflect.DeepEqual(got, append(slices.Clone(base), "--wait", "/w/a.go:7")) {
+		t.Errorf("Argv = %q: code-server's launcher has no -g", got)
+	}
+	prog, args := cs.PaneCommand("/w")
+	if prog != "sh" || !reflect.DeepEqual(args[3:], append(slices.Clone(base), "/w")) {
+		t.Errorf("pane = %s %q", prog, args)
+	}
+	if got := (Editor{Kind: Code, Cmd: "/bin/code"}).ArgvWindow("/w"); !reflect.DeepEqual(got, []string{"/bin/code", "--new-window", "/w"}) {
+		t.Errorf("VS Code ArgvWindow = %q", got)
 	}
 }

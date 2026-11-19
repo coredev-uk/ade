@@ -1,6 +1,7 @@
 package editor
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -129,8 +130,11 @@ func (e Env) liveIPC() string {
 // the server's remote CLI found on disk is used. A dead inherited IPC socket is
 // replaced by the newest live one.
 //
-// Outside VS Code a `code` is only useful with a display: on a headless
-// session (web tty, plain ssh) no window can open, so there is no editor.
+// Outside VS Code, a running code-server whose session socket accepts
+// connections opens it in its browser window (see codeServerEditor). Failing
+// that, a `code` is only useful with a display: on a headless session (web
+// tty, plain ssh) no window can open, so there is no editor. With a display
+// the desktop `code` comes first.
 func (e Env) codeEditor() (Editor, bool) {
 	if e.InVSCode() {
 		p := e.remoteOnPath()
@@ -145,13 +149,89 @@ func (e Env) codeEditor() (Editor, bool) {
 		}
 		return Editor{Kind: Code, Cmd: p, Name: filepath.Base(p), Remote: isRemoteCLI(p), IPC: e.liveIPC()}, true
 	}
-	if e.Headless {
+	if !e.Headless {
+		if p := e.look("code"); p != "" {
+			return Editor{Kind: Code, Cmd: p, Name: "code"}, true
+		}
+	}
+	return e.codeServerEditor()
+}
+
+// codeServerLauncherGlobs locate code-server's own launcher (not the remote
+// CLI its terminals get): the Coder module's /tmp/code-server, install.sh's
+// standalone release under $HOME and the system package.
+var codeServerLauncherGlobs = []string{
+	"/tmp/code-server/bin/code-server",
+	"~/.local/lib/code-server-*/bin/code-server",
+	"/usr/lib/code-server/bin/code-server",
+}
+
+// codeServerLauncher finds code-server's launcher: from PATH unless that is
+// the remote CLI, else in an install location. "" when there is none.
+func (e Env) codeServerLauncher() string {
+	if p := e.look("code-server"); p != "" && !isRemoteCLI(p) {
+		return p
+	}
+	var all []string
+	for _, g := range codeServerLauncherGlobs {
+		if rest, ok := strings.CutPrefix(g, "~/"); ok {
+			if e.Home == "" {
+				continue
+			}
+			g = filepath.Join(e.Home, rest)
+		}
+		all = append(all, e.glob(g)...)
+	}
+	return e.newest(all)
+}
+
+// CodeServerSocket is the session socket a running code-server listens on:
+// $CODE_SERVER_SESSION_SOCKET (code-server sets it for its children), else
+// code-server-ipc.sock in its default user data directory
+// ($XDG_DATA_HOME/code-server, ~/.local/share/code-server). "" when neither
+// can be named.
+func (e Env) CodeServerSocket() string {
+	if e.CodeServerSession != "" {
+		return e.CodeServerSession
+	}
+	data := e.DataHome
+	if data == "" {
+		if e.Home == "" {
+			return ""
+		}
+		data = filepath.Join(e.Home, ".local", "share")
+	}
+	return filepath.Join(data, "code-server", "code-server-ipc.sock")
+}
+
+func (e Env) socketOpen(path string) bool {
+	if e.SocketOpen != nil {
+		return e.SocketOpen(path)
+	}
+	c, err := net.DialTimeout("unix", path, 500*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = c.Close()
+	return true
+}
+
+// codeServerEditor is code-server's launcher talking to the running
+// code-server through its session socket: `code-server --session-socket S
+// --reuse-window <path>` opens path in the code-server browser window, which
+// is how a CDE without a VS Code client (a web tty) reaches the editor. It
+// needs the launcher and a session socket that accepts connections; the
+// launcher itself picks the browser window, and fails when none is open.
+func (e Env) codeServerEditor() (Editor, bool) {
+	p := e.codeServerLauncher()
+	if p == "" {
 		return Editor{}, false
 	}
-	if p := e.look("code"); p != "" {
-		return Editor{Kind: Code, Cmd: p, Name: "code"}, true
+	sock := e.CodeServerSocket()
+	if sock == "" || !e.socketOpen(sock) {
+		return Editor{}, false
 	}
-	return Editor{}, false
+	return Editor{Kind: Code, Cmd: p, Name: "code-server", Session: sock}, true
 }
 
 // NoCodeHint says how to open target in VS Code by hand when ADE cannot do it
@@ -160,9 +240,10 @@ func (e Env) codeEditor() (Editor, bool) {
 func (e Env) NoCodeHint(target string) string {
 	switch {
 	case !e.InVSCode() && e.Headless:
-		return "no VS Code window is connected to this terminal (a web tty has none): " +
+		return "no VS Code window is connected to this terminal (a web tty has none) and no running code-server was found: " +
 			"open " + target + " from your VS Code window (File > Open Workspace from File…), " +
-			"or run `code " + target + "` in a VS Code terminal on this machine"
+			"or run `code " + target + "` in a VS Code terminal on this machine; " +
+			"with code-server running (its session socket " + e.CodeServerSocket() + " open), ADE opens it in code-server's browser window"
 	case e.InVSCode():
 		return "the VS Code remote CLI was not found: open " + target +
 			" from the VS Code window (File > Open…), or open a new VS Code terminal so it puts `code` " +
