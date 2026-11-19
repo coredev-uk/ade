@@ -162,7 +162,7 @@ The base layer is flat. Depth is one step: overlays composite above the screen. 
 
 One line per item:
 
-- **Columns:** marker (`▸` when selected), short ref (`#1`, or `api!3` outside the tracker; the column is as wide as the longest ref), title, an unread marker (bold amber `new`, or `3 new`) when notifications about the item are unread, then the track, weight (`5w`, or a faint `–` when unweighted, never `0`), and court · reason. The unread marker is a word because dots are stations on this screen.
+- **Columns:** marker (`▸` when selected), short ref (`#1`, or `api!3` outside the tracker; a repo name over 10 cells shows as its acronym, `cpf!7` for `customer-portal-frontend`, or cut to 10 cells when it is one word; the column is as wide as the longest ref), title, an unread marker (bold amber `new`, or `3 new`) when notifications about the item are unread, then the track, weight (`5w`, or a faint `–` when unweighted, never `0`), and court · reason. The unread marker is a word because dots are stations on this screen.
 - **Legend:** one faint line under the first project rule names the stations above their columns (`as st br dr ci rv mg`; initials when the track is compact).
 - **Track:** seven stations (assigned, started, branch, draft, ci, review, merged) joined by `━━` (travelled, in the item's line ink) and `──` (to come, faint). Below 110 columns the connectors shorten to one cell (`●━●━◉─○─○─○─○`) so titles keep their room.
   - Done stations are `●`; the current one is the train `◉` in the line ink (bold).

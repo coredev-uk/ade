@@ -126,6 +126,39 @@ func TestHomeRendersFromCacheWhileSyncHangs(t *testing.T) {
 	}
 }
 
+// A review in a repo with a long name shows the repo's acronym, so the ref
+// column stays narrow and the titles keep their room.
+func TestHomeAbbreviatesLongRepoNames(t *testing.T) {
+	cfg := config.Defaults()
+	a := &app.App{Paths: paths.Paths{CacheDir: t.TempDir()}, Config: &cfg}
+	t.Cleanup(func() { a.Close() })
+	st, err := a.Cache()
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := sampleResult()
+	title := "Schedule tenant-aware exports from the billing page"
+	res.Reviews = []forge.MR{{Ref: forge.Ref{Project: "g/customer-portal-frontend", IID: 7, Kind: forge.KindMR}, Title: title, State: "opened", Author: forge.User{Username: "sam"}}}
+	m := model{app: a, cache: st, g: unicodeGlyphs, nc: newNotifCenter(notify.NewInbox(st)), w: 100, h: 40}
+	next, _ := m.Update(resultsMsg{results: []forgesync.Result{res}})
+	out := ansi.Strip(next.(model).render())
+	if !strings.Contains(out, "cpf!7  Schedule") || strings.Contains(out, "customer-portal-frontend") {
+		t.Errorf("want the review as cpf!7, the title right after it:\n%s", out)
+	}
+
+	for name, want := range map[string]string{
+		"api":                       "api",
+		"ten-chars0":                "ten-chars0",
+		"payments-service":          "ps",
+		"notificationsservice":      "notific...",
+		"a-b-c-d-e-f-g-h-i-j-k-l-m": "a-b-c-d...",
+	} {
+		if got := homeRepo(name, "..."); got != want {
+			t.Errorf("homeRepo(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
 // A narrow sprint rule squeezes the sprint and its load into one compact group
 // before dropping anything, so load never disappears while the end date stays.
 func TestProjectRuleKeepsLoadCompact(t *testing.T) {
