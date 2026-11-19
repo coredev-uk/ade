@@ -72,6 +72,31 @@ func TestBuildLayoutRunsPanesInTheDevShell(t *testing.T) {
 	}
 }
 
+// `nix develop` exports $SHELL as stdenv's bash, which has no line editing
+// (arrow keys echo escape codes). Inside a dev shell the shell pane runs the user's
+// shell, and every wrapped program sees it as $SHELL.
+func TestBuildLayoutKeepsTheUsersShellInTheDevShell(t *testing.T) {
+	dir := "/projects/acme/web/418-paginate"
+	spec := baseSpec(LayoutCode)
+	spec.Tools.Shell = "/usr/bin/zsh"
+	spec.Devshell = devshell.Shell{Kind: devshell.Nix, Dir: dir}
+	got, err := BuildLayout(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`args "develop" "` + dir + `" "-c" "env" "SHELL=/usr/bin/zsh" "/usr/bin/zsh"`,
+		`args "develop" "` + dir + `" "-c" "env" "SHELL=/usr/bin/zsh" "nvim" "-u" "NONE"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("layout lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "${SHELL") {
+		t.Errorf("a known shell must not be resolved inside the dev shell:\n%s", got)
+	}
+}
+
 // devshellFixture is a one-repo project whose oneshot task prints $FROM_ENVRC
 // into a file, so the test sees what environment the task ran in.
 func devshellFixture(t *testing.T, devshellSetting string) (f *fixture, out, tree string) {

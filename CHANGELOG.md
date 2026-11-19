@@ -16,6 +16,7 @@
 - **code-server:** in a code-server terminal (VS Code in the browser), the `code-server` remote CLI is used where ADE would use VS Code's remote `code`, found on PATH or in code-server's install, for `host.editor = "auto"`/`"code"`, `v` and `ade vscode workspace --open`. `ade setup` counts it as the `code` tool.
 - **ade-nvim linting:** nvim-lint runs the linters the project's dev shell puts on PATH (golangci-lint, eslint, ruff, shellcheck, statix, yamllint, markdownlint, hadolint and more) on open and save, plus the ones that read the buffer when insert mode ends. `<space>ll` lints now, and `<space>li` lists what was found. Diagnostics show as signs and end-of-line text, worst first.
 - **Fix:** ade-nvim's `<space>gg` (lazygit) failed on a machine where ade-nvim had never run, with `~/.cache/ade-nvim/lazygit-theme.yml: no such file or directory`. ade-nvim now creates its cache, data and state directories at start.
+- **Fix:** in a worktree with a nix dev shell (also through a `use flake` `.envrc`), the workspace tab's shell pane ran nixpkgs' non-interactive bash instead of your shell, because `nix develop` sets `$SHELL` to it: no line editing, so arrow keys printed escape codes and your shell config never loaded. Panes inside a dev shell now run your `$SHELL` and keep it as `$SHELL`, so an editor's terminal and omp's shell commands use it too.
 
 ## v0.2.0
 
