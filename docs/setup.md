@@ -223,7 +223,7 @@ call_usd      = 0.50            # hard cap per call, also passed to omp
 agent_run_usd = 1.50            # cap for one agent run
 ```
 
-Every AI call is shown with its cost before it runs when it exceeds `confirm_over_usd`, and is audited (`ade audit --action 'ai.*'`). Details: PLAN.md §4.3 and [billing/README.md](billing/README.md).
+Every AI call is shown with its cost before it runs when it exceeds `confirm_over_usd`, and is audited (`ade audit --action 'ai.*'`). Spend at 80% of a cap raises one `budget.warn` per period; a refused call (a cap, or the provider out of budget) is audited as `budget.stop`, and only the first refusal of the day per profile is a notification. For the rest of that day the dashboard skips the AI calls nobody asked for and Home shows `✕ AI budget reached` under the header ([reference.md](reference.md#configuration)). Details: PLAN.md §4.3 and [billing/README.md](billing/README.md).
 
 #### Through a LiteLLM gateway
 

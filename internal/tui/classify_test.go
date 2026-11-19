@@ -195,6 +195,9 @@ func TestAIChipStatesCarryAWordAndAGlyph(t *testing.T) {
 		{aiChip{ok: true, period: "day", spent: 0.38, limit: 2}, "AI $0.38 / $2.00 day"},
 		{aiChip{ok: true, period: "week", spent: 6.4, limit: 8}, "! AI $6.40 / $8.00 week"},
 		{aiChip{ok: true, period: "day", spent: 2.5, limit: 2}, "x AI $2.50 / $2.00 day cap"},
+		{aiChip{ok: true, period: "day", spent: 0.38, stopped: []string{"gw"}}, "x AI $0.38 stopped"},
+		{aiChip{ok: true, period: "week", spent: 6.4, limit: 8, stopped: []string{"gw"}}, "x AI $6.40 / $8.00 week stopped"},
+		{aiChip{ok: true, period: "day", spent: 2.5, limit: 2, stopped: []string{"gw"}}, "x AI $2.50 / $2.00 day cap"},
 	} {
 		if got := ansi.Strip(tc.chip.render(g)); got != tc.want {
 			t.Errorf("render(%+v) = %q, want %q", tc.chip, got, tc.want)

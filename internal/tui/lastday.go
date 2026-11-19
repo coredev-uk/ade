@@ -38,12 +38,20 @@ type lastDayMsg struct {
 }
 
 // autoAI says whether an AI call nobody asked for may go out: AI set up and
-// on, and no budget cap at criticalBudget or beyond. note is why not, empty
-// when AI is simply not set up.
+// on, no budget stop recorded today for the active profile (ai/daystop.go),
+// and no budget cap at criticalBudget or beyond. note is why not, empty when
+// AI is simply not set up.
 func autoAI(a *app.App) (ok bool, note string) {
 	cfg := a.Config
 	if cfg.AI.Mode == "off" || len(cfg.AI.Profiles) == 0 {
 		return false, ""
+	}
+	if a.Audit != nil {
+		if stops, err := ai.StopsToday(a.Audit, time.Now(), ai.Location(cfg)); err == nil {
+			if _, stopped := stops[cfg.AI.Profile]; stopped {
+				return false, "AI summary paused: the AI budget was reached today"
+			}
+		}
 	}
 	d, err := budget.ForApp(a)
 	if err != nil {
@@ -76,28 +84,33 @@ func (m *model) loadLastDay() tea.Cmd {
 		if err != nil {
 			return lastDayMsg{today: today, note: "last working day: " + shortErr(err)}
 		}
-		if l.Date == "" {
-			return lastDayMsg{today: today, day: &l}
-		}
-		ok, note := autoAI(a)
-		if !ok {
-			return lastDayMsg{today: today, day: &l, note: note}
-		}
-		svc, err := ai.NewService(a)
-		if err != nil {
-			return lastDayMsg{today: today, day: &l, note: "no AI summary: " + shortErr(err)}
-		}
-		svc.SprintStart = budget.SprintStart(a)
-		text, err := (&agile.AINarrator{Svc: svc}).NarrateLastDay(ctx, l)
-		switch {
-		case errors.As(err, new(*ai.ErrNeedsConfirm)):
-			return lastDayMsg{today: today, day: &l, note: "AI summary needs confirmation under your budget settings"}
-		case err != nil:
-			return lastDayMsg{today: today, day: &l, note: "no AI summary: " + shortErr(err)}
-		}
-		l.Narrative = strings.TrimSpace(text)
+		return lastDaySummary(ctx, a, today, l)
+	}
+}
+
+// lastDaySummary asks the model to summarise l, when autoAI allows it.
+func lastDaySummary(ctx context.Context, a *app.App, today string, l agile.LastDay) lastDayMsg {
+	if l.Date == "" {
 		return lastDayMsg{today: today, day: &l}
 	}
+	ok, note := autoAI(a)
+	if !ok {
+		return lastDayMsg{today: today, day: &l, note: note}
+	}
+	svc, err := ai.NewService(a)
+	if err != nil {
+		return lastDayMsg{today: today, day: &l, note: "no AI summary: " + shortErr(err)}
+	}
+	svc.SprintStart = budget.SprintStart(a)
+	text, err := (&agile.AINarrator{Svc: svc}).NarrateLastDay(ctx, l)
+	switch {
+	case errors.As(err, new(*ai.ErrNeedsConfirm)):
+		return lastDayMsg{today: today, day: &l, note: "AI summary needs confirmation under your budget settings"}
+	case err != nil:
+		return lastDayMsg{today: today, day: &l, note: "no AI summary: " + shortErr(err)}
+	}
+	l.Narrative = strings.TrimSpace(text)
+	return lastDayMsg{today: today, day: &l}
 }
 
 func (m *model) onLastDay(msg lastDayMsg) {
