@@ -196,12 +196,13 @@ func TestWeightDialogReadFailureIsWordedAndAudited(t *testing.T) {
 func TestWeightAndNotesOpenOnlyOneDialogAtATime(t *testing.T) {
 	e := newWeightEnv(t)
 	e.open(model.openWeight)
-	e.open(model.openNotes)
-	if e.m.nt != nil {
+	e.open(model.openNoteAdd)
+	e.open(model.openNoteEdit)
+	if e.m.nt != nil || e.m.ne != nil {
 		t.Error("notes opened over the weight dialog")
 	}
 	e.press("esc")
-	e.open(model.openNotes)
+	e.open(model.openNoteAdd)
 	e.open(model.openWeight)
 	if e.m.wt != nil {
 		t.Error("weight opened over the notes dialog")

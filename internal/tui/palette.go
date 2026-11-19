@@ -156,7 +156,7 @@ func (m model) paletteEntries() []palEntry {
 		pressEntry("Restart blocked services", "r", "ade ws restart", true),
 		pressEntry("Copy link", "y", "", true),
 		pressEntry("Open in browser", "o", "", true),
-		pressEntry("Notes", "n", "ade item <ref> --edit", true),
+		pressEntry("Edit notes", "n", "ade item <ref> --edit", true),
 		pressEntry("Add a note", "N", "ade note <ref> <text> [--blocked]", true),
 		pressEntry("Comments on the tracker issue", "C", "ade item <ref>", true),
 		pressEntry("Set weight", "=", "ade issue weight <ref> <n>", true),

@@ -42,6 +42,7 @@ func (m model) mrEntries() []palEntry {
 		any("Jump to the top", "g", ""),
 		any("Jump to the bottom", "G", ""),
 		at("Copy the MR link", "", tabOverview, "y"),
+		at("Overview: edit your notes on the item", "ade item <ref> --edit", tabOverview, "n"),
 		any("Reload from the forge", "U", "ade sync"),
 		any("Approve", "a", "ade mr approve"),
 		any("Mark ready or back to draft", "R", "ade mr ready | ade mr draft"),

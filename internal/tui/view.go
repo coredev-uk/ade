@@ -47,7 +47,7 @@ func (m model) render() string {
 		layers = append(layers, lipgloss.NewLayer(fit(m.g, d, dw, h-2)).X(w-dw).Y(1).Z(1))
 	}
 	mrDialog := m.mr != nil && (m.mr.modal != nil || m.help)
-	if ts := m.nc.toastStack(m.g, toastWidth(w)); ts != "" && !m.nc.open && !m.help && m.agt == nil && m.ait == nil && m.sw == nil && m.cl == nil && m.nt == nil && m.wt == nil && m.sm == nil && m.cm == nil && m.hs.pal == nil && !mrDialog { // a dialog owns the screen: toasts must not cover its keys
+	if ts := m.nc.toastStack(m.g, toastWidth(w)); ts != "" && !m.nc.open && !m.help && m.agt == nil && m.ait == nil && m.sw == nil && m.cl == nil && m.nt == nil && m.ne == nil && m.wt == nil && m.sm == nil && m.cm == nil && m.hs.pal == nil && !mrDialog { // a dialog owns the screen: toasts must not cover its keys
 		layers = append(layers, lipgloss.NewLayer(ts).X(w-lipgloss.Width(ts)-1).Y(max(1, h-1-lipgloss.Height(ts))).Z(3))
 	}
 	switch {
@@ -173,6 +173,8 @@ func (m model) activity() string {
 func (m model) footer(w int) string {
 	narrow := w < twoPaneMinW
 	switch {
+	case m.ne != nil:
+		return m.noteEditFooter(w)
 	case m.hs.pal != nil, m.sm != nil, m.nt != nil, m.wt != nil, m.cl != nil, m.ait != nil, m.cm != nil:
 		return "" // the dialog carries its own key row
 	case m.agt != nil:
@@ -283,22 +285,26 @@ func (m model) homeBody(w, h int) string {
 		return fit(m.g, " "+stFaint.Render("No work items yet. U syncs now."), w, h)
 	}
 	if w < twoPaneMinW {
-		if m.showDetail {
-			return fit(m.g, m.homeDetail(w-2), w, h)
+		if m.showDetail || m.ne != nil { // the notes editor takes the detail view
+			return fit(m.g, m.homeDetail(w-2, h), w, h)
 		}
 		return m.homeLines(w, h)
 	}
 	sep := stRule.Render(m.g.Pane)
+	dh := h // the detail pane's height: one row less below the search bar
+	if m.hs.search.typing || m.searching() {
+		dh--
+	}
 	if m.threeRegion() {
 		// list | preview | activity and services
 		rest := w - railW - 2*3
 		prevW := max(34, rest*30/100)
 		listW := rest - prevW
 		return columns(sep, h, m.homeLines(listW, h),
-			m.belowSearchBar(fit(m.g, m.homeDetail(prevW-1), prevW, h), prevW), m.belowSearchBar(m.railView(railW, h), railW))
+			m.belowSearchBar(fit(m.g, m.homeDetail(prevW-1, dh), prevW, h), prevW), m.belowSearchBar(m.railView(railW, h), railW))
 	}
 	listW := w * 66 / 100
-	right := m.belowSearchBar(fit(m.g, m.homeDetail(w-listW-4), w-listW-3, h), w-listW-3)
+	right := m.belowSearchBar(fit(m.g, m.homeDetail(w-listW-4, dh), w-listW-3, h), w-listW-3)
 	return columns(sep, h, m.homeLines(listW, h), right)
 }
 
@@ -556,7 +562,7 @@ func helpGroups(full bool) []helpGroup {
 				{"a A", "agent runs for the item; all runs"},
 				{"w v", "open workspace (zellij); VS Code workspace of all repos"},
 				{"y o", "copy link or path; browser"},
-				{"n = r", "notes; set weight; restart blocked services"},
+				{"n N = r", "edit notes; dated note; weight; restart services"},
 			}},
 			{"Pages", [][2]string{
 				{"S V", "standup; sprint retro"},
@@ -594,7 +600,7 @@ func helpGroups(full bool) []helpGroup {
 			{"W", "open it with the other main pane: omp (ADE implement skill) or the editor"},
 			{"y", "copy the item's link (Home) or the tree's path (Worktrees)"},
 			{"o", "open the item in the browser (plain host: shows the URL)"},
-			{"n", "notes (yours; fed to agents and AI)"},
+			{"n", "edit your notes in the detail pane (ctrl+s or esc saves, ctrl+e opens your editor; local, fed to agents and AI)"},
 			{"N", "add a dated note: what blocks the item or what you did last (a leading ! or tab marks it blocked; local only)"},
 			{"=", "set weight (shown before it is written; audited)"},
 			{">", "move to the next sprint, child issues following (shown before it is written; audited)"},

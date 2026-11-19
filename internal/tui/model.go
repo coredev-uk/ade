@@ -100,13 +100,17 @@ type model struct {
 	// ld is Home's last-working-day summary (lastday.go).
 	ld lastDayUI
 
-	// nt and wt are the open Notes and Weight dialogs, nil when closed
-	// (notes.go, weight.go).
+	// nt and wt are the open quick-note (or research) and Weight dialogs, nil
+	// when closed (notes.go, weight.go).
 	nt *notesDialog
 	wt *weightDialog
-	// notes are the dated notes of the listed items, read once per refresh
-	// (loadNotes), keyed by markKey(project, ref).
-	notes map[string][]records.Note
+	// ne is the detail pane's notes editor, nil when not editing (notes.go).
+	ne *noteEdit
+	// notes are the listed items' notes, read once per refresh and on a
+	// records change (loadNotes, reloadRecords), keyed by markKey(project,
+	// ref); notesGen counts their replacements so a stale reload is dropped.
+	notes    map[string]itemNote
+	notesGen int
 	// research is each listed item's research job, read with the notes
 	// (research.go), keyed by markKey(project, ref).
 	research map[string]records.Research
@@ -520,7 +524,7 @@ func (m model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		next, cmd := m.restartOrRefresh()
 		return next, cmd
 	case "n":
-		next, cmd := m.openNotes()
+		next, cmd := m.openNoteEdit()
 		return next, cmd
 	case "N":
 		next, cmd := m.openNoteAdd()

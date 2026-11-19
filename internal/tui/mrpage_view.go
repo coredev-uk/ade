@@ -265,6 +265,13 @@ func (m model) mrOverview(w, h int) string {
 	d := p.data
 	g := m.g
 	var l []string
+	if it := p.item; it != nil && m.ne != nil { // the notes editor takes the tab
+		l = append(l, subRule("Work item", it.Ref.String(), w, g))
+		for _, ln := range strings.Split(m.noteEditPane(w-4, h-1), "\n") {
+			l = append(l, "   "+ln)
+		}
+		return fit(g, strings.Join(l, "\n"), w, h)
+	}
 	if it := p.item; it != nil {
 		l = append(l, subRule("Work item", it.Ref.String(), w, g))
 		for _, ln := range strings.Split(m.itemDetail(it, w-4, false), "\n") {
