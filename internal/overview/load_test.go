@@ -173,6 +173,18 @@ func TestPollReloadsOnlyWhenTheCacheOrTheRecordChanged(t *testing.T) {
 		t.Fatalf("after a same-size edit: reloaded %v, notes %q", reloaded, s.Notes)
 	}
 
+	// A sync stores new comments on the tracker issue.
+	at := now.Add(-time.Hour)
+	if err := rs.WriteComments("gl", it.Ref, []forge.Note{
+		{Author: forge.User{Username: "rae", Name: "Rae Reviewer"}, Body: "Support says 20", CreatedAt: at},
+		{Author: forge.User{Username: "dev"}, Body: "assigned to @dev", System: true, CreatedAt: at},
+	}, 5); err != nil {
+		t.Fatal(err)
+	}
+	if s, reloaded := poll(); !reloaded || len(s.Comments) != 1 || s.Comments[0].Author != "Rae Reviewer" {
+		t.Fatalf("after new comments: reloaded %v, comments %+v", reloaded, s.Comments)
+	}
+
 	// The item leaves the cache: the poll says so (the view keeps its last picture).
 	c.put()
 	if _, reloaded, err := l.Poll(); !reloaded || !errors.Is(err, ErrNotCached) {

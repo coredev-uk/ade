@@ -548,6 +548,39 @@ func TestRecordsSkipNotesFetchWhenListingSaysNoComments(t *testing.T) {
 	}
 }
 
+// The sync stores the tracker issue's human comments structured, for the
+// dashboard; a record without that file (from before it existed) gets it on
+// the next sync even when the issue is unchanged, and only once.
+func TestRecordsStoreHumanCommentsAndBackfillOldRecords(t *testing.T) {
+	h := newHarness(t, manifest("demo", "demo", "tracker", "milestones"))
+	seed(h.f)
+	t1 := ref("g/tracker#1")
+	sys := forge.Discussion{ID: "d0", Notes: []forge.Note{{ID: 9, Author: user("me"), Body: "assigned to @me", System: true, CreatedAt: testNow}}}
+	h.f.discussions[t1] = []forge.Discussion{sys, note("Please add a burst test")}
+	rs := records.New(h.app.RecordsDir)
+
+	h.sync()
+	got, err := rs.ReadComments("f", t1)
+	if err != nil || len(got) != 1 || got[0].Body != "Please add a burst test" || got[0].Username != "rae" {
+		t.Fatalf("comments = %+v, %v; want the one human comment", got, err)
+	}
+
+	if err := os.Remove(rs.CommentsPath("f", t1)); err != nil {
+		t.Fatal(err)
+	}
+	h.sync()
+	if n := h.f.discCalls[t1]; n != 2 {
+		t.Errorf("record without a comments file: %d fetches, want 2", n)
+	}
+	if got, _ := rs.ReadComments("f", t1); len(got) != 1 {
+		t.Errorf("comments not backfilled: %+v", got)
+	}
+	h.sync()
+	if n := h.f.discCalls[t1]; n != 2 {
+		t.Errorf("backfilled item fetched again (%d calls)", n)
+	}
+}
+
 func TestOpenFactory(t *testing.T) {
 	if _, err := openForge(context.Background(), "gh", config.Forge{Kind: "github"}); err == nil || !strings.Contains(err.Error(), "forge gh") {
 		t.Errorf("github without a token: err = %v, want a token error naming the forge", err)

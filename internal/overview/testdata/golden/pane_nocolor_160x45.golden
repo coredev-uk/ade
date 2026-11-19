@@ -34,12 +34,12 @@
  [ ] documented, with the `Retry-After` header explained in the reference
  [ ] dashboard shows it
 
+ [2mcomments[m [2m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[m [2mnewest 2 of 3[m
+ [1mSandbox Dev[m[2m · 3h[m  Confirmed on staging: the limiter trips at 50 requests per minute for every tenant
+ [1mKim Lee[m[2m · 26h[m  Same for the PDF export
+
  [2mnotes[m [2m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[m
  ask support about [1m50 req/min[m
 
- 1. check the tenant list
- 2. then `ade sync`
-
-
-
+ [2m… 1 more[m
  [2msynced 4m ago   j/k scroll   r reload   q quit[m

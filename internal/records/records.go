@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -222,7 +223,8 @@ func snapshotBlock(wi domain.WorkItem, comments []forge.Note, maxComments int) s
 	return audit.Redact(b.String())
 }
 
-// lastComments keeps the newest max human comments, oldest first.
+// lastComments keeps the newest max human comments, oldest first. Notes come
+// thread by thread, so a reply in an old thread is ordered by its own time.
 func lastComments(comments []forge.Note, max int) []forge.Note {
 	var human []forge.Note
 	for _, n := range comments {
@@ -233,6 +235,7 @@ func lastComments(comments []forge.Note, max int) []forge.Note {
 	if max <= 0 {
 		return nil
 	}
+	slices.SortStableFunc(human, func(a, b forge.Note) int { return a.CreatedAt.Compare(b.CreatedAt) })
 	if len(human) > max {
 		human = human[len(human)-max:]
 	}

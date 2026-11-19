@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/exp/teatest/v2"
 
 	"github.com/coredev-uk/ade/internal/goldentest"
+	"github.com/coredev-uk/ade/internal/records"
 )
 
 // Golden files (testdata/golden/*.golden): the pane runs in a real tea.Program
@@ -29,6 +30,11 @@ func paneModel(glyphs string) model {
 	it.Issue.Description = goldenDescription
 	s := snap(it)
 	s.Notes = goldenNotes
+	s.Comments = []records.Comment{
+		{Author: "Rae Reviewer", At: now.Add(-50 * time.Hour), Body: "Support says the **CSV** export fails too.\n\nMore below."},
+		{Author: "Kim Lee", At: now.Add(-26 * time.Hour), Body: "Same for the PDF export"},
+		{Author: "Sandbox Dev", At: now.Add(-3 * time.Hour), Body: "Confirmed on staging: the limiter trips at 50 requests per minute for every tenant"},
+	}
 	m := newModel(Options{Loader: &Loader{Ref: it.Ref}, Glyphs: glyphs, Now: func() time.Time { return now }})
 	next, _ := m.Update(loadedMsg{snap: s, reloaded: true})
 	return next.(model)

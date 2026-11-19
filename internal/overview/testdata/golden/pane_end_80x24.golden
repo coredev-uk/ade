@@ -1,8 +1,4 @@
- … 18 above
- Exports hammer the API during the nightly batch.
-
- Plan
-
+ … 22 above
  • measure the current rate with `ade items`
  [x] pick a limiter
  [ ] add the middleware, see the design https://example.com/design/rate-limit
@@ -15,6 +11,10 @@
  [x] 429 over the limit
  [ ] documented, with the `Retry-After` header explained in the reference
  [ ] dashboard shows it
+
+ comments ─────────────────────────────────────────────────────── newest 2 of 3
+ Sandbox Dev · 3h  Confirmed on staging: the limiter trips at 50 requests per …
+ Kim Lee · 26h  Same for the PDF export
 
  notes ────────────────────────────────────────────────────────────────────────
  ask support about 50 req/min

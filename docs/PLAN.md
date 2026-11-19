@@ -478,6 +478,7 @@ There is one directory per work item, keyed by the tracker issue. Child issues, 
 ```
 items/work/acme/tracker/128/
   item.md                                   snapshot + your notes
+  comments.json                             the tracker issue's human comments the snapshot lists, structured (author, time, body)
   ai/20261111T091640-summary-mr233.md       one file per AI output
   ai/20261111T091902-classify.md
   ai/20261112T081500-digest-mr233.md        AI digest of the comments new since you last looked
@@ -505,6 +506,7 @@ synced: 2026-11-11T09:12:03Z
 Free-form. ADE never edits outside the snapshot block.
 ```
 
+- **Tracker issue comments (as built).** Other people add context to a ticket after it is planned. The sync writes the human comments it lists under `## Comments` (the newest `records.snapshot_comments`, system notes dropped, ordered by time across threads, secrets redacted) also to `comments.json` beside `item.md`, so the dashboard and `ade item --watch` read them without parsing markdown. A record without the file (from before it, or made by the notes dialog) has its comments read by the next sync even when the issue did not change; a failed read keeps the stored file. Home's preview shows a `comments · 3` block with the newest two, `C` opens every comment (stored copy first, then the issue's discussions read again in a command), and the overview pane has a `comments` rule. Only the tracker issue's comments: child issues and MRs are not included.
 - **Last-seen marker (as built).** `seen.json` holds one time: the creation time of the newest comment of the item (or MR) that `ade ai digest` already showed. It is local to the machine, never synced and never holds comment text. `ade ai digest <ref>` summarises only comments after it (the reader's own comments and system notes are not news) and then moves it to the newest comment, so a digest is incremental. The marker only moves forward, and only once the digest was delivered: a refused, failed or declined call, an answer cut short, `--peek` and `--dry-run` leave the same comments new. With nothing new no call is made. The digest is an AI artifact (`digest-mr<N>` / `digest-issue<N>`) cached by the new comments' text; with AI off or `--no-ai` the new comments are listed without a model, and the marker still moves.
 - **Stand-in descriptions (as built).** `ade ai standin <issue-ref>` writes a short stand-in for an issue whose description is empty, from its title, labels and the issues it is linked to (a child's tracker parent), as an artifact `standin-issue<N>`. It is only ever shown locally, marked as an AI stand-in (`AI stand-in description · local only`), and the code path that builds it takes the read side of the forge only: nothing is written to the issue. An issue with a description needs none (no call). The TUI offers both from the palette (`:`) on a Home item.
 - **AI artifacts** carry frontmatter: `feature`, `profile`, `model`, `prompt_version`, `input_hash`, `tokens`, `cost_usd`, `created`, `audit_id`. The body is the output.

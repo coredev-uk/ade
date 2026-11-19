@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +35,9 @@ type Snapshot struct {
 	Notes    string
 	// NotesPath is the record file ("e" opens it); empty when there is none.
 	NotesPath string
+	// Comments are the tracker issue's human comments the last sync kept,
+	// oldest first.
+	Comments []records.Comment
 }
 
 // Find returns the cached work item that owns ref: its tracker issue, one of
@@ -80,9 +84,9 @@ type Loader struct {
 }
 
 // fingerprint is what a Poll compares: size and modification time of the
-// cache database, its write-ahead log (sync writes land there first) and the
-// item's record (notes edits).
-type fingerprint [3]stamp
+// cache database, its write-ahead log (sync writes land there first), the
+// item's record (notes edits) and its comments file.
+type fingerprint [4]stamp
 
 type stamp struct {
 	mod  int64
@@ -101,7 +105,15 @@ func stampOf(path string) stamp {
 }
 
 func (l *Loader) fingerprint() fingerprint {
-	return fingerprint{stampOf(l.Cache.Path), stampOf(l.Cache.Path + "-wal"), stampOf(l.recordPath)}
+	return fingerprint{stampOf(l.Cache.Path), stampOf(l.Cache.Path + "-wal"), stampOf(l.recordPath), stampOf(commentsPath(l.recordPath))}
+}
+
+// commentsPath is the comments file beside a record file.
+func commentsPath(record string) string {
+	if record == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(record), records.CommentsFile)
 }
 
 // Load reads the cache and the record now.
@@ -131,7 +143,7 @@ func (l *Loader) load() (Snapshot, error) {
 	if err == nil || errors.Is(err, ErrNotCached) {
 		if snap.NotesPath != "" && snap.NotesPath != l.recordPath {
 			l.recordPath = snap.NotesPath
-			fp[2] = stampOf(l.recordPath)
+			fp[2], fp[3] = stampOf(l.recordPath), stampOf(commentsPath(l.recordPath))
 		}
 		l.fp, l.loaded = fp, true
 	}
@@ -158,6 +170,9 @@ func (l *Loader) read() (Snapshot, error) {
 			snap.NotesPath = rec.Path // the file may appear later; watch it
 		default:
 			return snap, fmt.Errorf("read notes: %w", err)
+		}
+		if snap.Comments, err = l.Records.ReadComments(res.Forge, it.Ref); err != nil {
+			return snap, fmt.Errorf("read comments: %w", err)
 		}
 	}
 	return snap, nil
