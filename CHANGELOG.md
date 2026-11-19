@@ -1,9 +1,5 @@
 # Changelog
 
-## Unreleased
-
-- **Fix:** an issue of yours in a code repo no longer shows as an entry of its own without type, app and weight when the manifest spells the tracker path in another case than the forge (`acme/Tracker` for `acme/tracker`). Its tracker parent was dropped unless that parent was also assigned to you; it is now found, and the child shows under it with the parent's facets. Start work, `ade ai classify` and the MR review page match project paths the same way.
-
 ## v0.3.0
 
 Editors and CDEs: workspaces open in a running code-server from any terminal, `ade doctor` checks the editor `host.editor` names (and `auto` honours `$EDITOR`), the config and manifests point editors at ADE's TOML schema, and releases are cut from this changelog. Also: your own sprint retro, start work that opens started work and runs install hooks, and work items with several child issues.
