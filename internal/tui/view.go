@@ -568,8 +568,7 @@ func helpGroups(full bool) []helpGroup {
 				{"a A", "agent runs for the item; all runs"},
 				{"w v", "open workspace (zellij); VS Code workspace of all repos"},
 				{"y o", "copy link or path; browser"},
-				{"n N = r", "edit notes; dated note; weight; restart services"},
-				{"m", "move the workflow label to match the stage"},
+				{"n N = m r", "edit notes; dated note; weight; label move; restart services"},
 			}},
 			{"Pages", [][2]string{
 				{"S V", "standup; sprint retro"},

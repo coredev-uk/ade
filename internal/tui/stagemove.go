@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -53,7 +52,7 @@ func (m model) openStageMove() (model, tea.Cmd) {
 					if err != nil {
 						return nil, err
 					}
-					return []string{strings.TrimSpace(done.String())}, nil
+					return []string{"moved " + done.String()}, nil
 				},
 				after: func(m model) tea.Cmd { return m.refreshItem(t.Manifest, t.Forge, t.Item.Ref) },
 			}, nil

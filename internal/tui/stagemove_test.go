@@ -46,7 +46,7 @@ func (e *swEnvT) labelAudit() []audit.Entry {
 
 func TestHomeStageMoveShowsTheMoveThenMakesIt(t *testing.T) {
 	e := newStageEnv(t)
-	e.want("stage says in review", "m moves it")
+	e.want("stage says", "in review", "m moves it")
 
 	e.press("m")
 	if e.m.act == nil || e.m.act.stage != adConfirm {
@@ -62,7 +62,7 @@ func TestHomeStageMoveShowsTheMoveThenMakesIt(t *testing.T) {
 	if e.m.act.stage != adDone {
 		t.Fatalf("stage = %v err %v", e.m.act.stage, e.m.act.err)
 	}
-	e.want("done", "workflow in progress → in review")
+	e.want("moved " + trk(1).String() + ": workflow in progress → in review")
 	got := e.issueLabels(1)
 	if !slices.Contains(got, "workflow::in review") || slices.Contains(got, "workflow::in progress") {
 		t.Fatalf("labels after the move: %v", got)
