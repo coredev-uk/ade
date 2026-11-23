@@ -101,7 +101,7 @@ func (m *model) editing() *editor {
 		return nil
 	}
 	switch m.mr.modal.kind {
-	case modalReply, modalComment, modalEditDraft, modalDeny, modalSubmit, modalDescribe:
+	case modalReply, modalComment, modalEditDraft, modalDeny, modalSubmit, modalDescribe, modalRequestReview:
 		return &m.mr.modal.ed
 	}
 	return nil

@@ -255,6 +255,10 @@ func (s *Server) requestReviewers(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if slices.Contains(in.Reviewers, it.Author) {
+		custom(w, "PullRequest", "Review cannot be requested from pull request author.")
+		return
+	}
 	p := it.PR
 	for _, slug := range in.TeamReviewers {
 		if !slices.Contains(p.RequestedTeams, slug) {
