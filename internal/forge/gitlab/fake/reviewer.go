@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/coredev-uk/ade/internal/forge"
 )
@@ -93,4 +95,133 @@ func (s *Server) mrReviewers(w http.ResponseWriter, r *http.Request) {
 		out = append(out, object{"user": userJSON(u), "state": state, "created_at": ts(m.Created)})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func init() {
+	registerRoutes(func(s *Server, mux *http.ServeMux) { mux.HandleFunc("GET /api/v4/users", s.listUsers) })
+}
+
+// rereviewFailure is the message mergeRequestReviewerRereview answers with
+// for the users FailRereview named.
+type rereviewFailure struct {
+	msg   string
+	users []string
+}
+
+func (s *Server) rereviewFailure() *rereviewFailure {
+	return s.ext("rereview", func() any { return &rereviewFailure{} }).(*rereviewFailure)
+}
+
+// FailRereview makes mergeRequestReviewerRereview answer msg as a payload
+// error for these users, as GitLab does when it refuses the request.
+func (s *Server) FailRereview(msg string, users ...string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	*s.rereviewFailure() = rereviewFailure{msg: msg, users: users}
+}
+
+// ReviewerState is username's verdict on the MR: "unreviewed" for a reviewer
+// who has not reviewed, "" for someone who is not a reviewer.
+func (s *Server) ReviewerState(ref forge.Ref, username string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m, err := s.mr(ref)
+	if err != nil {
+		return "", err
+	}
+	u := s.st.findUser(username)
+	if u == nil || !slices.Contains(m.Reviewers, u) {
+		return "", nil
+	}
+	if st := m.ReviewState[username]; st != "" {
+		return st, nil
+	}
+	return "unreviewed", nil
+}
+
+// listUsers serves GET /users?username=: an exact, case-insensitive lookup
+// (the only filter the driver uses); without it, every user.
+func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	name := r.URL.Query().Get("username")
+	var out []*user
+	for _, u := range s.st.users {
+		if name == "" || strings.EqualFold(u.Username, name) {
+			out = append(out, u)
+		}
+	}
+	writeJSON(w, http.StatusOK, usersJSON(out))
+}
+
+// setReviewerIDs applies reviewer_ids of PUT .../merge_requests/:iid: it
+// replaces the reviewer set, and 0 or an empty value unsets all of them. A
+// reviewer who stays keeps their verdict; one who goes loses it. It reports
+// false after answering 400 for an id no user has.
+func (s *Server) setReviewerIDs(w http.ResponseWriter, m *mr, p map[string]any) bool {
+	var ids []int64
+	switch v := p["reviewer_ids"].(type) {
+	case []any:
+		for _, x := range v {
+			n, _ := strconv.ParseInt(fmt.Sprint(x), 10, 64)
+			ids = append(ids, n)
+		}
+	case nil:
+	default:
+		n, _ := strconv.ParseInt(fmt.Sprint(v), 10, 64)
+		ids = append(ids, n)
+	}
+	var set []*user
+	for _, id := range ids {
+		if id == 0 {
+			continue
+		}
+		i := slices.IndexFunc(s.st.users, func(u *user) bool { return u.ID == id })
+		if i < 0 {
+			badRequest(w, fmt.Sprintf("reviewer_ids contains %d, which is not a user", id))
+			return false
+		}
+		if u := s.st.users[i]; !slices.Contains(set, u) {
+			set = append(set, u)
+		}
+	}
+	for _, u := range m.Reviewers {
+		if !slices.Contains(set, u) {
+			delete(m.ReviewState, u.Username)
+		}
+	}
+	m.Reviewers = set
+	return true
+}
+
+// reviewerRereviewMutation answers mergeRequestReviewerRereview: the reviewer's
+// verdict goes back to unreviewed. Like GitLab it refuses a user who is not a
+// reviewer of the MR, with the error in the payload.
+func (s *Server) reviewerRereviewMutation(w http.ResponseWriter, vars map[string]any) {
+	reply := func(errs []string, mr any) {
+		writeJSON(w, http.StatusOK, object{"data": object{"mergeRequestReviewerRereview": object{"errors": errs, "mergeRequest": mr}}})
+	}
+	p := s.st.findProject(fmt.Sprint(vars["projectPath"]))
+	iid, _ := strconv.Atoi(fmt.Sprint(vars["iid"]))
+	var m *mr
+	if p != nil {
+		m = s.st.findMR(p, iid)
+	}
+	if m == nil {
+		reply([]string{"The resource that you are attempting to access does not exist or you don't have permission to perform this action"}, nil)
+		return
+	}
+	id, _ := strconv.ParseInt(strings.TrimPrefix(fmt.Sprint(vars["userId"]), "gid://gitlab/User/"), 10, 64)
+	i := slices.IndexFunc(m.Reviewers, func(u *user) bool { return u.ID == id })
+	if i < 0 {
+		reply([]string{"User is not a reviewer of this merge request"}, nil)
+		return
+	}
+	if f := s.rereviewFailure(); slices.Contains(f.users, m.Reviewers[i].Username) {
+		reply([]string{f.msg}, nil)
+		return
+	}
+	delete(m.ReviewState, m.Reviewers[i].Username)
+	m.Updated = s.st.clock
+	reply([]string{}, object{"iid": strconv.Itoa(iid)})
 }

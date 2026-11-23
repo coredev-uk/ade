@@ -1,0 +1,8 @@
+mutation ReviewerRereview($projectPath: ID!, $iid: String!, $userId: UserID!) {
+  mergeRequestReviewerRereview(input: {projectPath: $projectPath, iid: $iid, userId: $userId}) {
+    errors
+    mergeRequest {
+      iid
+    }
+  }
+}
