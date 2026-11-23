@@ -14,7 +14,7 @@ ADE reads spend and budget from each provider's own billing endpoint where one e
 | LiteLLM virtual key | `max_budget − spend` from `/key/info` | per-request headers + `/key/info` | Team keys are checked against team budgets only. Budgets need the proxy's DB; without one they fail open. `soft_budget` alerts but never blocks. |
 | Moonshot/Kimi | `available_balance` (USD) | balance delta | No usage/cost endpoint. |
 | OpenRouter | `limit_remaining` from `/api/v1/key` | `usage` | `/credits` needs a management key. |
-| Anthropic API | — | — | Needs an Admin key (`/v1/organizations/analytics/cost`, 4–24 h lag). At the platform spend cap, the API returns 429 `enforced_spend_limit_reached`. |
+| Anthropic API | — | — | Needs an Admin key (`/v1/organizations/analytics/cost`, 4–24 h lag). At the platform spend cap, the API returns 429 `enforced_spend_limit_reached`; with no prepaid credit left, 400 `invalid_request_error` "Your credit balance is too low to access the Anthropic API…" (text pinned from an SDK issue, not Anthropic's errors page: [vendors.md](vendors.md#15-rate-limit-response-headers-on-normal-messages-api-calls)). ADE treats all of these as budget stops. |
 | OpenAI API | — | — | Needs an Admin key (`/v1/organization/costs`, daily buckets). No balance endpoint. |
 | Claude subscription (omp / Claude Code) | — | omp per-turn `usage.cost.total` (list-price equivalent) | Claude Code's statusline exposes 5-hour and 7-day `used_percentage`. The OAuth usage endpoint is undocumented, so ADE does not call it. |
 

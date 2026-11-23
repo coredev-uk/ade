@@ -85,7 +85,7 @@ func NewService(a *app.App) (*Service, error) {
 	rec := records.New(a.RecordsDir)
 	s := &Service{
 		Cfg: a.Config, Audit: a.Audit, Records: rec,
-		Ledger: ledger.New(st, a.Audit), Cache: NewCache(st, rec), Billing: billing.NewCache(st),
+		Ledger: newLedger(st, a.Audit), Cache: NewCache(st, rec), Billing: billing.NewCache(st),
 		DB: st.DB, Bus: a.Bus, Now: time.Now, Loc: Location(a.Config),
 	}
 	s.Open = func(ctx context.Context, p config.AIProfile) (Driver, error) { return DriverFor(ctx, p, s.HTTP) }
@@ -312,6 +312,31 @@ func (s *Service) Run(ctx context.Context, j Job) (Result, error) {
 			return Result{Preflight: pf}, ErrCancelled
 		}
 	}
+
+	// Reserve the ceiling before sending. The pre-flight above read the caps
+	// without holding anything, so calls that all passed it (or sat at a
+	// confirm prompt) are checked again here, one at a time, against what the
+	// others have reserved. The reservation is dropped once the call is booked.
+	release, err := s.Reserve(name, "ai."+j.Feature, callTTL(p), func(held ledger.Held) (float64, error) {
+		fresh := pf
+		fresh.Refuse, fresh.Confirm = "", nil
+		if err := s.applyCaps(ctx, &fresh, name, p, held); err != nil {
+			return 0, err
+		}
+		if fresh.Refuse != "" && !j.Override {
+			pf = fresh
+			return 0, &StopError{Source: "local", Message: fresh.Refuse}
+		}
+		return pf.EstimateUSD, nil
+	})
+	if err != nil {
+		if stop, ok := AsStop(err); ok {
+			s.recordStop(j, name, model, item, stop)
+			return Result{Preflight: pf}, stop
+		}
+		return Result{Preflight: pf}, err
+	}
+	defer release()
 
 	// The price the pre-flight used goes with the call: the driver books the
 	// cost from it, so what was estimated is what the ledger and the caps see.
@@ -588,14 +613,30 @@ func (s *Service) preflight(ctx context.Context, j Job, name string, p config.AI
 		}
 		pf.EstimateUSD = priceUSD(price, in, outTok)
 	}
-	spent, err := s.Ledger.Periods(s.Now(), s.Loc, s.SprintStart)
+	// What is in flight is read before the ledger: a call that finishes in
+	// between is then counted twice (reserved and booked), never missed.
+	held, err := s.Held()
 	if err != nil {
 		return pf, err
 	}
-	pf.Spent = spent
-	pf.Headroom = s.headroom(ctx, name, p)
-	check(&pf, s.Cfg.Budget, p.Billing.WeeklySoftUSD, s.Cfg.AI.Mode == "ask")
+	if err := s.applyCaps(ctx, &pf, name, p, held); err != nil {
+		return pf, err
+	}
 	return pf, nil
+}
+
+// applyCaps reads the ledger spend and the provider's headroom, and decides on
+// pf's estimate against the caps with the calls in flight (held) counted as spent.
+func (s *Service) applyCaps(ctx context.Context, pf *Preflight, name string, p config.AIProfile, held ledger.Held) error {
+	spent, err := s.Ledger.Periods(s.Now(), s.Loc, s.SprintStart)
+	if err != nil {
+		return err
+	}
+	pf.Spent = spent
+	pf.InFlightUSD, pf.inFlightProfile = held.Total, held.Profile(name)
+	pf.Headroom = s.headroom(ctx, name, p)
+	check(pf, s.Cfg.Budget, p.Billing.WeeklySoftUSD, s.Cfg.AI.Mode == "ask")
+	return nil
 }
 
 func destOf(p config.AIProfile) string {

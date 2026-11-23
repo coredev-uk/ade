@@ -7,8 +7,10 @@ import (
 
 // classifyStop decides whether an HTTP error response is a budget stop. It
 // looks at the body, never at the status code: LiteLLM answers a used-up
-// budget with 400, 401, 422 or 429 depending on its version (docs/billing).
-// It returns nil for any other error.
+// budget with 400, 401, 422 or 429 depending on its version (docs/billing),
+// and Anthropic answers an empty prepaid balance with a 400
+// invalid_request_error whose only marker is its message. It returns nil for
+// any other error.
 func classifyStop(source string, body []byte) *StopError {
 	var env struct {
 		Error struct {
@@ -32,6 +34,7 @@ func classifyStop(source string, body []byte) *StopError {
 	switch {
 	case env.Error.Type == "budget_exceeded",
 		env.Error.Details.ErrorCode == "enforced_spend_limit_reached",
+		env.Error.Type == "billing_error", // Anthropic's documented 402 type for a billing problem
 		env.Error.Type == "insufficient_quota",
 		codeIs(env.Error.Code, "insufficient_quota", "exceeded_current_quota_error"),
 		env.Error.Type == "exceeded_current_quota_error":
@@ -41,6 +44,7 @@ func classifyStop(source string, body []byte) *StopError {
 	for _, needle := range []string{
 		"budget has been exceeded", "exceededbudget", "exceededtokenbudget", "exceeded budget for model",
 		"you have reached your specified api usage limits", "enforced_spend_limit_reached",
+		"your credit balance is too low", // Anthropic: empty prepaid balance (docs/billing/vendors.md)
 	} {
 		if strings.Contains(low, needle) {
 			return &StopError{Source: source, Message: oneLine(msg)}

@@ -41,6 +41,13 @@ type Preflight struct {
 	price *config.Price
 
 	Spent Spent `json:"spent"`
+	// InFlightUSD is what calls still in flight (this process or another)
+	// have reserved: their pre-flight ceilings, counted as spent until they
+	// are booked.
+	InFlightUSD float64 `json:"in_flight_usd,omitempty"`
+	// inFlightProfile is the part of InFlightUSD on this profile, which counts
+	// against its provider headroom.
+	inFlightProfile float64
 	// Headroom is what the provider says is left under its own cap
 	// (LiteLLM max_budget − spend); nil when unknown.
 	Headroom *float64 `json:"headroom_usd,omitempty"`
@@ -71,30 +78,38 @@ func priceUSD(p config.Price, in, out int) float64 {
 	return (float64(in)*p.Input + float64(out)*p.Output) / 1e6
 }
 
-// check decides on est against the caps. softWeekly is the profile's
-// weekly_soft_usd: crossing it asks for confirmation, never refuses. In mode
-// "ask" an estimate over budget.confirm_over_usd asks too; in "auto" only caps act.
+// check decides on est against the caps. In-flight calls (pf.InFlightUSD,
+// across profiles; the profile's own share against its provider headroom)
+// count as spent. softWeekly is the profile's weekly_soft_usd: crossing it
+// asks for confirmation, never refuses. In mode "ask" an estimate over
+// budget.confirm_over_usd asks too; in "auto" only caps act.
 func check(pf *Preflight, b config.Budget, softWeekly float64, ask bool) {
 	est := pf.EstimateUSD
 	s := pf.Spent
+	held := pf.InFlightUSD
 	money := usd
 	switch {
 	case b.CallUSD > 0 && est > b.CallUSD:
 		pf.Refuse = fmt.Sprintf("this call is estimated at %s, over budget.call_usd %s", money(est), money(b.CallUSD))
-	case b.DailyUSD > 0 && s.Day+est > b.DailyUSD:
-		pf.Refuse = capMessage("daily", "today", s.Day, est, b.DailyUSD, "daily_usd")
-	case b.WeeklyUSD > 0 && s.Week+est > b.WeeklyUSD:
-		pf.Refuse = capMessage("weekly", "this week", s.Week, est, b.WeeklyUSD, "weekly_usd")
-	case b.SprintUSD > 0 && s.HaveSprint && s.Sprint+est > b.SprintUSD:
-		pf.Refuse = capMessage("sprint", "this sprint", s.Sprint, est, b.SprintUSD, "sprint_usd")
-	case pf.Headroom != nil && est > *pf.Headroom:
-		pf.Refuse = fmt.Sprintf("the provider's own budget has %s left and this call is estimated at %s", money(*pf.Headroom), money(est))
+	case b.DailyUSD > 0 && s.Day+held+est > b.DailyUSD:
+		pf.Refuse = capMessage("daily", "today", s.Day, held, est, b.DailyUSD, "daily_usd")
+	case b.WeeklyUSD > 0 && s.Week+held+est > b.WeeklyUSD:
+		pf.Refuse = capMessage("weekly", "this week", s.Week, held, est, b.WeeklyUSD, "weekly_usd")
+	case b.SprintUSD > 0 && s.HaveSprint && s.Sprint+held+est > b.SprintUSD:
+		pf.Refuse = capMessage("sprint", "this sprint", s.Sprint, held, est, b.SprintUSD, "sprint_usd")
+	case pf.Headroom != nil && est > *pf.Headroom-pf.inFlightProfile:
+		left := *pf.Headroom - pf.inFlightProfile
+		pf.Refuse = fmt.Sprintf("the provider's own budget has %s left%s and this call is estimated at %s", money(left), inFlightNote(pf.inFlightProfile), money(est))
 	}
 	if ask && b.ConfirmOverUSD > 0 && est > b.ConfirmOverUSD {
 		pf.Confirm = append(pf.Confirm, fmt.Sprintf("estimated %s is over the %s you set to be asked first", money(est), money(b.ConfirmOverUSD)))
 	}
-	if ask && softWeekly > 0 && s.Week+est > softWeekly {
-		pf.Confirm = append(pf.Confirm, fmt.Sprintf("this week's usage (%s + ~%s) passes the soft cap %s", money(s.Week), money(est), money(softWeekly)))
+	if ask && softWeekly > 0 && s.Week+held+est > softWeekly {
+		if held > 0 {
+			pf.Confirm = append(pf.Confirm, fmt.Sprintf("this week's usage (%s + %s in flight + ~%s) passes the soft cap %s", money(s.Week), money(held), money(est), money(softWeekly)))
+		} else {
+			pf.Confirm = append(pf.Confirm, fmt.Sprintf("this week's usage (%s + ~%s) passes the soft cap %s", money(s.Week), money(est), money(softWeekly)))
+		}
 	}
 }
 
@@ -107,9 +122,17 @@ func usd(v float64) string {
 	return fmt.Sprintf("$%.2f", v)
 }
 
-func capMessage(name, period string, spent, est, cap float64, key string) string {
-	return fmt.Sprintf("%s cap reached: %s spent %s + ~%s for this call is over budget.%s %s",
-		name, usd(spent), period, usd(est), key, usd(cap))
+func capMessage(name, period string, spent, held, est, cap float64, key string) string {
+	return fmt.Sprintf("%s cap reached: %s spent %s%s + ~%s for this call is over budget.%s %s",
+		name, usd(spent), period, inFlightNote(held), usd(est), key, usd(cap))
+}
+
+// inFlightNote says how much other calls in flight have reserved, "" for none.
+func inFlightNote(held float64) string {
+	if held <= 0 {
+		return ""
+	}
+	return fmt.Sprintf(" (+ %s in flight in other calls)", usd(held))
 }
 
 // Describe renders a preflight for a confirm prompt.
@@ -124,6 +147,9 @@ func (pf Preflight) Describe() string {
 		fmt.Fprintf(&b, " · ~%d in / %s out tokens · est $%.4f", pf.InTokens, out, pf.EstimateUSD)
 	} else {
 		fmt.Fprintf(&b, " · ~%d in / %s out tokens · no price known", pf.InTokens, out)
+	}
+	if pf.InFlightUSD > 0 {
+		fmt.Fprintf(&b, " · %s in flight in other calls counts as spent", usd(pf.InFlightUSD))
 	}
 	if pf.Retry {
 		fmt.Fprintf(&b, " · asks again with double the cap if cut short (≤%d out in all)", 3*pf.OutTokens)

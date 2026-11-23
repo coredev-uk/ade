@@ -103,14 +103,18 @@ func FromAudit(e audit.Entry) (Entry, bool) {
 
 // Ledger indexes one audit log in cache.db.
 type Ledger struct {
-	db  *sql.DB
-	log *audit.Log
-	now func() time.Time
+	db   *sql.DB
+	path string // cache.db: the reservation lock file sits beside it
+	log  *audit.Log
+	now  func() time.Time
+	// Alive tells whether a reservation's process (pid, kernel start time)
+	// still runs; nil checks the pid only.
+	Alive func(pid int, start uint64) bool
 }
 
 // New returns a ledger over log, indexed in st.
 func New(st *store.Store, log *audit.Log) *Ledger {
-	return &Ledger{db: st.DB, log: log, now: time.Now}
+	return &Ledger{db: st.DB, path: st.Path, log: log, now: time.Now}
 }
 
 // tsFormat is fixed-width so timestamps compare correctly as text.
