@@ -74,6 +74,11 @@ func Assemble(in AssembleInput) WorkItem {
 	}
 	// A deliberate "blocked" label is not drift from the derived stage.
 	item.Drift = item.WantWorkflow != "" && item.Workflow != item.WantWorkflow && !strings.EqualFold(item.Workflow, blockedValue)
+	// ADE can move the label (ade issue stage, Home's m) unless the item is
+	// done, the label is the team's done value (never moved back) or no
+	// pattern says which label that is.
+	item.Movable = item.Drift && item.Stage != StageDone && !item.KeptOpen && m.Labels.Workflow.Pattern != "" &&
+		(m.Labels.Workflow.Done == "" || !strings.EqualFold(item.Workflow, m.Labels.Workflow.Done))
 	item.Triage = triage(item, m)
 	return item
 }
