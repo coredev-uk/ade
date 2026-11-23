@@ -87,13 +87,13 @@ jobs:
     permissions:
       contents: write # upload the archives to the release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.inputs.tag || needs.release-please.outputs.tag_name }}
           fetch-depth: 0
+          persist-credentials: false
 
-      - uses: DeterminateSystems/nix-installer-action@main
-      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
 
       - name: Build and upload the archives
         run: nix develop -c goreleaser release --clean

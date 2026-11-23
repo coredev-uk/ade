@@ -20,7 +20,7 @@ ADE is an agentic development environment for the terminal: a Bubble Tea dashboa
 
 Tools come from the flake: `nix develop -c <cmd>`, or let direnv load it (`.envrc` is `use flake`). Go, gopls, golangci-lint, gofumpt, goreleaser, vhs, jq, ripgrep and the runtime tools (git, zellij, lazygit, delta, neovim, glab, gh) are on its PATH.
 
-- CI (`.github/workflows/ci.yml`): `nix flake check` (the whole `go test ./...` in the Nix sandbox), `nix develop -c golangci-lint run ./...` (gofumpt included), `nix build`.
+- CI (`.github/workflows/ci.yml`): `nix flake check` (the whole `go test ./...` in the Nix sandbox), `nix develop -c golangci-lint run ./...` (gofumpt included), `nix develop -c goreleaser check`, `nix build`.
 - Fast loop: `go test ./internal/<pkg>` and `go test ./internal/<pkg> -run '^TestName$'`; `go vet ./...`; `gofumpt -w <files>`.
 - Generated files:
   - JSON Schemas: `go test ./internal/config -run TestCommittedSchemasAreCurrent -update-schema` (a test fails while `docs/schema/` is stale).
@@ -28,7 +28,8 @@ Tools come from the flake: `nix develop -c <cmd>`, or let direnv load it (`.envr
 - Run ADE without forge tokens: `nix develop -c bash scripts/demo.sh` (the real dashboard against a seeded fake GitLab; add `--record` for the VHS tour). The sandbox (`. scripts/sandbox/env.sh`) talks to real forges and needs `GITLAB_PAT` in `.env` for GitLab and a `gh` login for GitHub.
 - Live API tests: `go test -tags live -run Live -v ./internal/forge/github` (needs a token; read the file header first).
 - Screenshots for design review: `scripts/verify/capture*.sh` (VHS, output in `.impeccable/review/`); `scripts/verify/` holds the phase evidence scripts.
-- Release config: `goreleaser check`; a local build `goreleaser build --snapshot --clean --single-target`.
+- Dependency updates: Renovate (`.renovaterc.json5`, run by `.github/workflows/renovate.yml` as the bot-cecil App) opens grouped `build(deps)` (Go modules) and `ci(deps)` (GitHub Actions) PRs, which release-please leaves out of the changelog. CI pins every action by commit SHA with the version in a comment; Renovate moves the pins.
+- Release config: `goreleaser check` (CI runs it too); a local build `goreleaser build --snapshot --clean --single-target`.
 
 ## Releases
 
