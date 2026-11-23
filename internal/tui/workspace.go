@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/coredev-uk/ade/internal/app"
 	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/events"
+	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/host"
 	"github.com/coredev-uk/ade/internal/project"
 	"github.com/coredev-uk/ade/internal/workspace"
@@ -72,12 +74,12 @@ func (m model) openWorkspace(other bool) (model, tea.Cmd) {
 			if err != nil {
 				return workspace.Target{}, err
 			}
-			t, err := workspace.TargetForMR(ctx, a.Root, mf, mr)
+			t, err := mrTarget(ctx, a, mf, mr)
 			if err != nil || item == nil {
 				return t, err
 			}
 			t.ItemTrees, _ = workspace.ItemTrees(ctx, a.Root, mf, *item)
-			if !t.Baseline && t.ItemTrees != nil {
+			if !t.Baseline && t.Layout == "" && t.ItemTrees != nil {
 				t.ItemTrees[t.Repo] = t.Worktree // the tree shown, not another branch of the item in this repo
 			}
 			return t, nil
@@ -92,7 +94,7 @@ func (m model) openWorkspace(other bool) (model, tea.Cmd) {
 			if err != nil {
 				return workspace.Target{}, err
 			}
-			return workspace.TargetForMR(ctx, a.Root, mf, *r.mr)
+			return mrTarget(ctx, a, mf, *r.mr)
 		}
 	case m.page == pageTrees && m.sel < len(m.rows) && m.rows[m.sel].tree.Path != "":
 		r := m.rows[m.sel]
@@ -109,6 +111,16 @@ func (m model) openWorkspace(other bool) (model, tea.Cmd) {
 		}
 		return m.openTarget(t, items, other)
 	}
+}
+
+// mrTarget is the tree `w` opens for an MR. A fork MR's branch is not in this
+// repo, so its target is the detached tree at the MR's head (made when missing,
+// the one `ade review` and `ade mr checkout` use) with the review layout.
+func mrTarget(ctx context.Context, a *app.App, mf *config.Manifest, mr forge.MR) (workspace.Target, error) {
+	if !mr.Fork {
+		return workspace.TargetForMR(ctx, a.Root, mf, mr)
+	}
+	return workspace.TargetForForkMR(ctx, a, mf, mr)
 }
 
 // loadProject reads a project's manifest; a project that is not cloned says what to do.
@@ -134,8 +146,14 @@ func (m model) wsItems() []workspace.ItemRef {
 // openTarget opens (or focuses) the tab for t and reports what happened.
 func (m model) openTarget(t workspace.Target, items []workspace.ItemRef, other bool) wsOpenedMsg {
 	opts := []workspace.OpenOption{workspace.WithItemTrees(t.ItemTrees), workspace.WithTitle(t.Title), workspace.WithItems(items)}
-	if other {
+	switch {
+	case other:
 		opts = append(opts, workspace.WithLayout(otherMainPane(m.app, t.Project)))
+	case t.Layout != "":
+		opts = append(opts, workspace.WithLayout(t.Layout))
+	}
+	if t.BaseRef != "" {
+		opts = append(opts, workspace.WithBaseRef(t.BaseRef))
 	}
 	res, err := wsOpen(m.ctx, m.app, t.Project, t.Repo, t.Worktree, opts...)
 	return wsOpenedMsg{label: t.Repo + "/" + t.Title, res: res, err: err}
