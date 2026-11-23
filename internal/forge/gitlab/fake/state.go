@@ -93,20 +93,22 @@ type job struct {
 }
 
 type mr struct {
-	ID        int64
-	IID       int
-	Project   *project
-	Title     string
-	Desc      string
-	State     string // opened | merged | closed
-	Draft     bool
-	Source    string
-	Target    string
-	SHA       string
-	Author    *user
-	Assignees []*user
-	Reviewers []*user
-	Approved  []*user // approved_by
+	ID      int64
+	IID     int
+	Project *project
+	Title   string
+	Desc    string
+	State   string // opened | merged | closed
+	Draft   bool
+	// SourceProject is the fork the source branch lives in; nil for an MR within Project.
+	SourceProject *project
+	Source        string
+	Target        string
+	SHA           string
+	Author        *user
+	Assignees     []*user
+	Reviewers     []*user
+	Approved      []*user // approved_by
 	// ReviewState is each reviewer's verdict by username (absent: unreviewed).
 	ReviewState map[string]string
 	MergedBy    *user

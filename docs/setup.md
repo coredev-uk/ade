@@ -54,7 +54,7 @@ tar xzf ade_${v}_${os}_${arch}.tar.gz && install -m 0755 ade ~/.local/bin/ade
 ade version
 ```
 
-The archive is the only thing you need besides the tools in the next section. Releases are cut by release-please: it keeps a release PR open on `main` with the next version and its `CHANGELOG.md` section, written from the Conventional Commit titles merged since the last tag. Merging that PR, once CI passes on `main`, tags it, creates the GitHub release with that section as the notes, and `.github/workflows/release.yml` runs goreleaser to upload the archives. Maintainers can try the build locally with `goreleaser build --snapshot --clean --single-target` (in `nix develop`).
+The archive is the only thing you need besides the tools in the next section. Releases are cut by release-please: it keeps a release PR open on `main` with the next version and its `CHANGELOG.md` section, written from the Conventional Commit titles merged since the last tag. Merging that PR, once CI passes on `main`, tags it, creates the GitHub release with that section as the notes, and `.github/workflows/release.yml` runs goreleaser to upload the archives. release-please acts as the bot-cecil GitHub App (a token minted through octo-sts, trust policy `.github/chainguard/release-please.sts.yaml`), so the release PR runs CI like any other. Maintainers can try the build locally with `goreleaser build --snapshot --clean --single-target` (in `nix develop`).
 
 ## 3. Tools ADE uses
 

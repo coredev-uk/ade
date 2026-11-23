@@ -96,11 +96,16 @@ type issueEvent struct {
 }
 
 type pull struct {
-	Draft     bool
-	Merged    bool
-	MergedAt  time.Time
-	MergeSHA  string
-	Head      string // head branch name
+	Draft    bool
+	Merged   bool
+	MergedAt time.Time
+	MergeSHA string
+	Head     string // head branch name
+	// HeadRepo is the full name of the fork the head branch lives in ("" for the
+	// PR's own repo); HeadGone renders head.repo as null, as GitHub does once a
+	// fork is deleted.
+	HeadRepo  string
+	HeadGone  bool
 	Base      string // base branch name
 	HeadSHA   string
 	BaseSHA   string

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func (s *Server) pullRoutes(mux *http.ServeMux) {
@@ -14,6 +15,7 @@ func (s *Server) pullRoutes(mux *http.ServeMux) {
 	s.handle(mux, "GET "+r+"/pulls", s.listPulls)
 	s.handle(mux, "POST "+r+"/pulls", s.createPull)
 	s.handle(mux, "GET "+r+"/pulls/{n}", s.getPull)
+	s.handle(mux, "PATCH "+r+"/pulls/{n}", s.patchPull)
 	s.handle(mux, "GET "+r+"/pulls/{n}/files", s.listPullFiles)
 	s.pullTextRoutes(mux)
 	s.handle(mux, "PUT "+r+"/pulls/{n}/merge", s.mergePull)
@@ -264,4 +266,51 @@ func (s *Server) requestReviewers(w http.ResponseWriter, r *http.Request) {
 	}
 	it.Updated = s.st.now()
 	writeJSON(w, http.StatusCreated, s.renderPull(rp, it, true))
+}
+
+// patchPull answers PATCH /pulls/{n} for the one field ADE writes: state. A
+// merged pull request cannot be reopened, and neither can one whose head and
+// base another open pull request already has (422).
+func (s *Server) patchPull(w http.ResponseWriter, r *http.Request) {
+	rp, it := s.pullOf(w, r)
+	if it == nil {
+		return
+	}
+	var in struct {
+		State string `json:"state"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	p := it.PR
+	at := s.st.now()
+	switch in.State {
+	case "":
+	case "closed":
+		if it.State == "open" {
+			it.State, it.Closed, it.Updated = "closed", at, at
+			s.st.addEvent(it, "closed", viewer, at)
+			s.st.feedItem(rp, it, "closed", viewer, at)
+		}
+	case "open":
+		if p.Merged {
+			custom(w, "PullRequest", "Cannot reopen a merged pull request")
+			return
+		}
+		if it.State == "closed" {
+			for _, o := range rp.Items {
+				if q := o.PR; o != it && q != nil && o.State == "open" && q.Head == p.Head && q.Base == p.Base {
+					custom(w, "PullRequest", fmt.Sprintf("A pull request already exists for %s:%s.", rp.Owner, p.Head))
+					return
+				}
+			}
+			it.State, it.Closed, it.Updated = "open", time.Time{}, at
+			s.st.addEvent(it, "reopened", viewer, at)
+			s.st.feedItem(rp, it, "reopened", viewer, at)
+		}
+	default:
+		validation(w, fieldError{Resource: "PullRequest", Field: "state", Code: "invalid"})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.renderPull(rp, it, true))
 }

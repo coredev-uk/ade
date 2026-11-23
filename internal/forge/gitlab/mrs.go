@@ -40,7 +40,7 @@ func (c *Client) mrList(ctx context.Context, path string, v url.Values, project 
 	}
 	out := make([]forge.MR, len(raw))
 	for i, w := range raw {
-		out[i] = w.mr(project)
+		out[i] = c.withSource(ctx, w, project)
 	}
 	return out, nil
 }
@@ -93,7 +93,7 @@ func (c *Client) MR(ctx context.Context, ref forge.Ref) (forge.MR, error) {
 	if noReviewers {
 		c.markUnavailable(FeatureReviewers)
 	}
-	mr := w.mr(ref.Project)
+	mr := c.withSource(ctx, w, ref.Project)
 	mr.Approvals = appr.approvals()
 	mr.Unresolved, mr.Resolved = threadCounts(discs)
 	mr.Threads = forge.ThreadStates(discs)
