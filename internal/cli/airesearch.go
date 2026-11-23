@@ -27,10 +27,12 @@ type researchOut struct {
 
 func newAIResearchCmd() *cobra.Command {
 	var (
-		o      aiOpts
-		detach bool
-		show   bool
-		worker string
+		o         aiOpts
+		detach    bool
+		show      bool
+		cancel    bool
+		worker    string
+		inputHash string
 	)
 	cmd := &cobra.Command{
 		Use:   "research <issue-ref>",
@@ -43,7 +45,8 @@ func newAIResearchCmd() *cobra.Command {
 			"--detach shows the pre-flight here, then runs the call in a worker that outlives this\n" +
 			"command; the dashboard (R on the item) and `ade item` show its state, and a notification\n" +
 			"arrives when it is done. --show prints what is stored, spending nothing. With\n" +
-			"ai.mode = \"off\" the command refuses and nothing else changes.",
+			"ai.mode = \"off\" the command refuses and nothing else changes. --cancel stops a running\n" +
+			"background job (a hung worker blocks new research on the issue until it ends or is cancelled).",
 		Example: "  ade ai research acme/tracker#15 --detach\n  ade ai research acme/tracker#15 --show\n  ade ai research acme/tracker#15 --dry-run",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -56,6 +59,9 @@ func newAIResearchCmd() *cobra.Command {
 			}
 			if show {
 				return researchShow(cmd, ref, o.forge)
+			}
+			if cancel {
+				return researchCancel(cmd, ref, o.forge)
 			}
 			e, err := openAI(cmd, ref, o.forge)
 			if err != nil {
@@ -74,7 +80,7 @@ func newAIResearchCmd() *cobra.Command {
 			switch {
 			case worker != "":
 				_, err := e.svc.RunResearch(cmd.Context(), e.forgeName, worker, job, ai.ResearchOpts{
-					Profile: o.profile, Refresh: o.refresh, Override: o.override, Assume: true, Notify: true,
+					Profile: o.profile, Refresh: o.refresh, Override: o.override, Assume: true, Notify: true, InputHash: inputHash,
 				})
 				return err
 			case o.dryRun:
@@ -93,8 +99,11 @@ func newAIResearchCmd() *cobra.Command {
 	o.bindNotes(cmd)
 	cmd.Flags().BoolVar(&detach, "detach", false, "run the call in a background worker that outlives this command")
 	cmd.Flags().BoolVar(&show, "show", false, "print the stored research (state and answer) and spend nothing")
+	cmd.Flags().BoolVar(&cancel, "cancel", false, "stop the issue's running background research and mark it cancelled")
 	cmd.Flags().StringVar(&worker, "worker", "", "internal: run as the detached worker of this job id")
+	cmd.Flags().StringVar(&inputHash, "input-hash", "", "internal: the input hash the worker was confirmed on; it refuses to send anything else")
 	_ = cmd.Flags().MarkHidden("worker")
+	_ = cmd.Flags().MarkHidden("input-hash")
 	return cmd
 }
 
@@ -218,4 +227,32 @@ func researchLine(r records.Research) string {
 		b.WriteString(" · " + r.Model)
 	}
 	return b.String()
+}
+
+// researchCancel stops the issue's running background research. It needs no
+// model, key or network, so it works with AI off too.
+func researchCancel(cmd *cobra.Command, ref forge.Ref, forgeFlag string) error {
+	a := appFrom(cmd)
+	name, err := review.ForgeFor(cmd.Context(), a, ref, forgeFlag)
+	if err != nil {
+		return err
+	}
+	svc := &ai.Service{Records: records.New(a.RecordsDir), Audit: a.Audit, Now: time.Now}
+	c, err := svc.CancelResearch(name, ref)
+	if err != nil {
+		if errors.Is(err, ai.ErrNotRunning) {
+			fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", ref, err)
+			return nil
+		}
+		return err
+	}
+	if jsonOut {
+		return printJSON(cmd.OutOrStdout(), map[string]any{"ref": ref.String(), "cancelled": true, "pid": c.PID, "signalled": c.Signalled})
+	}
+	w := cmd.OutOrStdout()
+	fmt.Fprintf(w, "%s: research cancelled\n", ref)
+	if c.PID > 0 && !c.Signalled {
+		fmt.Fprintf(w, "  worker pid %d may still be running: this system cannot verify it is the worker, so it was not signalled; stop it yourself (kill %d)\n", c.PID, c.PID)
+	}
+	return nil
 }
