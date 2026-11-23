@@ -203,45 +203,6 @@ type jobLog struct {
 
 // --- merge readiness -------------------------------------------------------------
 
-// verdict says whether a merge can go ahead, and why not.
-type verdict struct {
-	ok     bool
-	autoOK bool   // not mergeable yet, but "merge when the pipeline succeeds" is
-	why    string // why not, as the dialog words it
-}
-
-func mergeVerdict(mr forge.MR) verdict {
-	switch {
-	case mr.State == "merged":
-		return verdict{why: "already merged"}
-	case mr.State != "opened":
-		return verdict{why: "the merge request is " + mr.State}
-	case mr.Draft:
-		return verdict{why: "it is still a draft (R marks it ready)"}
-	case mr.HasConflicts:
-		return verdict{why: "it conflicts with " + mr.TargetBranch + ": rebase first"}
-	}
-	switch mr.DetailedStatus {
-	case "", "mergeable":
-		return verdict{ok: true}
-	case "ci_still_running":
-		return verdict{autoOK: true, why: "the pipeline is still running"}
-	case "ci_must_pass":
-		return verdict{autoOK: mr.Pipeline != nil && mr.Pipeline.Status != "failed", why: "the pipeline must pass first"}
-	case "not_approved":
-		return verdict{why: "it needs approval"}
-	case "discussions_not_resolved":
-		return verdict{why: fmt.Sprintf("%d unresolved %s", mr.Unresolved, plural(mr.Unresolved, "thread"))}
-	case "need_rebase":
-		return verdict{why: "it needs a rebase"}
-	case "checking", "unchecked":
-		return verdict{why: "GitLab is still checking whether it can merge: try again in a moment"}
-	case "blocked_status":
-		return verdict{why: "another merge request blocks it"}
-	}
-	return verdict{why: "GitLab reports " + strings.ReplaceAll(mr.DetailedStatus, "_", " ")}
-}
-
 // approvalsText reads "1 of 2" (or "1 approval" where the forge cannot say how
 // many are required).
 func approvalsText(mr forge.MR) string {

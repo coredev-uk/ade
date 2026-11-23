@@ -408,13 +408,19 @@ func newMRDraftCmd(use, short string, draft bool) *cobra.Command {
 
 func newMRMergeCmd() *cobra.Command {
 	var (
-		o   forge.MergeOpts
-		yes bool
+		o          forge.MergeOpts
+		yes, force bool
 	)
 	cmd := &cobra.Command{
 		Use:   "merge <ref> --yes",
-		Short: "Merge the MR at its current head (refuses without --yes)",
-		Args:  cobra.ExactArgs(1),
+		Short: "Merge the MR at its current head (refuses without --yes, or when it is not ready)",
+		Long: "Merge the MR at its current head. Before merging it runs the readiness checks the merge dialog\n" +
+			"runs (not a draft, no conflicts, threads resolved, approved, pipeline passed) and refuses with the\n" +
+			"reason; --force skips them and leaves the refusal to the forge. With --auto an MR that only waits\n" +
+			"for its pipeline is set to merge when it passes. --dry-run shows the verdict and the squash message.\n" +
+			"The project manifest's conventions.mr.squash and remove_source_branch set the defaults of --squash\n" +
+			"and --remove-source-branch for an MR ADE has synced; a flag you pass, --squash=false included, wins.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if dry, _ := cmd.Flags().GetBool("dry-run"); !yes && !dry {
 				return errors.New("refusing to merge without --yes (merging cannot be undone)")
@@ -432,7 +438,26 @@ func newMRMergeCmd() *cobra.Command {
 			}
 			o.SHA = mr.HeadSHA
 			if st, err := appFrom(cmd).Cache(); err == nil {
-				o = review.MergeOptsFor(o, review.PrefixForMR(appFrom(cmd), st, c.ref), mr)
+				pol := review.MergePolicyFor(appFrom(cmd), st, c.ref)
+				if !cmd.Flags().Changed("squash") {
+					o.Squash = pol.Squash
+				}
+				if !cmd.Flags().Changed("remove-source-branch") {
+					o.RemoveSourceBranch = pol.RemoveSourceBranch
+				}
+				o = review.MergeOptsFor(o, pol.Prefix, mr)
+				if pol.Prefix != "" && !o.Squash {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: conventions.commit_prefix %q is set but this is not a squash merge: the prefix only goes on the squash commit (add --squash)\n", pol.Prefix)
+				}
+			}
+			v := review.Verdict(mr)
+			blocked := !v.OK && (!o.AutoMerge || !v.AutoOK)
+			if blocked && !force {
+				if !c.dry {
+					return fmt.Errorf("cannot merge %s: %s (--force skips this check)", c.ref, v.Why)
+				}
+				return out(cmd, action{Ref: c.ref, Action: "merge", DryRun: true, SHA: o.SHA, Skipped: v.Why},
+					"dry-run: would refuse to merge %s: %s (--force skips this check)", c.ref, v.Why)
 			}
 			if err := c.w.Merge(cmd.Context(), c.ref, o); err != nil {
 				return err
@@ -442,6 +467,16 @@ func newMRMergeCmd() *cobra.Command {
 				did, would = "set to merge when checks pass:", "set to merge when checks pass:"
 			}
 			msg := fmt.Sprintf("%s %s at %.8s", verb(c.dry, did, would), c.ref, o.SHA)
+			if c.dry {
+				switch {
+				case v.OK:
+					msg += "\nready: mergeable"
+				case blocked:
+					msg += "\nnot ready (--force): " + v.Why
+				default:
+					msg += "\nnot mergeable yet: " + v.Why
+				}
+			}
 			if c.dry && o.Squash && o.SquashMessage != "" {
 				msg += "\nsquash message:\n" + indent(o.SquashMessage)
 			}
@@ -449,9 +484,10 @@ func newMRMergeCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "confirm the merge")
-	cmd.Flags().BoolVar(&o.Squash, "squash", false, "squash commits")
+	cmd.Flags().BoolVar(&force, "force", false, "merge without the readiness checks (draft, conflicts, threads, approvals, pipeline)")
+	cmd.Flags().BoolVar(&o.Squash, "squash", false, "squash commits (default: conventions.mr.squash)")
 	cmd.Flags().BoolVar(&o.AutoMerge, "auto", false, "merge when the pipeline succeeds")
-	cmd.Flags().BoolVar(&o.RemoveSourceBranch, "remove-source-branch", false, "delete the source branch after merging")
+	cmd.Flags().BoolVar(&o.RemoveSourceBranch, "remove-source-branch", false, "delete the source branch after merging (default: conventions.mr.remove_source_branch)")
 	return cmd
 }
 

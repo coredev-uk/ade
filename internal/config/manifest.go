@@ -247,6 +247,11 @@ type MRConv struct {
 	// review the MR: a GitLab group path (subgroups allowed) or, on GitHub,
 	// "org/team-slug". Empty requests nobody.
 	ReviewerGroup string `toml:"reviewer_group"`
+	// Squash and RemoveSourceBranch are the team's merge defaults: they seed
+	// the merge dialog's toggles and the defaults of `ade mr merge`'s --squash
+	// and --remove-source-branch. Unset keeps false; a flag always wins.
+	Squash             *bool `toml:"squash"`
+	RemoveSourceBranch *bool `toml:"remove_source_branch"`
 }
 
 // DraftMR reports whether start work opens the MR as a draft: true unless the

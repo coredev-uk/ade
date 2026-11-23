@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/coredev-uk/ade/internal/forge"
+	"github.com/coredev-uk/ade/internal/review"
 )
 
 // --- frame -----------------------------------------------------------------------
@@ -130,12 +131,12 @@ func (m model) mrStrip(w int) string {
 		seg = append(seg, stFaint.Render("no unresolved threads"))
 	}
 	if mr.State == "opened" {
-		v := mergeVerdict(mr)
+		v := review.Verdict(mr)
 		switch {
-		case v.ok:
+		case v.OK:
 			seg = append(seg, stOK.Render(g.OK+" mergeable"))
 		default:
-			seg = append(seg, stWarn.Render(g.Warn+" "+v.why))
+			seg = append(seg, stWarn.Render(g.Warn+" "+v.Why))
 		}
 	}
 	sep := stFaint.Render(" " + g.Sep + " ")
@@ -302,10 +303,10 @@ func (m model) mrOverview(w, h int) string {
 	kv("pipeline", ciText(g, mr.Pipeline))
 	kv("threads", fmt.Sprintf("%d unresolved %s %d resolved", mr.Unresolved, g.Sep, mr.Resolved))
 	if mr.State == "opened" {
-		if v := mergeVerdict(mr); v.ok {
+		if v := review.Verdict(mr); v.OK {
 			kv("merge", stOK.Render(g.OK+" mergeable"))
 		} else {
-			kv("merge", stWarn.Render(g.Warn+" "+v.why))
+			kv("merge", stWarn.Render(g.Warn+" "+v.Why))
 		}
 	}
 	desc := strings.TrimSpace(mr.Description)

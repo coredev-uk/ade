@@ -316,7 +316,7 @@ func (m *model) commitSubmit(md *mrModal) tea.Cmd {
 }
 
 func (m *model) mergeKey(md *mrModal, ks string) tea.Cmd {
-	v := mergeVerdict(m.mr.data.mr)
+	v := review.Verdict(m.mr.data.mr)
 	switch ks {
 	case "s":
 		md.squash = !md.squash
@@ -326,10 +326,10 @@ func (m *model) mergeKey(md *mrModal, ks string) tea.Cmd {
 		md.auto = !md.auto
 	case "enter", "y":
 		switch {
-		case !v.ok && !v.autoOK:
-			md.warn = "cannot merge: " + v.why
-		case !v.ok && !md.auto:
-			md.warn = v.why + ": turn on merge when the pipeline succeeds (w) or wait"
+		case !v.OK && !v.AutoOK:
+			md.warn = "cannot merge: " + v.Why
+		case !v.OK && !md.auto:
+			md.warn = v.Why + ": turn on merge when the pipeline succeeds (w) or wait"
 		default:
 			m.mr.modal = nil
 			return m.actMerge(forge.MergeOpts{Squash: md.squash, RemoveSourceBranch: md.remove, AutoMerge: md.auto}, md.prefix)
@@ -440,7 +440,7 @@ func (m model) modalHint(md *mrModal) string {
 	case modalSubmit:
 		return keys("enter", "submit", "tab", "approve", "alt+enter", "newline", "esc", "cancel")
 	case modalMerge:
-		if v := mergeVerdict(m.mr.data.mr); !v.ok && !v.autoOK {
+		if v := review.Verdict(m.mr.data.mr); !v.OK && !v.AutoOK {
 			return keys("esc", "close")
 		}
 		return keys("enter", "merge", "s", "squash", "d", "delete branch", "w", "when CI passes", "esc", "cancel")
@@ -511,28 +511,31 @@ func shortHead(sha string) string {
 func (m model) mergeDialog(md *mrModal, inner int) (string, []string) {
 	d := m.mr.data
 	mr := d.mr
-	v := mergeVerdict(mr)
+	v := review.Verdict(mr)
 	vl := stFaint.Render(m.g.Vertical) + " "
 	l := []string{vl + stBold.Render(mr.SourceBranch) + stFaint.Render(m.g.T(" → ")) + stBold.Render(mr.TargetBranch)}
 	switch {
-	case v.ok:
+	case v.OK:
 		l = append(l, vl+stOK.Render(m.g.OK+" mergeable")+stFaint.Render(m.g.T(" · head ")+shortHead(mr.HeadSHA)+" is what you reviewed"))
-	case v.autoOK:
-		l = append(l, vl+stWarn.Render(m.g.Warn+" not mergeable yet: "+v.why))
+	case v.AutoOK:
+		l = append(l, vl+stWarn.Render(m.g.Warn+" not mergeable yet: "+v.Why))
 	default:
-		l = append(l, vl+stBad.Render(m.g.Bad+" cannot merge: "+v.why))
+		l = append(l, vl+stBad.Render(m.g.Bad+" cannot merge: "+v.Why))
 	}
 	if mr.Unresolved > 0 {
 		l = append(l, vl+stFaint.Render(fmt.Sprintf("%d unresolved %s", mr.Unresolved, plural(mr.Unresolved, "thread"))))
 	}
 	l = append(l, vl+stFaint.Render(approvalsText(mr)+m.g.T(" · ")+ciText(m.g, mr.Pipeline)))
-	if v.ok || v.autoOK {
+	if v.OK || v.AutoOK {
 		l = append(l, "",
 			checkbox(m.g, md.squash, "s  squash commits"),
 			checkbox(m.g, md.remove, "d  delete the source branch"),
 			checkbox(m.g, md.auto, "w  merge when the pipeline succeeds"))
-		if md.prefix != "" && md.squash {
+		switch {
+		case md.prefix != "" && md.squash:
 			l = append(l, "", vl+stFaint.Render(ansi.Truncate("squash commit: "+commitmsg.Apply(md.prefix, mr.Title), max(10, inner-2), m.g.Ell)))
+		case md.prefix != "":
+			l = append(l, "", vl+stWarn.Render(ansi.Truncate(m.g.Warn+" no squash: the commit prefix is not used (s squashes)", max(10, inner-2), m.g.Ell)))
 		}
 	}
 	return m.g.T("Merge · ") + d.ref.String() + m.g.T(" · ") + ansi.Truncate(mr.Title, max(10, inner-20), m.g.Ell), l
