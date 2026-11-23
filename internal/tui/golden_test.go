@@ -91,6 +91,7 @@ func homeGolden(t *testing.T, ascii bool, preview bool) (model, goldentest.Drive
 	}
 	res := sampleResult()
 	res.Items[1].Issue.Description = richDescription
+	h.m.ld = lastDayUI{asked: time.Now().Format("2006-01-02")} // Home's last-day block is not under test: no reading frame
 	next, _ := h.m.Update(resultsMsg{results: []forgesync.Result{res}})
 	h.m = next.(model)
 	h.m.homeLoaded = true
@@ -235,6 +236,7 @@ func commentsGolden(t *testing.T, ascii, open bool) (model, goldentest.Drive) {
 	if err := records.New(h.m.app.RecordsDir).WriteComments("f", res.Items[1].Ref, notes, 20); err != nil {
 		t.Fatal(err)
 	}
+	h.m.ld = lastDayUI{asked: time.Now().Format("2006-01-02")}
 	next, _ := h.m.Update(resultsMsg{results: []forgesync.Result{res}})
 	h.m = next.(model)
 	h.m.homeLoaded = true

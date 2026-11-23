@@ -132,10 +132,13 @@ type mrPage struct {
 	data     *mrData          // nil while the item has no MR
 	tab      mrTab
 
-	ovTop    int  // overview scroll
-	rawDesc  bool // Overview shows the raw description instead of the AI summary
-	thSel    int  // selected thread (index into threadList)
-	thDetail bool // narrow: the thread's conversation instead of the list
+	ovTop   int  // overview scroll
+	rawDesc bool // Overview shows the raw description instead of the AI summary
+	// aiToldOff is set once an AI key was pressed while AI is unavailable and
+	// the toast said why: later presses stay quiet.
+	aiToldOff bool
+	thSel     int  // selected thread (index into threadList)
+	thDetail  bool // narrow: the thread's conversation instead of the list
 
 	fileSel   int
 	focusDiff bool // the diff pane (not the file list) has the cursor
@@ -200,6 +203,7 @@ const (
 	relMR mrReload = 1 << iota
 	relThreads
 	relJobs
+	relDiff
 )
 
 // mrWrote is what a successful write returns: the pop-up title and what to
@@ -484,6 +488,9 @@ func (m *model) mrRefetch(d *mrData, what mrReload) tea.Cmd {
 	if what&relJobs != 0 && d.jobsL.st != loadIdle {
 		cmds = append(cmds, m.loadJobs(d))
 	}
+	if what&relDiff != 0 && d.diffL.st != loadIdle {
+		cmds = append(cmds, m.loadDiff(d)) // the head moved: comment positions need the new version
+	}
 	return tea.Batch(cmds...)
 }
 
@@ -544,6 +551,9 @@ func (m *model) onMRResult(msg mrResultMsg) tea.Cmd {
 		if p := m.mr; p.logOpen() && p.modal.job.ID == msg.job {
 			p.modal.setLog(msg)
 		}
+		return nil
+	case "reviewers":
+		m.onReviewers(msg)
 		return nil
 	case "ai":
 		return m.onAI(d, msg)
@@ -606,7 +616,7 @@ func (m *model) onWritten(d *mrData, msg mrResultMsg) tea.Cmd {
 	}
 	if msg.err != nil {
 		m.emit(d, kind+".failed", events.Error, fmt.Sprintf("%s failed on %s", capitalize(msg.verb), d.ref), msg.err.Error())
-		if msg.what == "merge" || msg.what == "submit" {
+		if msg.what == "merge" || msg.what == "submit" || msg.what == "request_review" {
 			return tea.Batch(m.mrRefetch(d, relMR|relThreads), m.reloadHistory()) // the forge may have moved under us
 		}
 		return m.reloadHistory()

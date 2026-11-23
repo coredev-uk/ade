@@ -182,6 +182,7 @@ func RenderSkill(in SkillInput) string {
 		line("The project sets no commit prefix; write plain, imperative messages like the existing history.")
 	}
 	line("Make small, logical commits. Never amend or rewrite commits that are already on the remote.")
+	line("End every commit message with a blank line and the trailer `Assisted-by: ADE agent`.")
 	line("")
 
 	line("## What to do")

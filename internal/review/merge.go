@@ -21,13 +21,23 @@ type MergeVerdict struct {
 	Why    string // why not, as the dialog words it
 }
 
+// Hints name how the caller's surface fixes what blocks a merge, as a clause
+// ("R marks it ready", "ade mr ready <ref> marks it ready"). Empty leaves the
+// clause out.
+type Hints struct {
+	// Ready marks a draft ready.
+	Ready string
+	// Update brings the source branch up to date with the target ("u updates
+	// the branch", "ade mr rebase <ref> updates the branch").
+	Update string
+}
+
 // Verdict judges mr from what the forge reports: state, draft, conflicts and
 // the detailed merge status (GitLab's detailed_merge_status: unresolved
-// threads, approvals, pipeline; GitHub's mergeable_state). readyHint, when not
-// empty, is how the caller's surface marks a draft ready ("R marks it ready",
-// "ade mr ready <ref> marks it ready"); the wording is otherwise the same for
-// the dialog and the command line.
-func Verdict(mr forge.MR, readyHint string) MergeVerdict {
+// threads, approvals, pipeline; GitHub's mergeable_state). The wording is the
+// same for the dialog and the command line; only the hints name the caller's
+// own way to fix the problem.
+func Verdict(mr forge.MR, h Hints) MergeVerdict {
 	switch {
 	case mr.State == "merged":
 		return MergeVerdict{Why: "already merged"}
@@ -35,12 +45,16 @@ func Verdict(mr forge.MR, readyHint string) MergeVerdict {
 		return MergeVerdict{Why: "the merge request is " + mr.State}
 	case mr.Draft:
 		why := "it is still a draft"
-		if readyHint != "" {
-			why += " (" + readyHint + ")"
+		if h.Ready != "" {
+			why += " (" + h.Ready + ")"
 		}
 		return MergeVerdict{Why: why}
 	case mr.HasConflicts:
-		return MergeVerdict{Why: "it conflicts with " + mr.TargetBranch + ": rebase first"}
+		why := "it conflicts with " + mr.TargetBranch
+		if h.Update != "" {
+			why += ": " + h.Update + ", or rebase it locally"
+		}
+		return MergeVerdict{Why: why}
 	}
 	switch mr.DetailedStatus {
 	case "", "mergeable", "clean", "unstable", "has_hooks":
@@ -60,13 +74,13 @@ func Verdict(mr forge.MR, readyHint string) MergeVerdict {
 		}
 		return MergeVerdict{Why: fmt.Sprintf("%d unresolved %s", mr.Unresolved, word)}
 	case "need_rebase":
-		return MergeVerdict{Why: "it needs a rebase"}
+		return MergeVerdict{Why: withHint("it needs a rebase", h.Update)}
 	case "checking", "unchecked", "unknown":
 		return MergeVerdict{Why: "the forge is still checking whether it can merge: try again in a moment"}
 	case "blocked_status":
 		return MergeVerdict{Why: "another merge request blocks it"}
 	case "behind":
-		return MergeVerdict{Why: "it is behind " + mr.TargetBranch + ": update the branch first"}
+		return MergeVerdict{Why: withHint("it is behind "+mr.TargetBranch, h.Update)}
 	case "blocked":
 		return MergeVerdict{Why: "a required review or check is missing"}
 	}
@@ -123,4 +137,12 @@ func MergePolicyFor(a *app.App, st *store.Store, ref forge.Ref) MergePolicy {
 		return *first
 	}
 	return MergePolicy{}
+}
+
+// withHint is why, followed by ": hint" when there is one.
+func withHint(why, hint string) string {
+	if hint == "" {
+		return why
+	}
+	return why + ": " + hint
 }

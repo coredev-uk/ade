@@ -25,6 +25,9 @@ func validateAI(s *issues, c *Config) {
 			s.errorf("ai.profile", "profile %q is not defined under [ai.profiles]", c.AI.Profile)
 		}
 	}
+	if c.AI.State() == AINoProfile {
+		s.warnf("ai.profile", "profiles are defined but none is selected: AI stays unavailable until ai.profile names one")
+	}
 	for _, name := range slices.Sorted(maps.Keys(c.AI.Profiles)) {
 		validateProfile(s, "ai.profiles."+name, c.AI.Profiles[name])
 	}
@@ -92,8 +95,8 @@ func validateGateway(s *issues, path string, p AIProfile) {
 	if p.Timeout.Duration < 0 {
 		s.errorf(path+".timeout", "must not be negative")
 	}
-	if p.Driver == "omp" && (len(p.ExtraHeaders) > 0 || p.Timeout.Duration != 0) {
-		s.warnf(path, "extra_headers and timeout only apply to the HTTP drivers; the omp driver ignores them")
+	if p.Driver == "omp" && len(p.ExtraHeaders) > 0 {
+		s.warnf(path, "extra_headers only apply to the HTTP drivers; the omp driver ignores them")
 	}
 	for _, name := range slices.Sorted(maps.Keys(p.ExtraHeaders)) {
 		hp := path + ".extra_headers." + name

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/coredev-uk/ade/internal/aimark"
 	"github.com/coredev-uk/ade/internal/audit"
 	"github.com/coredev-uk/ade/internal/events"
 	"github.com/coredev-uk/ade/internal/forge"
@@ -118,8 +119,8 @@ func Submit(ctx context.Context, w forge.MRWriter, mr forge.Ref, drafts []Draft,
 	}
 	positions := make(map[int]*forge.DiffPosition, len(send))
 	for _, i := range send {
-		if res.Drafts[i].RemoteID != 0 {
-			continue
+		if res.Drafts[i].RemoteID != 0 || res.Drafts[i].InReplyTo != "" {
+			continue // a reply takes no position: it is anchored by its thread
 		}
 		p, perr := PositionFor(diff, res.Drafts[i])
 		if perr != nil {
@@ -179,7 +180,7 @@ func Submit(ctx context.Context, w forge.MRWriter, mr forge.Ref, drafts []Draft,
 			continue
 		}
 		body := Render(*d)
-		if id := adopt(remote, claimed, body, positions[i]); id != 0 {
+		if id := adopt(remote, claimed, body, positions[i], d.InReplyTo); id != 0 {
 			d.RemoteID, claimed[id] = id, true
 			res.Resumed++
 			publish = append(publish, i)
@@ -190,7 +191,7 @@ func Submit(ctx context.Context, w forge.MRWriter, mr forge.Ref, drafts []Draft,
 		if o.dryRun {
 			continue
 		}
-		n, aerr := w.AddDraftNote(ctx, mr, body, positions[i], "")
+		n, aerr := w.AddDraftNote(ctx, mr, body, positions[i], d.InReplyTo)
 		if aerr != nil {
 			res.Uploaded--
 			return res, fmt.Errorf("upload draft %s: %w", d.ID, aerr)
@@ -238,14 +239,14 @@ func Submit(ctx context.Context, w forge.MRWriter, mr forge.Ref, drafts []Draft,
 
 // diffFor returns the diff to position against: the supplied one, or the
 // latest, fetched only when something needs it (a new positioned comment or an
-// approval, which pins the reviewed head).
+// approval, which pins the reviewed head). A reply needs no diff.
 func (o *options) diffFor(ctx context.Context, w forge.MRWriter, mr forge.Ref, approve bool, ds []Draft, send []int) (forge.Diff, error) {
 	if o.diff != nil {
 		return *o.diff, nil
 	}
 	need := approve
 	for _, i := range send {
-		if ds[i].RemoteID == 0 && !ds[i].Overview() {
+		if ds[i].RemoteID == 0 && ds[i].InReplyTo == "" && !ds[i].Overview() {
 			need = true
 		}
 	}
@@ -256,23 +257,38 @@ func (o *options) diffFor(ctx context.Context, w forge.MRWriter, mr forge.Ref, a
 }
 
 // Render is the text a draft is posted as: the body, led by its severity
-// ("**blocking:** ...") so the author sees how strongly it is meant.
+// ("**blocking:** ...") so the author sees how strongly it is meant. A draft an
+// agent wrote (Source is not you) is made safe to post and marked as AI
+// drafted: every line that is a quick action is neutralised, since forge
+// content steered the model and the forge would run it when the review is
+// published, and the text ends with the AI mark (aimark). Your own drafts are
+// posted as written.
 func Render(d Draft) string {
-	if d.Severity == SeverityNone {
-		return d.Body
+	body := d.Body
+	ai := d.Source != "" && d.Source != SourceYou
+	if ai {
+		body = aimark.NoQuickActions(body)
 	}
-	return "**" + string(d.Severity) + ":** " + d.Body
+	if d.Severity != SeverityNone {
+		body = "**" + string(d.Severity) + ":** " + body
+	}
+	if ai {
+		body = aimark.Mark(body)
+	}
+	return body
 }
 
 // adopt finds a draft note on the forge that is this comment already: same
-// text and position, not claimed by another draft. It recovers drafts whose
-// upload succeeded but whose answer never arrived.
-func adopt(remote []forge.DraftNote, claimed map[int64]bool, body string, pos *forge.DiffPosition) int64 {
+// text and position (or thread, for a reply), not claimed by another draft. It
+// recovers drafts whose upload succeeded but whose answer never arrived.
+func adopt(remote []forge.DraftNote, claimed map[int64]bool, body string, pos *forge.DiffPosition, inReplyTo string) int64 {
 	for _, n := range remote {
-		if claimed[n.ID] || n.InReplyTo != "" || n.Body != body {
+		if claimed[n.ID] || n.InReplyTo != inReplyTo || n.Body != body {
 			continue
 		}
 		switch {
+		case inReplyTo != "":
+			return n.ID
 		case pos == nil && n.Position == nil:
 			return n.ID
 		case pos != nil && n.Position != nil && n.Position.Path == positionPath(pos) &&

@@ -1,0 +1,30 @@
+ ADE  Home · worktrees                                                                    no unread
+
+
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Keys                                                                                             │
+│  Move ────────────────────────────────────────────────────────────────────────────────────────   │
+│  j k g G   move; top or bottom                                                                   │
+│  tab t p e details (narrow); Home or Worktrees; project; Activity                                │
+│  / : f     search; palette; filter (triage, blocked, type, app...)                               │
+│  Selected item ───────────────────────────────────────────────────────────────────────────────   │
+│  enter     open: the item's MR page                                                              │
+│  s M       start work; create the MR for started work                                            │
+│  c C       classify: suggest missing type/app labels; the issue's comments                       │
+│  a A       agent runs for the item; all runs                                                     │
+│  w v       open workspace (zellij); VS Code workspace of all repos                               │
+│  y o       copy link or path; browser                                                            │
+│  n N = r   edit notes; dated note; weight; restart services                                      │
+│  Pages ───────────────────────────────────────────────────────────────────────────────────────   │
+│  S V       standup; sprint retro                                                                 │
+│  b L       budget; audit log                                                                     │
+│  i U       notifications; refresh now                                                            │
+│  Leave ───────────────────────────────────────────────────────────────────────────────────────   │
+│  esc ? q   dismiss; close this; quit                                                             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+
+
+ esc close

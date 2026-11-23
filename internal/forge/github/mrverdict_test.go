@@ -21,12 +21,12 @@ func TestMergeVerdictOnGitHubStates(t *testing.T) {
 	if clean.DetailedStatus != "clean" {
 		t.Fatalf("api!5 mergeable_state = %q, want clean", clean.DetailedStatus)
 	}
-	if v := review.Verdict(clean, ""); !v.OK {
+	if v := review.Verdict(clean, review.Hints{}); !v.OK {
 		t.Errorf("a clean PR is refused: %+v", v)
 	}
 
 	draft, _ := c.MR(ctx, mrRef(webProj, 2))
-	v := review.Verdict(draft, "ade mr ready ade-demo/web!2 marks it ready")
+	v := review.Verdict(draft, review.Hints{Ready: "ade mr ready ade-demo/web!2 marks it ready"})
 	if v.OK || !strings.Contains(v.Why, "still a draft") || !strings.Contains(v.Why, "ade mr ready") || strings.Contains(v.Why, "GitLab") {
 		t.Errorf("draft verdict = %+v", v)
 	}
@@ -39,7 +39,7 @@ func TestMergeVerdictOnGitHubStates(t *testing.T) {
 	if unstable.DetailedStatus != "unstable" {
 		t.Fatalf("web!2 mergeable_state = %q, want unstable", unstable.DetailedStatus)
 	}
-	if v := review.Verdict(unstable, ""); !v.OK {
+	if v := review.Verdict(unstable, review.Hints{}); !v.OK {
 		t.Errorf("an unstable PR is refused: %+v", v)
 	}
 }

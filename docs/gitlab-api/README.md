@@ -1,11 +1,12 @@
 # GitLab API contract
 
-ADE's GitLab driver is built from the official docs, not from a paid test instance. The three reference files below were compiled from docs.gitlab.com (which describes 19.x) on 2026-11-11. Every claim in them links its source page. `[INFERENCE]` marks anything the docs did not state outright, and each of those needs proof from a real instance before code relies on it.
+ADE's GitLab driver is built from the official docs, not from a paid test instance. The reference files below were compiled from docs.gitlab.com (which describes 19.x) on 2026-11-11. Every claim in them links its source page. `[INFERENCE]` marks anything the docs did not state outright, and each of those needs proof from a real instance before code relies on it.
 
 | File | Covers |
 |---|---|
 | [planning.md](planning.md) | issues (list/filter/create/edit), iterations + cadences, milestones, labels and scoped labels, boards, epics, GraphQL issue queries |
 | [workflow.md](workflow.md) | issue links, work-item hierarchy (GraphQL), issue ↔ MR, branches, MRs, discussions and draft notes, approvals, diffs, pipelines and jobs |
+| [reviewers.md](reviewers.md) | reviewers: list with verdicts, add (`reviewer_ids`), re-request (GraphQL `mergeRequestReviewerRereview`), username lookup |
 | [platform.md](platform.md) | auth and scopes, `/user`, events, pagination, rate limits, caching, GraphQL limits, tier detection |
 
 ## Decisions these docs force
@@ -30,6 +31,10 @@ ADE's GitLab driver is built from the official docs, not from a paid test instan
 
 - `approve`, `unapprove`, and `GET …/approvals` are Free.
 - `approval_state` and approval rules are Premium. Without them, the UI shows "approved by N" instead of "N of M required".
+
+### Reviewers
+
+- Free tier. Add with `PUT …/merge_requests/:iid` `reviewer_ids` (replaces the set); re-request an existing reviewer only through GraphQL `mergeRequestReviewerRereview` (REST has no call). Details and sources in [reviewers.md](reviewers.md).
 
 ### Iterations
 

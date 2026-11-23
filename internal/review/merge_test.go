@@ -30,13 +30,13 @@ func TestMergeVerdict(t *testing.T) {
 		{"github clean", forge.MR{State: "opened", DetailedStatus: "clean"}, true, false, ""},
 		{"github unstable", forge.MR{State: "opened", DetailedStatus: "unstable"}, true, false, ""},
 		{"github has_hooks", forge.MR{State: "opened", DetailedStatus: "has_hooks"}, true, false, ""},
-		{"github behind", forge.MR{State: "opened", DetailedStatus: "behind", TargetBranch: "main"}, false, false, "behind main: update the branch"},
+		{"github behind", forge.MR{State: "opened", DetailedStatus: "behind", TargetBranch: "main"}, false, false, "it is behind main"},
 		{"github blocked", forge.MR{State: "opened", DetailedStatus: "blocked"}, false, false, "required review or check"},
 		{"github unknown", forge.MR{State: "opened", DetailedStatus: "unknown"}, false, false, "still checking"},
 		{"unknown status is quoted", forge.MR{State: "opened", DetailedStatus: "jira_association_missing"}, false, false, "jira association missing"},
 	}
 	for _, c := range cases {
-		v := Verdict(c.mr, "")
+		v := Verdict(c.mr, Hints{})
 		if v.OK != c.ok || v.AutoOK != c.auto || !strings.Contains(v.Why, c.why) {
 			t.Errorf("%s: %+v, want ok=%v auto=%v why~%q", c.name, v, c.ok, c.auto, c.why)
 		}
@@ -45,10 +45,29 @@ func TestMergeVerdict(t *testing.T) {
 
 func TestVerdictDraftHint(t *testing.T) {
 	mr := forge.MR{State: "opened", Draft: true}
-	if v := Verdict(mr, ""); v.Why != "it is still a draft" {
+	if v := Verdict(mr, Hints{}); v.Why != "it is still a draft" {
 		t.Errorf("no hint: %q", v.Why)
 	}
-	if v := Verdict(mr, "R marks it ready"); v.Why != "it is still a draft (R marks it ready)" {
+	if v := Verdict(mr, Hints{Ready: "R marks it ready"}); v.Why != "it is still a draft (R marks it ready)" {
 		t.Errorf("hint: %q", v.Why)
+	}
+}
+
+func TestVerdictUpdateHint(t *testing.T) {
+	h := Hints{Update: "u updates the branch"}
+	for _, c := range []struct {
+		mr   forge.MR
+		want string
+	}{
+		{forge.MR{State: "opened", HasConflicts: true, TargetBranch: "main"}, "it conflicts with main: u updates the branch, or rebase it locally"},
+		{forge.MR{State: "opened", DetailedStatus: "need_rebase"}, "it needs a rebase: u updates the branch"},
+		{forge.MR{State: "opened", DetailedStatus: "behind", TargetBranch: "main"}, "it is behind main: u updates the branch"},
+	} {
+		if v := Verdict(c.mr, h); v.Why != c.want {
+			t.Errorf("%s: %q, want %q", c.mr.DetailedStatus, v.Why, c.want)
+		}
+	}
+	if v := Verdict(forge.MR{State: "opened", HasConflicts: true, TargetBranch: "main"}, Hints{}); v.Why != "it conflicts with main" {
+		t.Errorf("no hint: %q", v.Why)
 	}
 }

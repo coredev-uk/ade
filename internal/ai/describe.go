@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/coredev-uk/ade/internal/aimark"
 	"github.com/coredev-uk/ade/internal/app"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/project"
@@ -21,7 +22,7 @@ import (
 // the user applies it; the apply is a forge write and is audited as
 // forge.mr.description (review.AuditedWriter.SetDescription).
 
-const describeVersion = "describe-v1"
+const describeVersion = "describe-v2"
 
 //go:embed prompts/describe.md
 var describeSystem string
@@ -70,18 +71,20 @@ func DescribeJob(forgeName string, in DescribeInput) Job {
 	mr, d := in.MR, in.Diff
 	head := firstNonEmpty(d.HeadSHA, mr.HeadSHA)
 	var b strings.Builder
-	fmt.Fprintf(&b, "Merge request: %s\n", mr.Title)
-	fmt.Fprintf(&b, "Branches: %s -> %s\n", mr.SourceBranch, mr.TargetBranch)
 	fmt.Fprintf(&b, "Head: %s\n", head)
+	var mrText strings.Builder
+	fmt.Fprintf(&mrText, "Merge request: %s\n", mr.Title)
+	fmt.Fprintf(&mrText, "Branches: %s -> %s\n", mr.SourceBranch, mr.TargetBranch)
 	if kept := keptLines(mr.Description); len(kept) > 0 {
-		b.WriteString("\nLines of the current description to keep exactly:\n")
+		mrText.WriteString("\nLines of the current description to keep exactly:\n")
 		for _, l := range kept {
-			b.WriteString(l + "\n")
+			mrText.WriteString(l + "\n")
 		}
 	}
+	b.WriteString(untrusted("merge request", mrText.String()))
 	b.WriteString(issueBlock(in.Issue))
 	if in.Template != "" {
-		fmt.Fprintf(&b, "\nTemplate %q:\n```\n%s\n```\n", in.TemplateName, clip(in.Template, maxDescription))
+		b.WriteString("\n" + untrusted("MR template "+in.TemplateName, clip(in.Template, maxDescription)))
 	} else {
 		b.WriteString("\nThe project has no MR template.\n")
 	}
@@ -90,20 +93,22 @@ func DescribeJob(forgeName string, in DescribeInput) Job {
 	if len(commits) > maxCommits {
 		commits, omitted = commits[len(commits)-maxCommits:], len(commits)-maxCommits
 	}
-	b.WriteString("\nCommits, oldest first:\n")
+	var cm strings.Builder
+	cm.WriteString("Commits, oldest first:\n")
 	if omitted > 0 {
-		fmt.Fprintf(&b, "(%d earlier commits omitted)\n", omitted)
+		fmt.Fprintf(&cm, "(%d earlier commits omitted)\n", omitted)
 	}
 	for _, c := range commits {
-		fmt.Fprintf(&b, "- %s\n", c.Title)
+		fmt.Fprintf(&cm, "- %s\n", c.Title)
 		if body := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(c.Message), c.Title)); body != "" {
-			fmt.Fprintf(&b, "  %s\n", clip(strings.Join(strings.Fields(body), " "), 400))
+			fmt.Fprintf(&cm, "  %s\n", clip(strings.Join(strings.Fields(body), " "), 400))
 		}
 	}
-	b.WriteString("\nChanges:\n" + renderDiff(d, false))
+	b.WriteString("\n" + untrusted("commits", cm.String()))
+	b.WriteString("\nChanges:\n" + untrusted("diff", renderDiff(d, false)))
 	return Job{
 		Feature: "describe", Role: RoleDraft, PromptVersion: describeVersion,
-		System: describeSystem, Prompt: b.String(),
+		System: guarded(describeSystem), Prompt: b.String(),
 		Forge: forgeName, Ref: mr.Ref, Name: "describe-mr" + fmt.Sprint(mr.Ref.IID),
 		MaxTokens: 900,
 		Params:    map[string]any{"head": head},
@@ -112,17 +117,21 @@ func DescribeJob(forgeName string, in DescribeInput) Job {
 
 // PrepareDescription turns the model's answer into the text that is written
 // to the MR: a wrapping code fence is removed, quick-action lines (they would
-// run again on update) are stripped, and the links to work items of the
-// current description are put back when the model dropped them.
+// run again on update) are stripped, the links to work items of the current
+// description are put back when the model dropped them, and any line that is
+// still a quick action (the model, steered by the MR's content, may write any
+// of them) is neutralised. The text ends with the AI mark (aimark), so what the
+// MR shows says a model drafted it; the mark of an earlier apply, on the draft
+// or the current description, is never doubled.
 func PrepareDescription(draft, current string) string {
 	text := strings.TrimSpace(draft)
 	if strings.HasPrefix(text, "```") && strings.HasSuffix(text, "```") && strings.Count(text, "```") == 2 {
 		_, inner, _ := strings.Cut(text, "\n")
 		text = strings.TrimSpace(strings.TrimSuffix(inner, "```"))
 	}
-	text = strings.TrimSpace(startwork.StripQuickActions(text, []string{"*"}))
+	text = strings.TrimSpace(startwork.StripQuickActions(aimark.Strip(text), []string{"*"}))
 	var missing []string
-	for _, l := range keptLines(current) {
+	for _, l := range keptLines(aimark.Strip(current)) {
 		if !strings.Contains(text, l) {
 			missing = append(missing, l)
 		}
@@ -133,7 +142,7 @@ func PrepareDescription(draft, current string) string {
 		}
 		text += strings.Join(missing, "\n")
 	}
-	return text
+	return aimark.Mark(aimark.NoQuickActions(text))
 }
 
 // GatherDescribe reads the MR, its diff and commits, the issue it closes and

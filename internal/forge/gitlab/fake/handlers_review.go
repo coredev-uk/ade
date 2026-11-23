@@ -30,6 +30,7 @@ func (s *Server) reviewRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+mrp+"/approve", s.approve(true))
 	mux.HandleFunc("POST "+mrp+"/unapprove", s.approve(false))
 	mux.HandleFunc("PUT "+mrp+"/merge", s.mergeMR)
+	mux.HandleFunc("PUT "+mrp+"/rebase", s.rebaseMR)
 	mux.HandleFunc("POST /api/v4/projects/{id}/pipelines/{pid}/retry", s.retryPipeline)
 	mux.HandleFunc("GET /api/v4/projects/{id}/pipelines/{pid}/jobs", s.pipelineJobs)
 	mux.HandleFunc("GET /api/v4/projects/{id}/jobs/{jid}/trace", s.jobTrace)
@@ -134,9 +135,13 @@ func (s *Server) updateMR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, hasDesc := p["description"]
+	_, hasReviewers := p["reviewer_ids"]
 	title := str(p, "title")
+	if hasReviewers && !s.setReviewerIDs(w, m, p) {
+		return
+	}
 	event := str(p, "state_event")
-	if title == "" && !hasDesc && event == "" {
+	if title == "" && !hasDesc && event == "" && !hasReviewers {
 		badRequest(w, "title is empty")
 		return
 	}

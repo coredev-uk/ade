@@ -117,7 +117,7 @@ func TestHomeDetailShowsTheTrackerIssueComments(t *testing.T) {
 // goes back to Home.
 func TestCommentsViewListsScrollsAndGoesBack(t *testing.T) {
 	long := "Support says the CSV export fails too.\n\n" + strings.Repeat("- one more observation from the support call\n", 30)
-	e := newCommentsEnv(t, 100, 30, long)
+	e := newCommentsEnv(t, 120, 30, long) // wide enough for the two-pane layout: Home's detail is on screen
 	e.selectItem(e.commented)
 	// A comment made after the sync: the view reads the forge.
 	if _, err := e.srv.AddNote(e.commented, "", "reviewer-rae", "Also affects **PDF** exports"); err != nil {

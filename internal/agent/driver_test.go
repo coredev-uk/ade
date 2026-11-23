@@ -187,10 +187,15 @@ func TestCodexCommand(t *testing.T) {
 	if plan.Args[0] != "exec" || plan.Args[len(plan.Args)-1] != "-" || plan.Stdin != "p" {
 		t.Errorf("cmd = %+v", plan)
 	}
-	for flag, want := range map[string]string{"-C": "/w", "-m": "gpt-x", "-s": "read-only", "--add-dir": "/x"} {
+	for flag, want := range map[string]string{"-C": "/w", "-m": "gpt-x", "-s": "read-only"} {
 		if got := argValue(plan.Args, flag); got != want {
 			t.Errorf("%s = %q, want %q", flag, got, want)
 		}
+	}
+	// --add-dir grants write access under workspace-write: the required repos
+	// stay readable (codex reads outside the workspace) and unwritable.
+	if slices.Contains(plan.Args, "--add-dir") || !slices.Contains(plan.Args, "--ephemeral") {
+		t.Errorf("codex must not get --add-dir, and keeps no rollout files: %v", plan.Args)
 	}
 	if !slices.Contains(plan.Args, "--json") {
 		t.Error("missing --json")
@@ -341,5 +346,56 @@ func TestParseReplies(t *testing.T) {
 	}
 	if _, err := ParseReplies("```json\n{oops\n```"); err == nil {
 		t.Error("a malformed block must be reported")
+	}
+}
+
+func TestClaudeIsolationAndReadOnlyRequiredRepos(t *testing.T) {
+	args := (&claudeDriver{cmd: "claude"}).Command(Spec{Kind: KindRun, Dir: "/w", AddDirs: []string{"/req"}}).Args
+	for _, want := range []string{"--strict-mcp-config", "--disable-slash-commands"} {
+		if !slices.Contains(args, want) {
+			t.Errorf("missing %s: %v", want, args)
+		}
+	}
+	if got := argValue(args, "--setting-sources"); got != "user" {
+		t.Errorf("project and local settings (a repo's hooks) must not load: --setting-sources %q", got)
+	}
+	i := slices.Index(args, "--disallowedTools")
+	if i < 0 {
+		t.Fatalf("no deny rules: %v", args)
+	}
+	denied := args[i+1:]
+	for _, want := range []string{"mcp__*", "Edit(//req/**)", "Write(//req/**)"} {
+		if !slices.Contains(denied, want) {
+			t.Errorf("--disallowedTools lacks %q: %v", want, denied)
+		}
+	}
+}
+
+// Claude Code emits one assistant event per content block, each carrying the
+// whole message's usage: counting per event doubles a two-block message.
+func TestClaudeUsageIsCountedOncePerMessage(t *testing.T) {
+	price := &config.Price{Input: 3, Output: 15}
+	p := (&claudeDriver{}).Parser(Spec{Price: price})
+	msg := func(id, block string) {
+		p.Feed([]byte(`{"type":"assistant","message":{"id":"` + id + `","model":"m","content":[` + block + `],"usage":{"input_tokens":1000,"output_tokens":200,"cache_read_input_tokens":50,"cache_creation_input_tokens":10}}}`))
+	}
+	msg("msg_1", `{"type":"text","text":"thinking"}`)
+	msg("msg_1", `{"type":"tool_use","name":"Read"}`) // same message, second block
+	pr := p.Progress()
+	if pr.Turns != 1 || pr.In != 1010 || pr.Out != 200 || pr.Cache != 50 {
+		t.Errorf("one message in two events: turns %d in %d out %d cache %d", pr.Turns, pr.In, pr.Out, pr.Cache)
+	}
+	if want := (1000*3.0 + 200*15) / 1e6; !near(pr.CostUSD, want) {
+		t.Errorf("estimate = %v, want %v (one message, not two)", pr.CostUSD, want)
+	}
+	msg("msg_2", `{"type":"text","text":"done"}`)
+	if pr := p.Progress(); pr.Turns != 2 || pr.In != 2020 || pr.Out != 400 {
+		t.Errorf("two messages: %+v", pr)
+	}
+	// The result's usage is the run's total and replaces the estimate's tokens.
+	p.Feed([]byte(`{"type":"result","subtype":"success","result":"ok","total_cost_usd":0.5,"num_turns":3,"usage":{"input_tokens":7000,"output_tokens":900,"cache_read_input_tokens":100,"cache_creation_input_tokens":0}}`))
+	pr = p.Progress()
+	if pr.In != 7000 || pr.Out != 900 || pr.Cache != 100 || pr.Turns != 3 || !near(pr.CostUSD, 0.5) || pr.Source != "reported" {
+		t.Errorf("final usage comes from the result event: %+v", pr)
 	}
 }

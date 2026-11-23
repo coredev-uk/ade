@@ -148,13 +148,13 @@ func (m model) logFooter(w int) string {
 	if l.editing {
 		return " " + stBold.Render("/") + " " + l.text + stBold.Render(m.g.Vertical) + "   " + keys("enter", "apply", "esc", "cancel", "ctrl+u", "clear")
 	}
-	if w < twoPaneMinW {
+	if narrowW(w) {
 		if m.showDetail {
-			return " " + keys("j/k", "move", "J/K", "scroll", "enter", "go to item", "tab", "list", "L", "back", "?", "keys")
+			return fitKeys(w, []string{"tab", "list", "L", "back", "?", "keys"}, []string{"j/k", "move", "J/K", "scroll", "enter", "go to item"})
 		}
-		return " " + keys("j/k", "move", "enter", "go to item", "/", "filter", "a", "actions", "s", "since", "L", "back", "?", "keys")
+		return fitKeys(w, []string{"tab", "details", "L", "back", "?", "keys"}, []string{"j/k", "move", "enter", "go to item", "/", "filter", "a", "actions", "s", "since"})
 	}
-	return " " + keys("j/k", "move", "enter", "go to target", "/", "filter", "a", "actions: "+l.group.String(), "s", "since: "+l.since.String(), "c", "clear", "J/K", "detail", "r", "reload", "L", "back", "?", "keys")
+	return fitKeys(w, []string{"L", "back", "?", "keys"}, []string{"j/k", "move", "enter", "go to target", "/", "filter", "a", "actions: " + l.group.String(), "s", "since: " + l.since.String(), "c", "clear", "J/K", "detail", "r", "reload"})
 }
 
 // toolDetailWidth is the width of the detail pane (or of the single pane's

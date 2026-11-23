@@ -9,11 +9,11 @@ import (
 )
 
 const (
-	standupVersion = "standup-v2"
-	sprintVersion  = "sprint-review-v4"
-	retroVersion   = "sprint-retro-v1"
-	parentVersion  = "sprint-parent-v2"
-	lastDayVersion = "lastday-v1"
+	standupVersion = "standup-v3"
+	sprintVersion  = "sprint-review-v5"
+	retroVersion   = "sprint-retro-v2"
+	parentVersion  = "sprint-parent-v3"
+	lastDayVersion = "lastday-v2"
 
 	// StandupForge and SprintForge are the item-record roots of the agile
 	// artifacts: items/_standup/<project>/<yyyymmdd>/ai/ and items/_sprint/....
@@ -45,7 +45,7 @@ func dayKey(t time.Time) int {
 func StandupJob(project string, day time.Time, facts string) Job {
 	return Job{
 		Feature: "standup", Role: RoleExplain, PromptVersion: standupVersion,
-		System: standupSystem, Prompt: facts,
+		System: guarded(standupSystem), Prompt: untrusted("facts", facts),
 		Forge: StandupForge, Ref: forge.Ref{Project: project, IID: dayKey(day)},
 		Name: "standup-" + day.Format("2006-01-02"), MaxTokens: 400,
 		Params: map[string]any{"day": day.Format("2006-01-02")},
@@ -57,7 +57,7 @@ func StandupJob(project string, day time.Time, facts string) Job {
 func LastDayJob(day time.Time, facts string) Job {
 	return Job{
 		Feature: "lastday", Role: RoleExplain, PromptVersion: lastDayVersion,
-		System: lastDaySystem, Prompt: facts,
+		System: guarded(lastDaySystem), Prompt: untrusted("facts", facts),
 		Forge: StandupForge, Ref: forge.Ref{Project: "all", IID: dayKey(day)},
 		Name: "lastday-" + day.Format("2006-01-02"), MaxTokens: 500,
 		Params: map[string]any{"day": day.Format("2006-01-02")},
@@ -69,13 +69,13 @@ func LastDayJob(day time.Time, facts string) Job {
 func SprintReviewJob(project, sprint string, start time.Time, mine bool, facts string) Job {
 	j := Job{
 		Feature: "sprint-review", Role: RoleExplain, PromptVersion: sprintVersion,
-		System: sprintSystem, Prompt: facts,
+		System: guarded(sprintSystem), Prompt: untrusted("facts", facts),
 		Forge: SprintForge, Ref: forge.Ref{Project: project, IID: dayKey(start)},
 		Name: "review-" + fmt.Sprint(dayKey(start)), MaxTokens: 800,
 		Params: map[string]any{"sprint": sprint},
 	}
 	if mine {
-		j.PromptVersion, j.System, j.Name = retroVersion, retroSystem, "retro-"+fmt.Sprint(dayKey(start))
+		j.PromptVersion, j.System, j.Name = retroVersion, guarded(retroSystem), "retro-"+fmt.Sprint(dayKey(start))
 		j.Params["mine"] = true
 	}
 	return j
@@ -88,7 +88,7 @@ func SprintReviewJob(project, sprint string, start time.Time, mine bool, facts s
 func SprintParentJob(project, sprint string, parent forge.Ref, facts string) Job {
 	return Job{
 		Feature: "sprint-parent", Role: RoleExplain, PromptVersion: parentVersion,
-		System: sprintParentSystem, Prompt: facts,
+		System: guarded(sprintParentSystem), Prompt: untrusted("facts", facts),
 		Forge: SprintForge, Ref: forge.Ref{Project: project, IID: parent.IID},
 		Name: fmt.Sprintf("parent-%d", parent.IID), MaxTokens: 600,
 		Params: map[string]any{"sprint": sprint, "parent": parent.String()},

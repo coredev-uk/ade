@@ -9,19 +9,30 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/coredev-uk/ade/internal/ai"
+	"github.com/coredev-uk/ade/internal/audit"
 	"github.com/coredev-uk/ade/internal/budget"
+	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/ledger"
 )
 
 // aiChip is the header's `AI $0.38 / $2.00 day`: the budget period closest to
-// its cap, spend against cap, and whether a provider refused a call today. It
+// its cap, spend against cap, whether a provider refused a call today and
+// whether the newest call failed for another reason. It
 // is read off the UI loop (the ledger is a query over the audit log) and shown
 // once loaded; it is re-read when the audit log changes, i.e. right after an
 // AI call, and when the local day ends (watch.go). Home's budget banner
 // (aibanner.go) is drawn from the same value, so the two always agree.
 type aiChip struct {
-	ok     bool    // loaded; false hides the chip
-	off    bool    // ai.mode = off
+	ok  bool // loaded; false hides the chip
+	off bool // ai.mode = off
+	// setup is what is wrong with the AI settings (no profile selected, the
+	// selected one not defined); empty when they are usable. The chip shows it
+	// as a warning instead of spend.
+	setup string
+	// failed is set when the newest AI call today failed for a reason other
+	// than a budget: a missing driver or key, an unreachable gateway. A call
+	// that then succeeds clears it.
+	failed bool
 	period string  // day | week | sprint
 	spent  float64 // spend in the period
 	limit  float64 // its cap; 0 = no cap
@@ -35,6 +46,15 @@ type aiChip struct {
 
 type aiChipMsg aiChip
 
+// aiAvail is config.AI.Available for this model's config: whether AI can be
+// offered at all, and which setting is in the way when it cannot.
+func (m model) aiAvail() (bool, string) {
+	if m.app == nil || m.app.Config == nil {
+		return false, "AI is not set up"
+	}
+	return m.app.Config.AI.Available()
+}
+
 // loadAIChip reads the figure. It yields nothing when AI is not set up at all
 // (no profile configured), so a machine without AI shows no chip.
 func (m model) loadAIChip() tea.Cmd {
@@ -44,11 +64,15 @@ func (m model) loadAIChip() tea.Cmd {
 	}
 	return func() tea.Msg {
 		cfg := a.Config
-		if cfg.AI.Mode == "off" {
+		switch cfg.AI.State() {
+		case config.AIOff:
 			return aiChipMsg{ok: true, off: true}
-		}
-		if len(cfg.AI.Profiles) == 0 {
+		case config.AINone:
 			return aiChipMsg{}
+		case config.AINoProfile:
+			return aiChipMsg{ok: true, setup: "no profile selected"}
+		case config.AIUnknown:
+			return aiChipMsg{ok: true, setup: "profile not defined"}
 		}
 		d, err := budget.ForApp(a)
 		if err != nil {
@@ -68,8 +92,29 @@ func (m model) loadAIChip() tea.Cmd {
 			}
 			slices.Sort(c.stopped)
 		}
+		c.failed = lastCallFailed(a.Audit, cfg.AI.Profile, r.Now, d.Loc)
 		return aiChipMsg(c)
 	}
+}
+
+// lastCallFailed reports whether the newest model call of the local day on
+// profile failed (a call on another profile says nothing about this one; a
+// declined pre-flight carries no call and changes nothing). Budget stops are their own state (stopped, cap) and are audited
+// under another action, so only driver and gateway failures count here.
+func lastCallFailed(log *audit.Log, profile string, now time.Time, loc *time.Location) bool {
+	if log == nil {
+		return false
+	}
+	es, err := log.Query(audit.Filter{Action: "ai.*", Since: ledger.DayStart(now, loc)})
+	if err != nil {
+		return false
+	}
+	for i := len(es) - 1; i >= 0; i-- {
+		if es[i].AI != nil && es[i].AI.Profile == profile {
+			return es[i].Outcome == "error"
+		}
+	}
+	return false
 }
 
 // pausedUntil words when the longest reached cap starts over, "" when none is
@@ -123,6 +168,8 @@ func (c aiChip) render(g glyphs) string {
 		return ""
 	case c.off:
 		return stFaint.Render("AI off")
+	case c.setup != "":
+		return stWarn.Render(g.Warn + " AI " + c.setup)
 	}
 	text := "AI " + usd(c.spent)
 	if c.limit > 0 {
@@ -133,6 +180,8 @@ func (c aiChip) render(g glyphs) string {
 		return stBad.Render(g.Bad + " " + text + " cap")
 	case len(c.stopped) > 0:
 		return stBad.Render(g.Bad + " " + text + " stopped")
+	case c.failed:
+		return stWarn.Render(g.Warn + " " + text + " last call failed")
 	case c.limit > 0 && c.spent/c.limit >= 0.8:
 		return stWarn.Render(g.Warn + " " + text)
 	}

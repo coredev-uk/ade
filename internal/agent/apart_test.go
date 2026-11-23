@@ -215,7 +215,7 @@ func TestImplementApartRefusesAnExistingAIBranch(t *testing.T) {
 	}
 }
 
-func TestAcceptAndDiscardNeedAnIsolatedRun(t *testing.T) {
+func TestAcceptNeedsAnIsolatedRunAndDiscardRestoresTheWorktree(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	r := e.approved()
@@ -226,7 +226,40 @@ func TestAcceptAndDiscardNeedAnIsolatedRun(t *testing.T) {
 	if _, err := e.m.Accept(ctx, r.ID, AcceptOpts{}); err == nil || !strings.Contains(err.Error(), "no -ai branch") {
 		t.Errorf("accept on a normal run: %v", err)
 	}
-	if _, err := e.m.Discard(ctx, r.ID); err == nil || !strings.Contains(err.Error(), "no -ai branch") {
-		t.Errorf("discard on a normal run: %v", err)
+	// Discard is a real discard: the worktree goes back to where the run
+	// started, and the run is cancelled (the TUI's x and the CLI agree).
+	if _, err := os.Stat(filepath.Join(e.wt, "hello.txt")); err != nil {
+		t.Fatalf("the agent's file should be in the worktree before discard: %v", err)
+	}
+	r, err = e.m.Discard(ctx, r.ID)
+	if err != nil || r.State != StateCancelled {
+		t.Fatalf("discard a worktree run: %v %+v", err, r)
+	}
+	if out := sh(t, e.wt, "status", "--porcelain"); out != "" {
+		t.Errorf("discard must leave a clean worktree, status: %q", out)
+	}
+	if _, err := e.m.Discard(ctx, r.ID); err == nil || !strings.Contains(err.Error(), "only a run in review") {
+		t.Errorf("a cancelled worktree run has nothing to discard: %v", err)
+	}
+}
+
+func TestDiscardRefusesWhenTheBranchMoved(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	r, err := e.m.Implement(ctx, e.approved().ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A commit of the user's since the run started must not be thrown away.
+	if err := os.WriteFile(filepath.Join(e.wt, "mine.txt"), []byte("mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sh(t, e.wt, "add", "mine.txt")
+	sh(t, e.wt, "commit", "-q", "-m", "mine")
+	if _, err := e.m.Discard(ctx, r.ID); err == nil || !strings.Contains(err.Error(), "has moved") {
+		t.Errorf("discard after the branch moved: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(e.wt, "mine.txt")); err != nil {
+		t.Error("the user's commit must survive a refused discard")
 	}
 }
