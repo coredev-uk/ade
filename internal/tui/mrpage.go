@@ -203,6 +203,7 @@ const (
 	relMR mrReload = 1 << iota
 	relThreads
 	relJobs
+	relDiff
 )
 
 // mrWrote is what a successful write returns: the pop-up title and what to
@@ -486,6 +487,9 @@ func (m *model) mrRefetch(d *mrData, what mrReload) tea.Cmd {
 	}
 	if what&relJobs != 0 && d.jobsL.st != loadIdle {
 		cmds = append(cmds, m.loadJobs(d))
+	}
+	if what&relDiff != 0 && d.diffL.st != loadIdle {
+		cmds = append(cmds, m.loadDiff(d)) // the head moved: comment positions need the new version
 	}
 	return tea.Batch(cmds...)
 }

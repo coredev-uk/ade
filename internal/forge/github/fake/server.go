@@ -52,6 +52,7 @@ type Server struct {
 	inflight, maxInflight int
 	throttle              throttle
 	rate                  rateLimit
+	updateDelay           int // pull reads before an update-branch lands (update_branch.go)
 }
 
 type throttle struct {
