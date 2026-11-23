@@ -698,9 +698,17 @@ func (m model) itemDetailAt(it *domain.WorkItem, w int, hint, compact bool) stri
 	l = append(l, stFaint.Render(ansi.Truncate(strings.Join(meta, " "+g.Sep+" "), w, m.g.Ell)))
 	if it.Workflow != "" || it.WantWorkflow != "" {
 		lbl := "label " + orDash(m.g, it.Workflow)
-		if it.Drift {
+		switch {
+		case it.Drift && !it.Movable:
 			l = append(l, stWarn.Render(g.Warn+" "+lbl+" "+g.Sep+" stage says "+it.WantWorkflow))
-		} else {
+		case it.Drift:
+			// A move is on offer: wrap the line, so the narrow pane shows what
+			// the stage says, and name the key under it.
+			for _, ln := range strings.Split(ansi.Wrap(g.Warn+" "+lbl+" "+g.Sep+" stage says "+it.WantWorkflow, w, ""), "\n") {
+				l = append(l, stWarn.Render(ln))
+			}
+			l = append(l, stFaint.Render("  m moves it"))
+		default:
 			l = append(l, stFaint.Render(lbl+" "+g.OK))
 		}
 	}

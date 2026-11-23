@@ -89,6 +89,9 @@ type WorkItem struct {
 	// true when it differs from Workflow.
 	WantWorkflow string `json:"want_workflow,omitempty"`
 	Drift        bool   `json:"drift,omitempty"`
+	// Movable says the drift is one ADE can fix: ade issue stage and Home's m
+	// would move the label (not done, not the team's done value).
+	Movable bool `json:"movable,omitempty"`
 
 	Weight  *int    `json:"weight,omitempty"` // nil = unweighted
 	Sprint  *Sprint `json:"sprint,omitempty"`

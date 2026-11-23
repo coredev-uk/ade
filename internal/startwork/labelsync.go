@@ -61,42 +61,76 @@ func LabelMoves(prev, cur []domain.WorkItem, m *config.Manifest) []Move {
 	var out []Move
 	for _, it := range cur {
 		old, seen := before[it.Ref]
-		if !seen || old == it.Stage || it.KeptOpen || it.Stage == domain.StageDone {
+		if !seen || old == it.Stage {
 			continue
 		}
-		want := it.WantWorkflow
-		if want == "" || strings.EqualFold(it.Workflow, want) {
-			continue
+		if mv, ok := PendingMove(it, m); ok {
+			out = append(out, mv)
 		}
-		if wf.Done != "" && strings.EqualFold(it.Workflow, wf.Done) || strings.EqualFold(it.Workflow, blockedValue) {
-			continue
-		}
-		wantLabel := domain.WorkflowLabel(want, m.Labels)
-		mv := Move{Ref: it.Ref, Stage: it.Stage, From: it.Workflow, To: want}
-		has := false
-		for _, l := range it.Issue.Labels {
-			v, ok := facetValue(wf.Pattern, l)
-			switch {
-			case !ok:
-			case strings.EqualFold(v, want):
-				has = true
-			default:
-				mv.Remove = append(mv.Remove, l)
-			}
-		}
-		if !has {
-			mv.Add = wantLabel
-		}
-		out = append(out, mv)
 	}
 	return out
+}
+
+// PendingMove is the move that brings the item's workflow label in line with
+// its derived stage, judged on the item as it stands: no earlier state is
+// needed. It is what `ade issue stage` and Home's `m` offer, and what an
+// edge-triggered sync move is made of. ok is false when there is nothing to
+// move; MoveReason says why.
+func PendingMove(it domain.WorkItem, m *config.Manifest) (Move, bool) {
+	mv, _, ok := moveFor(it, m)
+	return mv, ok
+}
+
+// MoveReason is PendingMove with the reason there is no move, worded for a
+// person ("" when there is one).
+func MoveReason(it domain.WorkItem, m *config.Manifest) (Move, string) {
+	mv, why, _ := moveFor(it, m)
+	return mv, why
+}
+
+func moveFor(it domain.WorkItem, m *config.Manifest) (Move, string, bool) {
+	wf := m.Labels.Workflow
+	switch {
+	case wf.Pattern == "":
+		return Move{}, "the manifest sets no labels.workflow.pattern, so ADE has no workflow label to move", false
+	case it.KeptOpen || it.Stage == domain.StageDone:
+		return Move{}, "the item is done: ADE never moves a finished item's label", false
+	}
+	want := it.WantWorkflow
+	switch {
+	case want == "":
+		return Move{}, fmt.Sprintf("labels.workflow.stage maps no workflow value to stage %s", it.Stage), false
+	case strings.EqualFold(it.Workflow, want):
+		return Move{}, fmt.Sprintf("the workflow label already says %s", want), false
+	case wf.Done != "" && strings.EqualFold(it.Workflow, wf.Done):
+		return Move{}, fmt.Sprintf("the workflow label says %s, the team's done value: ADE never moves it back", it.Workflow), false
+	case strings.EqualFold(it.Workflow, blockedValue):
+		return Move{}, "the workflow label says blocked, which somebody set deliberately: ADE never overwrites it", false
+	}
+	wantLabel := domain.WorkflowLabel(want, m.Labels)
+	mv := Move{Ref: it.Ref, Stage: it.Stage, From: it.Workflow, To: want}
+	has := false
+	for _, l := range it.Issue.Labels {
+		v, ok := facetValue(wf.Pattern, l)
+		switch {
+		case !ok:
+		case strings.EqualFold(v, want):
+			has = true
+		default:
+			mv.Remove = append(mv.Remove, l)
+		}
+	}
+	if !has {
+		mv.Add = wantLabel
+	}
+	return mv, "", true
 }
 
 // Outcome is what SyncWorkflow did.
 type Outcome struct {
 	Applied []Move `json:"applied,omitempty"`
 	// Pending are moves left alone because sync is "ask" (the default); they
-	// are reported to the user, and ApplyMoves writes them if a caller agrees.
+	// are reported to the user; `ade issue stage` and Home's `m` apply one on request.
 	Pending []Move  `json:"pending,omitempty"`
 	Errs    []error `json:"-"`
 }
@@ -122,21 +156,35 @@ func SyncWorkflow(ctx context.Context, w forge.IssueWriter, a *app.App, m *confi
 		}
 		return out
 	}
-	out.Applied, out.Errs = ApplyMoves(ctx, w, a, m.Name, "ade:sync", moves)
+	out.Applied, out.Errs = ApplyMoves(ctx, w, a, m.Name, "ade:sync", "workflow sync", moves)
 	return out
 }
 
-// PendingAdvice says why a move was left alone and how to make it: nothing
-// applies a pending move later, so the label is set on the board by hand, or
-// the manifest switches to "auto".
+// PendingAdvice says how to make a move that was left alone: `ade issue stage`
+// or Home's `m` applies it (preview first), or the manifest switches to
+// "auto" to move labels on sync.
 func PendingAdvice(mv Move, labels config.Labels) string {
-	return fmt.Sprintf("labels.workflow.sync is %q: set %s on %s on the board, or set sync = \"auto\" in the manifest to move labels on sync",
-		labels.Workflow.SyncMode(), domain.WorkflowLabel(mv.To, labels), mv.Ref)
+	return fmt.Sprintf("labels.workflow.sync is %q: run `ade issue stage %s` (or press m on Home) to set %s, or set sync = \"auto\" in the manifest to move labels on sync",
+		labels.Workflow.SyncMode(), mv.Ref, domain.WorkflowLabel(mv.To, labels))
 }
 
-// ApplyMoves writes the moves, one audited update each, and publishes an event
-// for every move made. It carries on past a failing move.
-func ApplyMoves(ctx context.Context, w forge.IssueWriter, a *app.App, project, actor string, moves []Move) (applied []Move, errs []error) {
+// Writes names the label changes of the move ("add workflow::in review,
+// remove workflow::in progress").
+func (mv Move) Writes() string {
+	var parts []string
+	if mv.Add != "" {
+		parts = append(parts, "add "+mv.Add)
+	}
+	if len(mv.Remove) > 0 {
+		parts = append(parts, "remove "+strings.Join(mv.Remove, ", "))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// ApplyMoves writes the moves, one audited update each (reason says who asked:
+// "workflow sync" or "workflow stage"), and publishes an event for every move
+// made. It carries on past a failing move.
+func ApplyMoves(ctx context.Context, w forge.IssueWriter, a *app.App, project, actor, reason string, moves []Move) (applied []Move, errs []error) {
 	for _, mv := range moves {
 		var add []string
 		if mv.Add != "" {
@@ -145,7 +193,7 @@ func ApplyMoves(ctx context.Context, w forge.IssueWriter, a *app.App, project, a
 		err := w.SetLabels(ctx, mv.Ref, add, mv.Remove)
 		ent := audit.Entry{
 			Actor: actor, Action: "forge.issue.labels", Target: mv.Ref.String(), Item: mv.Ref.String(), Project: project,
-			Params:  map[string]any{"add": add, "remove": mv.Remove, "reason": "workflow sync", "stage": mv.Stage.String()},
+			Params:  map[string]any{"add": add, "remove": mv.Remove, "reason": reason, "stage": mv.Stage.String()},
 			Outcome: "ok",
 		}
 		if err != nil {

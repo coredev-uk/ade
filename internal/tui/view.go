@@ -46,7 +46,7 @@ func (m model) render() string {
 		layers = append(layers, lipgloss.NewLayer(fit(m.g, d, dw, h-2)).X(w-dw).Y(1).Z(1))
 	}
 	mrDialog := m.mr != nil && (m.mr.modal != nil || m.help)
-	if ts := m.nc.toastStack(m.g, toastWidth(w), h); ts != "" && !m.nc.open && !m.help && m.agt == nil && m.ait == nil && m.sw == nil && m.cl == nil && m.nt == nil && m.ne == nil && m.wt == nil && m.sm == nil && m.cm == nil && m.hs.pal == nil && !m.agileAsking() && !mrDialog { // a dialog owns the screen: toasts must not cover its keys
+	if ts := m.nc.toastStack(m.g, toastWidth(w), h); ts != "" && !m.nc.open && !m.help && m.agt == nil && m.ait == nil && m.sw == nil && m.cl == nil && m.nt == nil && m.ne == nil && m.wt == nil && m.sm == nil && m.act == nil && m.cm == nil && m.hs.pal == nil && !m.agileAsking() && !mrDialog { // a dialog owns the screen: toasts must not cover its keys
 		layers = append(layers, lipgloss.NewLayer(ts).X(w-lipgloss.Width(ts)-1).Y(max(1, h-1-lipgloss.Height(ts))).Z(3))
 	}
 	switch {
@@ -75,6 +75,9 @@ func (m model) render() string {
 		layers = append(layers, l)
 	}
 	if l := m.sprintOverlayLayer(w, h); l != nil {
+		layers = append(layers, l)
+	}
+	if l := m.actionOverlayLayer(w, h); l != nil {
 		layers = append(layers, l)
 	}
 	if l := m.paletteOverlayLayer(w, h); l != nil {
@@ -191,7 +194,7 @@ func (m model) footer(w int) string {
 	switch {
 	case m.ne != nil:
 		return m.noteEditFooter(w)
-	case m.hs.pal != nil, m.sm != nil, m.nt != nil, m.wt != nil, m.cl != nil, m.ait != nil, m.cm != nil, m.agileAsking():
+	case m.hs.pal != nil, m.sm != nil, m.act != nil, m.nt != nil, m.wt != nil, m.cl != nil, m.ait != nil, m.cm != nil, m.agileAsking():
 		return "" // the dialog carries its own key row
 	case m.agt != nil:
 		return " " + keys("esc", "back/close", "ctrl+c", "quit") + stFaint.Render("   the agent dialog has its own keys")
@@ -599,7 +602,7 @@ func helpGroupsAll(full bool) []helpGroup {
 				{"a A", "agent runs for the item; all runs"},
 				{"w v", "open workspace (zellij); VS Code workspace of all repos"},
 				{"y o", "copy link or path; browser"},
-				{"n N = r", "edit notes; dated note; weight; restart services"},
+				{"n N = m r", "edit notes; dated note; weight; label move; restart services"},
 			}},
 			{"Pages", [][2]string{
 				{"S V", "standup; sprint retro"},
@@ -641,6 +644,7 @@ func helpGroupsAll(full bool) []helpGroup {
 			{"N", "add a dated note: what blocks the item or what you did last (a leading ! or tab marks it blocked; local only)"},
 			{"=", "set weight (shown before it is written; audited)"},
 			{">", "move to the next sprint, child issues following (shown before it is written; audited)"},
+			{"m", "move the workflow label to match the stage, when the preview says it is behind (shown before it is written; audited; what `ade issue stage` does)"},
 			{"r", "restart blocked services of the item; otherwise refresh"},
 		}},
 		{"Pages", [][2]string{

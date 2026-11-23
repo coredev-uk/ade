@@ -53,6 +53,7 @@ var agentRefused = map[string]string{
 	"issue move":   "writes to the forge",
 	"issue child":  "creates an issue on the forge",
 	"issue assign": "writes to the forge",
+	"issue stage":  "writes to the forge",
 
 	"start": "creates issues, branches and merge requests on the forge",
 
