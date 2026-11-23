@@ -148,7 +148,7 @@ func (m model) mrStrip(w int) string {
 func (m model) mrTabs(w int) string {
 	p := m.mr
 	d := p.data
-	var parts []string
+	var parts, bare, nums []string // the bar whole, without the other tabs' badges, with the other tabs as their jump numbers
 	for t := range tabCount {
 		name := t.title()
 		badge := ""
@@ -174,12 +174,22 @@ func (m model) mrTabs(w int) string {
 			}
 		}
 		if t == p.tab {
-			parts = append(parts, stBold.Render("["+name)+badge+stBold.Render("]"))
+			cur := stBold.Render("["+name) + badge + stBold.Render("]")
+			parts, bare, nums = append(parts, cur), append(bare, cur), append(nums, cur)
 		} else {
 			parts = append(parts, " "+stFaint.Render(name)+badge+" ")
+			bare = append(bare, " "+stFaint.Render(name)+" ")
+			nums = append(nums, " "+stFaint.Render(fmt.Sprint(int(t)+1))+" ")
 		}
 	}
-	return " " + ansi.Truncate(strings.Join(parts, ""), w-2, m.g.Ell)
+	// A bar too wide for the screen gives up the other tabs' badges, then their
+	// names (1-6 jump to a tab), before anything is cut mid-word.
+	for _, ps := range [][]string{parts, bare, nums} {
+		if line := " " + strings.Join(ps, ""); lipgloss.Width(line) <= w-1 {
+			return line
+		}
+	}
+	return " " + ansi.Truncate(strings.Join(nums, ""), w-2, m.g.Ell)
 }
 
 func (m model) mrRule(w int) string {

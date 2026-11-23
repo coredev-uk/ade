@@ -215,7 +215,7 @@ func TestHelpListsEveryHomeKey(t *testing.T) {
 		}
 	}
 	for _, size := range [][2]int{{80, 24}, {76, 24}} {
-		d := helpView(size[0], size[1], unicodeGlyphs)
+		d := helpView(size[0], size[1], unicodeGlyphs, 0)
 		if got := lipgloss.Height(d); got > size[1]-2 {
 			t.Errorf("help at %dx%d is %d rows", size[0], size[1], got)
 		}
