@@ -46,14 +46,14 @@ func (m model) render() string {
 		layers = append(layers, lipgloss.NewLayer(fit(m.g, d, dw, h-2)).X(w-dw).Y(1).Z(1))
 	}
 	mrDialog := m.mr != nil && (m.mr.modal != nil || m.help)
-	if ts := m.nc.toastStack(m.g, toastWidth(w), h); ts != "" && !m.nc.open && !m.help && m.agt == nil && m.ait == nil && m.sw == nil && m.cl == nil && m.nt == nil && m.ne == nil && m.wt == nil && m.sm == nil && m.act == nil && m.cm == nil && m.hs.pal == nil && !mrDialog { // a dialog owns the screen: toasts must not cover its keys
+	if ts := m.nc.toastStack(m.g, toastWidth(w), h); ts != "" && !m.nc.open && !m.help && m.agt == nil && m.ait == nil && m.sw == nil && m.cl == nil && m.nt == nil && m.ne == nil && m.wt == nil && m.sm == nil && m.act == nil && m.cm == nil && m.hs.pal == nil && !m.agileAsking() && !mrDialog { // a dialog owns the screen: toasts must not cover its keys
 		layers = append(layers, lipgloss.NewLayer(ts).X(w-lipgloss.Width(ts)-1).Y(max(1, h-1-lipgloss.Height(ts))).Z(3))
 	}
 	switch {
 	case m.help && m.mr != nil:
 		layers = append(layers, blankFieldLayer(m.g, mrHelpView(helpWidth(w, true), h, m.g, m.aiOn(), m.helpTop), w, h))
 	case m.help:
-		d := helpView(helpWidth(w, false), h, m.g, m.helpTop)
+		d := helpView(helpWidth(w, false), h, m.g, m.aiOn(), m.helpTop)
 		top := max(0, (h-2-lipgloss.Height(d))/2)
 		layers = append(layers, blankFieldLayer(m.g, strings.Repeat("\n", top)+d, w, h))
 	}
@@ -88,6 +88,9 @@ func (m model) render() string {
 	}
 	if l := m.aiTextOverlayLayer(w, h); l != nil {
 		layers = append(layers, l)
+	}
+	if o := m.agileAskOverlay(w); o != "" {
+		layers = append(layers, blankFieldLayer(m.g, o, w, h))
 	}
 	if l := m.commentsOverlayLayer(w, h); l != nil {
 		layers = append(layers, l)
@@ -191,7 +194,7 @@ func (m model) footer(w int) string {
 	switch {
 	case m.ne != nil:
 		return m.noteEditFooter(w)
-	case m.hs.pal != nil, m.sm != nil, m.act != nil, m.nt != nil, m.wt != nil, m.cl != nil, m.ait != nil, m.cm != nil:
+	case m.hs.pal != nil, m.sm != nil, m.act != nil, m.nt != nil, m.wt != nil, m.cl != nil, m.ait != nil, m.cm != nil, m.agileAsking():
 		return "" // the dialog carries its own key row
 	case m.agt != nil:
 		return " " + keys("esc", "back/close", "ctrl+c", "quit") + stFaint.Render("   the agent dialog has its own keys")
@@ -565,7 +568,25 @@ type helpGroup struct {
 // helpGroups lists every Home and Worktrees key. full gives each key its own
 // row; the tight form pairs related keys so the dialog still fits a short
 // terminal.
-func helpGroups(full bool) []helpGroup {
+func helpGroups(full, aiOn bool) []helpGroup {
+	groups := helpGroupsAll(full)
+	if aiOn {
+		return groups
+	}
+	// Without AI the keys that only drive a model are not listed.
+	for gi := range groups {
+		rows := groups[gi].rows[:0:0]
+		for _, r := range groups[gi].rows {
+			if r[0] != "R" {
+				rows = append(rows, r)
+			}
+		}
+		groups[gi].rows = rows
+	}
+	return groups
+}
+
+func helpGroupsAll(full bool) []helpGroup {
 	if !full {
 		return []helpGroup{
 			{"Move", [][2]string{
@@ -643,18 +664,19 @@ func helpGroups(full bool) []helpGroup {
 }
 
 // helpBody is the Home help's rows (the title first): one key per row, or
-// paired keys where that would not fit the screen.
-func helpBody(w, h int, g glyphs) []string {
+// paired keys where that would not fit the screen. Keys that only drive a
+// model are left out while AI is unavailable.
+func helpBody(w, h int, g glyphs, aiOn bool) []string {
 	render := func(full bool) []string {
 		inner := w - 4
 		kw := 8 // the key column grows for the paired keys of the tight form, never cutting one
-		for _, grp := range helpGroups(full) {
+		for _, grp := range helpGroups(full, aiOn) {
 			for _, r := range grp.rows {
 				kw = max(kw, lipgloss.Width(r[0])+1)
 			}
 		}
 		l := []string{stBold.Render("Keys")}
-		for _, grp := range helpGroups(full) {
+		for _, grp := range helpGroups(full, aiOn) {
 			l = append(l, section(grp.title, "", inner, g))
 			for _, r := range grp.rows {
 				desc := ansi.Wrap(r[1], max(10, inner-1-kw), " ")
@@ -678,9 +700,9 @@ func helpBody(w, h int, g glyphs) []string {
 
 // helpView is the Home help dialog. Where even the paired form is taller than
 // the screen, the keys scroll (j/k) under the title.
-func helpView(w, h int, g glyphs, top int) string {
+func helpView(w, h int, g glyphs, aiOn bool, top int) string {
 	return lipgloss.NewStyle().Border(g.Border).BorderForeground(lipgloss.Color("#666666")).
-		Padding(0, 1).Width(w).Render(strings.Join(scrollBody(g, helpBody(w, h, g), 1, h, top), "\n"))
+		Padding(0, 1).Width(w).Render(strings.Join(scrollBody(g, helpBody(w, h, g, aiOn), 1, h, top), "\n"))
 }
 
 // --- helpers ---------------------------------------------------------------------

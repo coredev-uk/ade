@@ -374,8 +374,10 @@ func TestCostCapKillsTheProcess(t *testing.T) {
 	if _, err := os.Stat(survived); err == nil {
 		t.Error("the agent process outlived the kill")
 	}
-	if len(e.auditEntries("budget.stop")) != 1 {
-		t.Error("a cap stop must leave a budget.stop audit entry")
+	// The run's own cap says nothing about the day's budget: it must not
+	// pause automatic AI the way a daily cap does.
+	if n := len(e.auditEntries("budget.stop")); n != 0 {
+		t.Errorf("a run-cap stop left %d budget.stop entries", n)
 	}
 	var failedEv bool
 	for _, ev := range e.drain() {
@@ -561,9 +563,12 @@ func TestAddressDraftsRepliesNeverPosts(t *testing.T) {
 	if line.Path != "main.go" || line.Line != 12 || line.Source != review.SourceAgent || line.State != review.StatePending {
 		t.Errorf("a thread's reply anchors at the thread's line, pending: %+v", line)
 	}
-	overview, ok := by["Re: why not inline?\n\nKept as is: needed by callers."]
-	if !ok || !overview.Overview() || overview.Selected() {
-		t.Errorf("a thread without a position becomes a pending overview draft naming the thread: %+v", ds)
+	overview, ok := by["Kept as is: needed by callers."]
+	if !ok || overview.InReplyTo != "d2" || overview.Selected() {
+		t.Errorf("a reply to a thread without a position answers that thread, pending: %+v", ds)
+	}
+	if line.InReplyTo != "d1" {
+		t.Errorf("a positioned reply keeps its thread's id too: %+v", line)
 	}
 	for _, d := range ds {
 		if d.Selected() || d.Published || d.RemoteID != 0 {

@@ -65,6 +65,11 @@ type Draft struct {
 	Severity Severity `json:"severity,omitempty"`
 	Source   Source   `json:"source"`
 	State    State    `json:"state"`
+	// InReplyTo is the discussion (thread) id this draft answers: Submit
+	// posts it as a reply in that thread, not as a new comment. Path and Line
+	// then only say where the thread is; they are not re-anchored on the
+	// diff. Empty for a comment of its own.
+	InReplyTo string `json:"in_reply_to,omitempty"`
 	// RemoteID is the draft note this draft became on the forge, once uploaded;
 	// Submit uses it to resume after a failure without duplicating comments.
 	RemoteID int64 `json:"remote_id,omitempty"`

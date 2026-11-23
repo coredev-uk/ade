@@ -8,6 +8,7 @@ import (
 
 	"github.com/coredev-uk/ade/internal/ai"
 	"github.com/coredev-uk/ade/internal/app"
+	"github.com/coredev-uk/ade/internal/budget"
 	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/git"
@@ -28,6 +29,7 @@ func ForApp(a *app.App) (*Manager, error) {
 	}
 	m := NewManager(a.Config, NewStore(st, records.New(a.RecordsDir), a.RecordsDir), a.Audit, a.Bus)
 	if svc, err := ai.NewService(a); err == nil {
+		svc.SprintStart = budget.SprintStart(a) // the sprint cap bounds a run too
 		m.AI = svc
 	}
 	m.Reviews = review.NewStore(st)

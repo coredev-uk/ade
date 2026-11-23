@@ -72,6 +72,8 @@ func (m model) agentOverlay(w, h int) string {
 		l, hint = m.agConfirmView(d, inner)
 	case agDiscard:
 		l, hint = m.agDiscardView(d, inner)
+	case agStartConfirm:
+		l, hint = m.agStartConfirmView(d, inner)
 	}
 	if d.busy != "" {
 		l = append(l, "", stFaint.Render(m.g.Sync+" "+d.busy+m.g.Ell))
@@ -87,7 +89,10 @@ func (m model) agListView(d *agentDialog, inner, h int) ([]string, string) {
 	g := m.g
 	var l []string
 	hint := keys("enter", "open", "x", "cancel run", "esc", "close")
-	if d.item != nil {
+	if d.item != nil && d.aiOff {
+		// No start rows without AI: one line says why, the runs below still work.
+		l = append(l, ansi.Wrap(stFaint.Render(g.Info+" "+agAIOffReason), inner, ""), "")
+	} else if d.item != nil {
 		l = append(l, section("Start", "work in the item's worktree", inner, g))
 		if len(d.repos) > 1 {
 			l = append(l, ansi.Truncate(stBold.Render("[ ]")+" repo                "+d.repoLine(), inner, m.g.Ell))
@@ -167,9 +172,13 @@ func (m model) agPlanView(d *agentDialog, inner, h int) ([]string, string) {
 	g := m.g
 	r := d.cur
 	guide := fmt.Sprintf("%s %s $%.4f", r.ID, g.Sep, r.CostUSD)
-	if r.Approved {
+	intact := d.mgr.PlanIntact(r)
+	switch {
+	case r.Approved && intact:
 		guide += " " + g.Sep + " approved"
-	} else {
+	case r.Approved:
+		guide += " " + g.Sep + " edited since you approved it"
+	default:
 		guide += " " + g.Sep + " awaiting your approval"
 	}
 	l := []string{section("Plan", guide, inner, g), ""}
@@ -183,12 +192,14 @@ func (m model) agPlanView(d *agentDialog, inner, h int) ([]string, string) {
 		l = append(l, stFaint.Render(g.Vertical+fmt.Sprintf(m.g.T(" … %d more lines (j scrolls)"), more)))
 	}
 	l = append(l, "", stFaint.Render(fmt.Sprintf(m.g.T("worktree %s · %s · cap $%.2f"), m.g.T("…/")+filepath.Base(r.Worktree), r.Driver, r.CapUSD)))
+	if r.Approved && intact {
+		return l, keys("enter", "run it in the worktree", "i", "run on a -ai branch", "e", "edit plan", "j/k", "scroll", "x", "cancel run", "esc", "back")
+	}
 	enter := "approve"
 	if r.Approved {
-		enter = "run it in the worktree"
-		return l, keys("enter", enter, "i", "run on a -ai branch", "e", "edit plan", "j/k", "scroll", "x", "discard", "esc", "back")
+		enter = "approve the edited plan"
 	}
-	return l, keys("enter", enter, "e", "edit plan", "j/k", "scroll", "x", "discard", "esc", "back")
+	return l, keys("enter", enter, "e", "edit plan", "j/k", "scroll", "x", "cancel run", "esc", "back")
 }
 
 func (m model) agDetailView(d *agentDialog, inner, h int) ([]string, string) {
@@ -242,8 +253,10 @@ func (m model) agDetailView(d *agentDialog, inner, h int) ([]string, string) {
 	switch {
 	case r.State == agent.StateReview && r.Isolated():
 		hint = keys("l", "lazygit", "a", "accept", "D", "discard", "esc", "back")
-	case r.State == agent.StateReview:
+	case r.State == agent.StateReview && r.AcceptedAt.IsZero():
 		hint = keys("l", "lazygit", "P", "push", "x", "discard", "esc", "back")
+	case r.State == agent.StateReview:
+		hint = keys("l", "lazygit", "P", "push", "x", "cancel (changes stay)", "esc", "back")
 	case r.Isolated():
 		hint = keys("l", "lazygit", "D", "discard -ai branch", "esc", "back")
 	}
@@ -260,14 +273,29 @@ func (m model) agConfirmView(d *agentDialog, inner int) ([]string, string) {
 		l = append(l, fmt.Sprintf(m.g.T("%s · +%d -%d"), countWord(len(ds.Files), "file"), ds.Added(), ds.Removed()))
 	}
 	l = append(l, "")
-	for _, ln := range wrap("Commits everything in the worktree as the configured git user, marked (ade\x00agent), then pushes "+stBold.Render(r.Branch)+". The merge request updates by itself.", inner) {
+	text := "Commits everything in the worktree as the configured git user, marked (ade\x00agent), then pushes " + stBold.Render(r.Branch) + ". The merge request updates by itself."
+	if !r.AcceptedAt.IsZero() {
+		text = "Pushes " + stBold.Render(r.Branch) + " as it is: the agent's work is committed already, so nothing is committed now and your own uncommitted files in the worktree are not touched. The merge request updates by itself."
+	}
+	for _, ln := range wrap(text, inner) {
 		l = append(l, strings.ReplaceAll(ln, "\x00", " "))
+	}
+	if !r.AcceptedAt.IsZero() {
+		return l, keys("y", "push", "n", "back")
 	}
 	return l, keys("y", "commit and push", "n", "back")
 }
 
 func (m model) agDiscardView(d *agentDialog, inner int) ([]string, string) {
 	g, r := m.g, d.cur
+	if !r.Isolated() {
+		l := []string{section("Discard", "the agent's changes in the worktree", inner, g), ""}
+		if ds := d.diff; ds != nil {
+			l = append(l, fmt.Sprintf(m.g.T("%s · +%d -%d"), countWord(len(ds.Files), "file"), ds.Added(), ds.Removed()), "")
+		}
+		l = append(l, wrap("Puts "+stBold.Render(r.Worktree)+" back to the commit the run started from: tracked files are reset and untracked files removed (ignored files stay). Refused if "+stBold.Render(r.Branch)+" has moved, or any file differs from what the agent left (it then lists them: they are yours).", inner)...)
+		return l, keys("y", "discard", "n", "back")
+	}
 	l := []string{section("Discard", "the -ai branch", inner, g), ""}
 	if ds := d.diff; ds != nil {
 		l = append(l, fmt.Sprintf(m.g.T("%s · +%d -%d"), countWord(len(ds.Files), "file"), ds.Added(), ds.Removed()))
@@ -275,6 +303,46 @@ func (m model) agDiscardView(d *agentDialog, inner int) ([]string, string) {
 	}
 	l = append(l, wrap("Removes the worktree "+stBold.Render(r.AIWorktree)+" and the branch "+stBold.Render(r.AIBranch)+" with everything the agent left in them. "+stBold.Render(r.Branch)+" and its worktree are not touched.", inner)...)
 	return l, keys("y", "discard", "n", "back")
+}
+
+// agStartConfirmView is the question before a start: what will be sent, where
+// it goes and what it may cost. Nothing has been created or sent yet.
+func (m model) agStartConfirmView(d *agentDialog, inner int) ([]string, string) {
+	g, p := m.g, d.pend
+	if p == nil {
+		return nil, keys("esc", "back")
+	}
+	var l []string
+	switch {
+	case p.runID != "":
+		l = append(l, section("Implement", "an uncapped codex run", inner, g), "")
+	case p.kind == agent.KindAddress:
+		l = append(l, section("Address comments", p.t.MR.String(), inner, g), "")
+		l = append(l, wrap(fmt.Sprintf(m.g.T("%d unresolved threads go to the agent. Their text was written by other people, and the agent can run commands in %s."), len(p.c.Threads), stBold.Render(filepath.Base(p.t.Worktree))), inner)...)
+		l = append(l, "")
+		for _, th := range p.c.Threads {
+			loc, who, text := "overview", "", ""
+			if th.Position != nil && th.Position.Path != "" {
+				loc = th.Position.Path
+			}
+			if len(th.Notes) > 0 {
+				who, text = th.Notes[0].Author.Username, strings.Join(strings.Fields(th.Notes[0].Body), " ")
+			}
+			l = append(l, ansi.Truncate(stBold.Render(loc)+" "+stFaint.Render(who+": "+text), inner, m.g.Ell))
+		}
+	default:
+		l = append(l, section("Plan", p.t.Tracker.String(), inner, g), "")
+	}
+	if p.pf.Model != "" {
+		l = append(l, "", stFaint.Render(ansi.Truncate(p.pf.Describe(), inner, m.g.Ell)))
+	}
+	for _, why := range p.pf.Confirm {
+		l = append(l, stWarn.Render(ansi.Wrap(g.Warn+" "+why, inner, "")))
+	}
+	if p.uncapped {
+		l = append(l, stWarn.Render(ansi.Wrap(g.Warn+" codex reports cost only when a turn ends, so a cap cannot stop it mid-edit: the run goes ahead uncapped.", inner, "")))
+	}
+	return l, keys("y", "send and start", "n", "back")
 }
 
 // agentOverlayLayer places the dialog at the top, centred in a blank field

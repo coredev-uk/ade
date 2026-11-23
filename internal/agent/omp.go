@@ -62,6 +62,7 @@ func (o *ompParser) Feed(line []byte) {
 		Message  struct {
 			Role         string `json:"role"`
 			Model        string `json:"model"`
+			Provider     string `json:"provider"`
 			StopReason   string `json:"stopReason"`
 			ErrorMessage string `json:"errorMessage"`
 			Content      []struct {
@@ -100,6 +101,9 @@ func (o *ompParser) Feed(line []byte) {
 		o.p.CostUSD += m.Usage.Cost.Total
 		if m.Model != "" {
 			o.p.Model = m.Model
+		}
+		if m.Provider != "" {
+			o.p.Provider = m.Provider
 		}
 		var text strings.Builder
 		for _, b := range m.Content {

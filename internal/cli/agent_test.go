@@ -3,14 +3,45 @@ package cli
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/coredev-uk/ade/internal/agent"
+	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/forge"
 )
+
+// gitWorktree makes a repo with a linked worktree on branch 7-x, the way start
+// work leaves one, and returns the worktree.
+func gitWorktree(t *testing.T) string {
+	t.Helper()
+	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+	t.Setenv("GIT_CONFIG_SYSTEM", "/dev/null")
+	tmp := t.TempDir()
+	run := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	main := filepath.Join(tmp, "api")
+	run(tmp, "init", "-q", "-b", "main", main)
+	run(main, "config", "user.name", "Test User")
+	run(main, "config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(main, "README.md"), []byte("api\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run(main, "add", ".")
+	run(main, "commit", "-q", "-m", "init")
+	wt := filepath.Join(tmp, "7-x")
+	run(main, "worktree", "add", "-q", "-b", "7-x", wt)
+	return wt
+}
 
 // seedRun stores a run the way `ade agent plan` leaves it, without any agent.
 func (e *cliEnv) seedRun(id string, st agent.State, cost float64) (agent.Run, *agent.Store) {
@@ -109,7 +140,19 @@ func TestAgentPlanNeedsARegisteredProject(t *testing.T) {
 func TestAgentRunBackgroundStartsADetachedAIBranchRun(t *testing.T) {
 	e := newCLIEnv(t)
 	r, st := e.seedRun("20261111-100000-aaa", agent.StateAwaiting, 0.01)
+	// The checks that can fail up front run before the child starts: a real
+	// worktree, an AI profile, and an agent CLI on the path.
 	dir := t.TempDir()
+	omp := filepath.Join(dir, "omp")
+	if err := os.WriteFile(omp, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	e.app.Config.AI.Profile = "t"
+	e.app.Config.AI.Profiles = map[string]config.AIProfile{"t": {Driver: "omp", Command: omp, Models: map[string]string{"implement": "m"}}}
+	r.Worktree, r.Profile = gitWorktree(t), "t"
+	if err := st.Save(r); err != nil {
+		t.Fatal(err)
+	}
 	args := filepath.Join(dir, "args")
 	stub := filepath.Join(dir, "ade")
 	if err := os.WriteFile(stub, []byte("#!/bin/sh\necho \"$@\" > "+args+"\n"), 0o700); err != nil {
@@ -146,7 +189,7 @@ func TestAgentRunBackgroundStartsADetachedAIBranchRun(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if got != "agent run "+r.ID+" --ai-branch" {
+	if got != "agent run "+r.ID+" --ai-branch --detached" {
 		t.Fatalf("child args = %q", got)
 	}
 	if _, err := os.Stat(filepath.Join(st.Dir(r), "background.log")); err != nil {
@@ -157,10 +200,13 @@ func TestAgentRunBackgroundStartsADetachedAIBranchRun(t *testing.T) {
 func TestAgentAcceptAndDiscardNeedAnAIBranchRun(t *testing.T) {
 	e := newCLIEnv(t)
 	_, st := e.seedRun("20261111-100000-aaa", agent.StateReview, 0.01)
-	for _, verb := range []string{"accept", "discard"} {
-		if _, err := e.agent(verb, "aaa"); err == nil || !strings.Contains(err.Error(), "no -ai branch") {
-			t.Errorf("%s on a run without a -ai branch: %v", verb, err)
-		}
+	if _, err := e.agent("accept", "aaa"); err == nil || !strings.Contains(err.Error(), "no -ai branch") {
+		t.Errorf("accept on a run without a -ai branch: %v", err)
+	}
+	// Discard on a worktree run is a restore: a run that changed nothing has
+	// nothing to discard.
+	if _, err := e.agent("discard", "aaa"); err == nil || !strings.Contains(err.Error(), "nothing to discard") {
+		t.Errorf("discard on a run that changed nothing: %v", err)
 	}
 	// A finished run that still holds a -ai branch stays in the default list.
 	r, _ := st.Get("aaa")
