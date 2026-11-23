@@ -52,6 +52,10 @@ func (s *Server) graphql(w http.ResponseWriter, r *http.Request) {
 		s.setIterationMutation(w, req.Variables)
 		return
 	}
+	if strings.Contains(req.Query, "mergeRequestReviewerRereview") {
+		s.reviewerRereviewMutation(w, req.Variables)
+		return
+	}
 	if strings.Contains(req.Query, "issueSetWeight") {
 		s.setWeightMutation(w, req.Variables)
 		return

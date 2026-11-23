@@ -135,9 +135,13 @@ func (s *Server) updateMR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, hasDesc := p["description"]
+	_, hasReviewers := p["reviewer_ids"]
 	title := str(p, "title")
+	if hasReviewers && !s.setReviewerIDs(w, m, p) {
+		return
+	}
 	event := str(p, "state_event")
-	if title == "" && !hasDesc && event == "" {
+	if title == "" && !hasDesc && event == "" && !hasReviewers {
 		badRequest(w, "title is empty")
 		return
 	}

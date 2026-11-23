@@ -50,6 +50,7 @@ func (m model) mrEntries() []palEntry {
 		any("Update the branch from its target (rebase)", "u", "ade mr rebase"),
 		any("Edit the MR description by hand", "E", "ade mr describe"),
 		any("Submit the review as one batch", "S", "ade review submit"),
+		any("Ask for a review again", "v", "ade mr request-review"),
 		any("Agents for this item", "P", "ade agent"),
 		any("Open this MR's workspace", "w", "ade ws up"),
 		any("Push this MR's branch", "p", "ade push"),
