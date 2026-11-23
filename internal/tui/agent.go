@@ -282,26 +282,60 @@ func (m model) agAIOff() string {
 // agentSteps counts the agent steps in flight (plan, implement, address): quitting
 // the dashboard cancels them and waits for each to write its state, so a run is
 // never left "running" by a closed dashboard.
-var agentSteps sync.WaitGroup
+var agentSteps stepCounter
+
+// stepCounter counts steps in flight. A step may begin while another goroutine
+// is already waiting (a sync.WaitGroup forbids that when its count is zero), so
+// the count lives under a mutex; idle is closed when it drops back to zero.
+type stepCounter struct {
+	mu   sync.Mutex
+	n    int
+	idle chan struct{} // open while n > 0
+}
+
+func (c *stepCounter) begin() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.n == 0 {
+		c.idle = make(chan struct{})
+	}
+	c.n++
+}
+
+func (c *stepCounter) end() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.n--; c.n == 0 {
+		close(c.idle)
+	}
+}
+
+// wait blocks until no step is in flight, at most d.
+func (c *stepCounter) wait(d time.Duration) {
+	c.mu.Lock()
+	idle := c.idle
+	busy := c.n > 0
+	c.mu.Unlock()
+	if !busy {
+		return
+	}
+	select {
+	case <-idle:
+	case <-time.After(d):
+	}
+}
 
 // agGo runs an agent step as a command and counts it in agentSteps.
 func agGo(step func() tea.Msg) tea.Cmd {
 	return func() tea.Msg {
-		agentSteps.Add(1)
-		defer agentSteps.Done()
+		agentSteps.begin()
+		defer agentSteps.end()
 		return step()
 	}
 }
 
 // waitAgentSteps waits for the steps in flight to settle, at most d.
-func waitAgentSteps(d time.Duration) {
-	done := make(chan struct{})
-	go func() { agentSteps.Wait(); close(done) }()
-	select {
-	case <-done:
-	case <-time.After(d):
-	}
-}
+func waitAgentSteps(d time.Duration) { agentSteps.wait(d) }
 
 // --- update -------------------------------------------------------------------
 

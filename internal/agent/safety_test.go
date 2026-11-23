@@ -21,12 +21,13 @@ import (
 )
 
 // fakeCodex stands in for codex: it reports tokens per turn, and writes a file
-// when the sandbox lets it.
+// when the sandbox lets it. The events go out through printf '%s\n': dash's echo
+// (the /bin/sh of Debian and Ubuntu) expands the \n inside the JSON text.
 const fakeCodex = `#!/bin/sh
 cat >/dev/null
 case "$*" in *workspace-write*) echo "from codex" > hello.txt;; esac
-echo '{"type":"item.completed","item":{"type":"agent_message","text":"# Plan\n\n- add hello.txt"}}'
-echo '{"type":"turn.completed","usage":{"input_tokens":1000,"cached_input_tokens":0,"output_tokens":500}}'
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"# Plan\n\n- add hello.txt"}}'
+printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1000,"cached_input_tokens":0,"output_tokens":500}}'
 `
 
 // useCodex adds a codex profile (with a price, as codex needs one) and returns
