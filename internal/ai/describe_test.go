@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/coredev-uk/ade/internal/aimark"
 	"github.com/coredev-uk/ade/internal/forge"
 )
 
@@ -24,7 +25,7 @@ func describeInput(current string) DescribeInput {
 func TestDescribePromptHoldsTemplateCommitsDiffAndTheLinkLinesOnly(t *testing.T) {
 	j := DescribeJob("sandbox", describeInput("Old prose the model should not see.\n\nCloses grp/tracker#9\nSomething else"))
 	for _, want := range []string{
-		`Template "Default"`, "## Testing", "- Add the token bucket", "One bucket per tenant.", "- Expose Burst",
+		`source="MR template Default"`, "## Testing", "- Add the token bucket", "One bucket per tenant.", "- Expose Burst",
 		"+y", "Head: abc123", "Closes grp/tracker#9",
 	} {
 		if !strings.Contains(j.Prompt, want) {
@@ -69,15 +70,19 @@ func TestDescribeRefusedByACapSendsNothing(t *testing.T) {
 }
 
 func TestPrepareDescription(t *testing.T) {
+	mark := "\n\n" + aimark.Marker // every prepared description ends with the AI mark
 	for _, c := range []struct {
 		name, draft, current, want string
 	}{
-		{"plain", "## What\nx", "", "## What\nx"},
-		{"a wrapping code fence goes", "```markdown\n## What\nx\n```", "", "## What\nx"},
-		{"a fence inside stays", "## What\n```go\nx := 1\n```", "", "## What\n```go\nx := 1\n```"},
-		{"quick actions are stripped", "## What\nx\n/assign_reviewer @bob\n/label ~bug", "", "## What\nx"},
-		{"dropped links are put back", "## What\nx", "Closes grp/tracker#9\nParent: grp/tracker#3\nprose", "## What\nx\n\nCloses grp/tracker#9\nParent: grp/tracker#3"},
-		{"kept links are not doubled", "## What\nx\nCloses grp/tracker#9", "Closes grp/tracker#9", "## What\nx\nCloses grp/tracker#9"},
+		{"plain", "## What\nx", "", "## What\nx" + mark},
+		{"a wrapping code fence goes", "```markdown\n## What\nx\n```", "", "## What\nx" + mark},
+		{"a fence inside stays", "## What\n```go\nx := 1\n```", "", "## What\n```go\nx := 1\n```" + mark},
+		{"quick actions are stripped", "## What\nx\n/assign_reviewer @bob\n/label ~bug", "", "## What\nx" + mark},
+		{"actions outside any list are neutralised", "## What\nx\n/run_pipeline\n/spend_time 1h\n```\n/code\n```", "", "## What\nx\n\\/run_pipeline\n\\/spend_time 1h\n```\n/code\n```" + mark},
+		{"dropped links are put back", "## What\nx", "Closes grp/tracker#9\nParent: grp/tracker#3\nprose", "## What\nx\n\nCloses grp/tracker#9\nParent: grp/tracker#3" + mark},
+		{"a kept line that is a command is neutralised", "## What\nx", "/approve Closes grp/tracker#9", "## What\nx\n\n\\/approve Closes grp/tracker#9" + mark},
+		{"kept links are not doubled", "## What\nx\nCloses grp/tracker#9", "Closes grp/tracker#9", "## What\nx\nCloses grp/tracker#9" + mark},
+		{"the mark is not doubled", "## What\nx" + mark, "Closes grp/tracker#9" + mark, "## What\nx\n\nCloses grp/tracker#9" + mark},
 	} {
 		if got := PrepareDescription(c.draft, c.current); got != c.want {
 			t.Errorf("%s: got %q, want %q", c.name, got, c.want)

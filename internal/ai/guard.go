@@ -32,6 +32,13 @@ type Preflight struct {
 	Dest   string `json:"dest,omitempty"`
 	// Notes is true when the prompt carries the user's own notes on the item.
 	Notes bool `json:"includes_notes,omitempty"`
+	// EstimateOnly is true for omp, which takes no output cap from ADE: the
+	// estimate assumes the job's token limit but nothing enforces it. Only
+	// budget.call_usd (omp --max-cost) bounds an omp call.
+	EstimateOnly bool `json:"estimate_only,omitempty"`
+
+	// price is the price the estimate used; the call is booked at it.
+	price *config.Price
 
 	Spent Spent `json:"spent"`
 	// Headroom is what the provider says is left under its own cap
@@ -109,10 +116,14 @@ func capMessage(name, period string, spent, est, cap float64, key string) string
 func (pf Preflight) Describe() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s · %s · %s", pf.Profile, pf.Model, pf.Role)
+	out := fmt.Sprintf("≤%d", pf.OutTokens)
+	if pf.EstimateOnly {
+		out = fmt.Sprintf("~%d (omp sets no cap)", pf.OutTokens)
+	}
 	if pf.Priced {
-		fmt.Fprintf(&b, " · ~%d in / ≤%d out tokens · est $%.4f", pf.InTokens, pf.OutTokens, pf.EstimateUSD)
+		fmt.Fprintf(&b, " · ~%d in / %s out tokens · est $%.4f", pf.InTokens, out, pf.EstimateUSD)
 	} else {
-		fmt.Fprintf(&b, " · ~%d in / ≤%d out tokens · no price known", pf.InTokens, pf.OutTokens)
+		fmt.Fprintf(&b, " · ~%d in / %s out tokens · no price known", pf.InTokens, out)
 	}
 	if pf.Retry {
 		fmt.Fprintf(&b, " · asks again with double the cap if cut short (≤%d out in all)", 3*pf.OutTokens)

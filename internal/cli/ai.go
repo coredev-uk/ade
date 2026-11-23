@@ -178,6 +178,12 @@ func aiError(err error) error {
 	if _, ok := ai.AsStop(err); ok {
 		return withCode(exitBudgetStop, err)
 	}
+	switch {
+	case errors.Is(err, ai.ErrBadAnswer):
+		return fmt.Errorf("%w (an unusable answer is never cached: run it again; --refresh also skips a cached answer)", err)
+	case errors.Is(err, ai.ErrCutShortRecently):
+		return fmt.Errorf("%w (--refresh asks anyway)", err)
+	}
 	return err
 }
 
@@ -468,9 +474,12 @@ func newAIReplyCmd() *cobra.Command {
 	var o aiOpts
 	cmd := &cobra.Command{
 		Use:   "draft-reply <mr-ref> <discussion>",
-		Short: "Draft a short reply to a review thread (printed; post it with `ade mr reply`)",
+		Short: "Draft a short reply to a review thread (printed; post it with `ade mr reply --ai-drafted`)",
 		Long: "<discussion> is a discussion id, or any unique prefix of one. Without a match the\n" +
-			"threads of the MR are listed.",
+			"threads of the MR are listed. The reply is written in your voice as the MR's author or as a\n" +
+			"reviewer, whichever you are on this MR. Lines that would run as forge quick actions\n" +
+			"(\"/approve\") are neutralised in the printed text. Post it with `ade mr reply <ref>\n" +
+			"<discussion> <body> --ai-drafted`, which adds the \"Drafted with AI in ADE\" mark.",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ref, err := parseMRRef(args[0])
@@ -494,7 +503,11 @@ func newAIReplyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rj, err := e.withNotes(ai.ReplyJob(e.forgeName, mr, disc, diff), o, ai.NoteRefs(mr, issue)...)
+			role := ai.ReplyUnknown
+			if me, merr := e.be.Me(cmd.Context()); merr == nil {
+				role = ai.ReplyRoleFor(mr, me.Username)
+			}
+			rj, err := e.withNotes(ai.ReplyJob(e.forgeName, mr, disc, diff, role), o, ai.NoteRefs(mr, issue)...)
 			if err != nil {
 				return err
 			}
@@ -502,6 +515,7 @@ func newAIReplyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			out.Text = ai.ReplyDraft(out.Text)
 			return emit(cmd, out)
 		},
 	}
@@ -581,6 +595,18 @@ func newAIReviewCmd() *cobra.Command {
 			docs, err := readGuides(guides)
 			if err != nil {
 				return err
+			}
+			// The repo's own AGENTS.md (from the MR's target branch) is a guide
+			// too; a --guide of the same name replaces it.
+			if repo := ai.RepoGuides(cmd.Context(), e.be, mr); len(repo) > 0 {
+				if docs == nil {
+					docs = map[string]string{}
+				}
+				for name, text := range repo {
+					if _, ok := docs[name]; !ok {
+						docs[name] = text
+					}
+				}
 			}
 			rj, err := e.withNotes(ai.ReviewJob(e.forgeName, mr, diff, issue, threads, docs), o, ai.NoteRefs(mr, issue)...)
 			if err != nil {
@@ -730,6 +756,9 @@ explain's). A configured model the gateway does not list is flagged.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			a := appFrom(cmd)
+			if a.Config.AI.Mode == "off" {
+				return ai.ErrDisabled // off is off: no key is read, no provider is called
+			}
 			name, p, err := a.Config.Profile(profile)
 			if err != nil {
 				return err

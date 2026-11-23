@@ -39,8 +39,8 @@ func newAIDescribeCmd() *cobra.Command {
 			"else conventions.mr.template of the manifest, else \"Default\", else the only one), and drafts\n" +
 			"the description. The draft is printed; nothing is written without --apply. --apply shows\n" +
 			"what it will replace, asks (--yes or an interactive yes) and then updates only the\n" +
-			"description of the MR, audited as forge.mr.description. Quick actions are stripped from the\n" +
-			"draft and the lines linking work items (Closes #4, Parent ...) of the current description\n" +
+			"description of the MR, audited as forge.mr.description. Quick actions are stripped or\n" +
+			"neutralised in the draft, which ends with the \"Drafted with AI in ADE\" mark, and the lines linking work items (Closes #4, Parent ...) of the current description\n" +
 			"are kept. Your private notes are not sent: the description is posted to the forge. The\n" +
 			"result is cached by head SHA, commits and template, so an unchanged MR costs $0 the second\n" +
 			"time (--refresh buys a new draft). A draft the model did not finish is never applied.\n" +

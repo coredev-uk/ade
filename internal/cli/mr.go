@@ -300,9 +300,10 @@ func printDiff(w io.Writer, d forge.Diff) {
 // ---- reply / resolve -------------------------------------------------------
 
 func newMRReplyCmd() *cobra.Command {
-	return &cobra.Command{
+	var aiDrafted bool
+	cmd := &cobra.Command{
 		Use:   "reply <ref> <discussion> <body>",
-		Short: "Reply in a thread (body \"-\" reads stdin)",
+		Short: "Reply in a thread (body \"-\" reads stdin; --ai-drafted marks a reply `ade ai draft-reply` wrote)",
 		Args:  cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := openMR(cmd, args[0])
@@ -313,7 +314,11 @@ func newMRReplyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			n, err := c.w.Reply(cmd.Context(), c.ref, args[1], body)
+			post := c.w.Reply
+			if aiDrafted {
+				post = c.w.ReplyDrafted // neutralises quick actions and adds the AI mark
+			}
+			n, err := post(cmd.Context(), c.ref, args[1], body)
 			if err != nil {
 				return err
 			}
@@ -321,6 +326,8 @@ func newMRReplyCmd() *cobra.Command {
 				"%s in thread %s on %s", verb(c.dry, fmt.Sprintf("replied (note %d)", n.ID), "reply"), args[1], c.ref)
 		},
 	}
+	cmd.Flags().BoolVar(&aiDrafted, "ai-drafted", false, "the reply was drafted by a model: neutralise forge quick actions in it and end it with the \"Drafted with AI in ADE\" mark")
+	return cmd
 }
 
 func newMRResolveCmd() *cobra.Command {
