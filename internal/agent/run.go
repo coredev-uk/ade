@@ -121,8 +121,18 @@ type Run struct {
 	// PlanSHA is the hash of plan.md when it was approved: an edit after
 	// approval invalidates it.
 	PlanSHA string `json:"plan_sha,omitempty"`
-	// PID is the agent process of the running call (0 when none).
-	PID int `json:"pid,omitempty"`
+	// PID is the agent process of the running call (0 when none); PIDStart
+	// is its kernel start time, so a recycled pid is never mistaken for it.
+	PID      int    `json:"pid,omitempty"`
+	PIDStart uint64 `json:"pid_start,omitempty"`
+	// Owner is the ADE process driving the run while it is planning or
+	// running (OwnerStart its start time). A run whose owner is gone is
+	// dead: Reconcile marks it failed.
+	Owner      int    `json:"owner,omitempty"`
+	OwnerStart uint64 `json:"owner_start,omitempty"`
+	// Uncapped is the user's explicit yes to a codex implement/address run
+	// that cannot be stopped at the cost cap (codex reports cost per turn).
+	Uncapped bool `json:"uncapped,omitempty"`
 	// BaseSHA is the worktree HEAD before the first implementation pass.
 	BaseSHA string `json:"base_sha,omitempty"`
 	// Commits are the SHAs ADE committed on push.
@@ -188,6 +198,9 @@ func (r *Run) move(to State, now time.Time) error {
 		return fmt.Errorf("run %s is %s: it cannot become %s", r.ID, r.State, to)
 	}
 	r.State, r.Updated = to, now
+	if !to.Active() {
+		r.Owner, r.OwnerStart = 0, 0
+	}
 	return nil
 }
 

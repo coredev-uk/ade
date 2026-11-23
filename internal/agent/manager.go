@@ -14,7 +14,6 @@ import (
 
 	"github.com/coredev-uk/ade/internal/ai"
 	"github.com/coredev-uk/ade/internal/audit"
-	"github.com/coredev-uk/ade/internal/commitmsg"
 	"github.com/coredev-uk/ade/internal/commitprefix"
 	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/events"
@@ -43,6 +42,10 @@ type Manager struct {
 	// Open builds the agent driver; tests swap it. Default ForProfile.
 	Open func(p config.AIProfile, override string) (Driver, error)
 	Now  func() time.Time
+	// Detached is set in the background child (ade agent run --background):
+	// nobody watches its terminal, so a setup failure is raised as an
+	// agent.run.failed event instead of only reaching background.log.
+	Detached bool
 }
 
 // NewManager wires a Manager with production defaults.
@@ -61,6 +64,9 @@ type Request struct {
 	MaxUSD float64
 	// Assume skips the pre-flight confirmation (--yes).
 	Assume bool
+	// AllowUncapped is the user's explicit yes to a codex address run that
+	// cannot be stopped at the cost cap (--allow-uncapped).
+	AllowUncapped bool
 	// DryRun stops after the pre-flight: nothing is created or spent.
 	DryRun  bool
 	Confirm func(ai.Preflight) (bool, error)
@@ -105,6 +111,9 @@ func (m *Manager) New(ctx context.Context, req Request) (Run, ai.Preflight, erro
 	price := priceOf(p, model)
 	if drv.NeedsPrice() && capUSD > 0 && price == nil {
 		return Run{}, pf, fmt.Errorf("%s reports tokens, not cost, and no price is known for %q: add [ai.profiles.%s.prices.%q] so the run cap can be enforced", drv.Name(), model, name, model)
+	}
+	if err := m.checkUncapped(drv.Name(), req.Kind, capUSD, req.AllowUncapped); err != nil {
+		return Run{}, pf, err
 	}
 	var prompt string
 	switch req.Kind {
@@ -158,7 +167,7 @@ func (m *Manager) New(ctx context.Context, req Request) (Run, ai.Preflight, erro
 		ID: newID(now, rand.Uint32()), Kind: req.Kind, State: StateQueued,
 		Forge: t.Forge, Project: t.Project, Tracker: t.Tracker, Child: t.Child, Repo: t.Repo,
 		Worktree: t.Worktree, Branch: t.Branch, MR: t.MR, AddDirs: t.AddDirs,
-		Profile: name, Driver: drv.Name(), Model: model, CapUSD: capUSD,
+		Profile: name, Driver: drv.Name(), Model: model, CapUSD: capUSD, Uncapped: req.AllowUncapped,
 		Created: now, Updated: now,
 	}
 	if err := m.Store.Save(r); err != nil {
@@ -228,6 +237,12 @@ func (m *Manager) Plan(ctx context.Context, id string) (Run, error) {
 	}
 	if r.Kind != KindPlan {
 		return r, fmt.Errorf("run %s is an %s run: it has no plan", r.ID, r.Kind)
+	}
+	if err := m.aiOff(); err != nil {
+		return r, err
+	}
+	if err := m.roomLeft(); err != nil {
+		return r, err
 	}
 	if err := m.begin(&r, StatePlanning); err != nil {
 		return r, err
@@ -308,10 +323,41 @@ func (m *Manager) ImplementApart(ctx context.Context, id string) (Run, error) {
 	return m.implement(ctx, id, true)
 }
 
-// CanImplement reports why run id cannot be implemented right now (not
-// approved, plan edited since), without starting anything.
-func (m *Manager) CanImplement(id string) error {
-	_, _, err := m.approvedPlan(id)
+// CheckImplement reports why run id cannot be implemented right now (not
+// approved, plan edited since, AI off, a codex run that needs --allow-uncapped,
+// a missing agent CLI, a worktree or -ai branch that is in the way), without
+// starting anything: `--background` runs it before it detaches.
+func (m *Manager) CheckImplement(ctx context.Context, id string, apart bool) error {
+	r, _, err := m.approvedPlan(id)
+	if err != nil {
+		return err
+	}
+	if err := m.aiOff(); err != nil {
+		return err
+	}
+	if err := m.checkUncapped(r.Driver, KindRun, r.CapUSD, r.Uncapped); err != nil {
+		return err
+	}
+	_, p, err := m.Cfg.Profile(r.Profile)
+	if err != nil {
+		return err
+	}
+	drv, err := m.Open(p, r.Driver)
+	if err != nil {
+		return err
+	}
+	if err := Available(drv); err != nil {
+		return fmt.Errorf("agent driver unavailable: %w", err)
+	}
+	if err := checkWorktree(ctx, r.Worktree, r.Branch); err != nil {
+		return err
+	}
+	if apart && r.AIBranch == "" {
+		if r.BaseSHA != "" {
+			return fmt.Errorf("run %s already changed %s itself: it cannot move to a -ai branch", r.ID, r.Worktree)
+		}
+		_, _, err = apartTarget(ctx, r)
+	}
 	return err
 }
 
@@ -344,9 +390,11 @@ func (m *Manager) implement(ctx context.Context, id string, apart bool) (Run, er
 	if apart {
 		prepare = m.prepareApart
 	}
-	if err := prepare(ctx, &r); err != nil {
+	release, err := m.setup(ctx, &r, KindRun, prepare)
+	if err != nil {
 		return r, err
 	}
+	defer release()
 	if err := m.begin(&r, StateRunning); err != nil {
 		return r, err
 	}
@@ -364,6 +412,40 @@ func (m *Manager) implement(ctx context.Context, id string, apart bool) (Run, er
 	return m.toReview(ctx, r, true)
 }
 
+// setup is what every run that writes checks and claims before it starts: AI
+// is on, a codex run that cannot be capped was agreed to, no other run is in
+// the worktree, and the tree is ready. Nothing has changed state yet, so a
+// refusal leaves the run as it was.
+func (m *Manager) setup(ctx context.Context, r *Run, kind Kind, prepare func(context.Context, *Run) error) (release func(), err error) {
+	if err = m.aiOff(); err == nil {
+		if err = m.checkUncapped(r.Driver, kind, r.CapUSD, r.Uncapped); err == nil {
+			err = m.roomLeft()
+		}
+	}
+	if err == nil {
+		release, err = m.lockWorktree(r.Worktree, r.ID)
+	}
+	if err == nil {
+		if err = prepare(ctx, r); err != nil {
+			release()
+		}
+	}
+	if err != nil {
+		return nil, m.setupFailed(*r, err)
+	}
+	return release, nil
+}
+
+// setupFailed returns err; in a detached background run, where nobody reads
+// the terminal, it also raises the failure as an event (the run keeps its
+// state, so the user can fix the cause and run it again).
+func (m *Manager) setupFailed(r Run, err error) error {
+	if m.Detached {
+		m.emit(r, "failed", events.Error, false, fmt.Sprintf("agent run %s did not start: %s", r.ID, err), err.Error())
+	}
+	return err
+}
+
 // Address takes the MR's unresolved threads (from the run's context), lets
 // the agent change code, and drafts a reply for each into the review drafts:
 // pending, never posted without triage and submit.
@@ -375,9 +457,11 @@ func (m *Manager) Address(ctx context.Context, id string) (Run, error) {
 	if r.Kind != KindAddress {
 		return r, fmt.Errorf("run %s is a %s run: use plan, approve and run", r.ID, r.Kind)
 	}
-	if err := m.prepareWrite(ctx, &r); err != nil {
+	release, err := m.setup(ctx, &r, KindAddress, m.prepareWrite)
+	if err != nil {
 		return r, err
 	}
+	defer release()
 	if err := m.begin(&r, StateRunning); err != nil {
 		return r, err
 	}
@@ -436,16 +520,9 @@ func (m *Manager) prepareApart(ctx context.Context, r *Run) error {
 	if r.BaseSHA != "" {
 		return fmt.Errorf("run %s already changed %s itself: it cannot move to a -ai branch", r.ID, r.Worktree)
 	}
-	if r.Branch == "" {
-		return fmt.Errorf("run %s has no branch to base a -ai branch on", r.ID)
-	}
-	aiBranch := r.Branch + AIBranchSuffix
-	dir := filepath.Join(filepath.Dir(r.Worktree), git.BranchDir(aiBranch))
-	if branchExists(ctx, r.Worktree, aiBranch) {
-		return fmt.Errorf("branch %s exists already: accept or discard the run that made it (ade agent list), or delete the branch", aiBranch)
-	}
-	if _, err := os.Lstat(dir); err == nil {
-		return fmt.Errorf("%s exists already: remove it, or accept or discard the run that made it", dir)
+	aiBranch, dir, err := apartTarget(ctx, *r)
+	if err != nil {
+		return err
 	}
 	base, err := head(ctx, r.Worktree)
 	if err != nil {
@@ -460,6 +537,23 @@ func (m *Manager) prepareApart(ctx context.Context, r *Run) error {
 		Params: map[string]any{"run": r.ID, "branch": r.Branch, "ai_branch": aiBranch, "worktree": dir, "base": short(base)},
 	})
 	return m.Store.Save(*r)
+}
+
+// apartTarget names the -ai branch and worktree a run would work on, and
+// refuses when either is already there.
+func apartTarget(ctx context.Context, r Run) (aiBranch, dir string, err error) {
+	if r.Branch == "" {
+		return "", "", fmt.Errorf("run %s has no branch to base a -ai branch on", r.ID)
+	}
+	aiBranch = r.Branch + AIBranchSuffix
+	dir = filepath.Join(filepath.Dir(r.Worktree), git.BranchDir(aiBranch))
+	if branchExists(ctx, r.Worktree, aiBranch) {
+		return "", "", fmt.Errorf("branch %s exists already: accept or discard the run that made it (ade agent list), or delete the branch", aiBranch)
+	}
+	if _, err := os.Lstat(dir); err == nil {
+		return "", "", fmt.Errorf("%s exists already: remove it, or accept or discard the run that made it", dir)
+	}
+	return aiBranch, dir, nil
 }
 
 // toReview writes the diff summary and moves running → review. A run that
@@ -501,7 +595,10 @@ func (m *Manager) draftReplies(r *Run, c Context, text string) (int, error) {
 		if !ok {
 			continue // a reply to a thread the agent invented
 		}
-		d := review.Draft{Body: rp.Body, Source: review.SourceAgent, State: review.StatePending}
+		// A reply to the thread, not a new one: the discussion id goes with
+		// the draft and Submit answers in that thread. The position below is
+		// only what the triage shows.
+		d := review.Draft{Body: rp.Body, Source: review.SourceAgent, State: review.StatePending, InReplyTo: th.ID}
 		if pos := th.Position; pos != nil && pos.Path != "" {
 			d.Path, d.OldPath = pos.Path, pos.OldPath
 			switch {
@@ -512,9 +609,6 @@ func (m *Manager) draftReplies(r *Run, c Context, text string) (int, error) {
 			default:
 				d.Path = ""
 			}
-		}
-		if d.Path == "" {
-			d.Body = "Re: " + firstLine(th.Notes[0].Body) + "\n\n" + d.Body
 		}
 		d, err := review.Normalize(d, m.Now())
 		if err != nil {
@@ -532,14 +626,6 @@ func (m *Manager) draftReplies(r *Run, c Context, text string) (int, error) {
 	return n, nil
 }
 
-func firstLine(s string) string {
-	s, _, _ = strings.Cut(strings.TrimSpace(s), "\n")
-	if len(s) > 80 {
-		s = s[:80] + "…"
-	}
-	return s
-}
-
 // Diff summarises what the agent changed; patch adds the full unified diff.
 func (m *Manager) Diff(ctx context.Context, id string, patch bool) (DiffSummary, Run, error) {
 	r, err := m.Store.Get(id)
@@ -549,95 +635,14 @@ func (m *Manager) Diff(ctx context.Context, id string, patch bool) (DiffSummary,
 	if r.BaseSHA == "" {
 		return DiffSummary{}, r, fmt.Errorf("run %s has not changed anything yet (state %s)", r.ID, r.State)
 	}
+	if r.accepted() {
+		// The work is in the branch's commits; whatever else the tree holds
+		// is yours, not the agent's.
+		d, err := committedDiff(ctx, r.Worktree, r.BaseSHA, patch)
+		return d, r, err
+	}
 	d, err := worktreeDiff(ctx, r.WorkDir(), r.BaseSHA, patch)
 	return d, r, err
-}
-
-// PushOpts are the user's words for the commit.
-type PushOpts struct {
-	Message string // empty: the issue title and the run id
-}
-
-// Push is the user's approval of the diff made real: commit with the
-// synthetic author, push the branch, and the MR (which tracks the branch)
-// updates by itself. review → pushed.
-func (m *Manager) Push(ctx context.Context, id string, o PushOpts) (Run, error) {
-	r, err := m.Store.Get(id)
-	if err != nil {
-		return r, err
-	}
-	if r.State != StateReview {
-		return r, fmt.Errorf("run %s is %s: only a run in review can be pushed", r.ID, r.State)
-	}
-	if r.Isolated() {
-		return r, fmt.Errorf("run %s keeps its changes on %s: ade agent accept %s (or discard) before pushing", r.ID, r.AIBranch, r.ID)
-	}
-	if err := checkWorktree(ctx, r.Worktree, r.Branch); err != nil {
-		return r, err
-	}
-	d, err := worktreeDiff(ctx, r.Worktree, r.BaseSHA, false)
-	if err != nil {
-		return r, err
-	}
-	if d.Empty() {
-		return r, errNoChanges
-	}
-	if err := m.commitWork(ctx, &r, r.Worktree, o.Message); err != nil {
-		return r, m.pushFailed(r, "commit", err)
-	}
-	gc := git.Client{}
-	if m.GitFor != nil {
-		if gc, err = m.GitFor(ctx, r); err != nil {
-			return r, m.pushFailed(r, "credentials", err)
-		}
-	}
-	perr := pushBranch(ctx, gc, r.Worktree, r.Branch)
-	e := audit.Entry{Action: "git.push", Target: r.Worktree, Item: r.Item(), Params: map[string]any{"run": r.ID, "branch": r.Branch}}
-	if perr != nil {
-		e.Outcome, e.Error = "error", perr.Error()
-	}
-	m.audit(e)
-	if perr != nil {
-		return r, m.pushFailed(r, "push", perr)
-	}
-	r.Error = ""
-	if err := m.move(&r, StatePushed); err != nil {
-		return r, err
-	}
-	return r, nil
-}
-
-// commitWork commits everything in dir (the run's worktree, or its -ai
-// worktree) as the synthetic author, with the user's message or the default
-// one, and records the commit on the run. The MR's first commit carries the
-// commit prefix. Nothing to commit is not an error.
-func (m *Manager) commitWork(ctx context.Context, r *Run, dir, message string) error {
-	msg := message
-	if msg == "" {
-		msg = m.commitMessage(*r)
-	}
-	// Only the MR's first commit carries the prefix.
-	if commitprefix.FirstCommit(ctx, r.Worktree) {
-		prefix, _ := m.commitPrefix(ctx, *r)
-		msg = commitmsg.Apply(prefix, msg)
-	}
-	author := AuthorFromGit(ctx, r.Worktree)
-	sha, err := commitAll(ctx, dir, author, msg)
-	if err != nil {
-		return err
-	}
-	if sha == "" {
-		return nil
-	}
-	r.Commits = append(r.Commits, sha)
-	if err := m.Store.Save(*r); err != nil {
-		return err
-	}
-	m.audit(audit.Entry{
-		Action: "git.commit", Target: dir, Item: r.Item(),
-		Params: map[string]any{"run": r.ID, "sha": sha, "author": author.Name},
-	})
-	return nil
 }
 
 // AcceptOpts are the user's words for the commit Accept makes.
@@ -719,10 +724,13 @@ func (m *Manager) acceptFailed(r Run, what string, err error) error {
 	return err
 }
 
-// Discard throws an isolated run's changes away: the -ai worktree (with
-// whatever the agent left in it) and the branch are removed, and a run still
-// in review is cancelled. The item's own branch and worktree are untouched.
-// It also cleans up after a run that failed or was cancelled.
+// Discard throws a run's changes away. An isolated run's -ai worktree (with
+// whatever the agent left in it) and branch are removed, and a run still in
+// review is cancelled; the item's own branch and worktree are untouched. A run
+// that worked in the item's own worktree and waits in review has its worktree
+// put back to the commit it started from (the caller confirms first: it
+// resets tracked files and removes untracked ones). It also cleans up after
+// an isolated run that failed or was cancelled.
 func (m *Manager) Discard(ctx context.Context, id string) (Run, error) {
 	r, err := m.Store.Get(id)
 	if err != nil {
@@ -730,7 +738,7 @@ func (m *Manager) Discard(ctx context.Context, id string) (Run, error) {
 	}
 	switch {
 	case !r.Isolated():
-		return r, fmt.Errorf("run %s has no -ai branch to discard (ade agent cancel %s stops a run)", r.ID, r.ID)
+		return m.discardInPlace(ctx, r)
 	case r.State.Active():
 		return r, fmt.Errorf("run %s is %s: cancel it first (ade agent cancel %s)", r.ID, r.State, r.ID)
 	}
@@ -750,6 +758,40 @@ func (m *Manager) Discard(ctx context.Context, id string) (Run, error) {
 	m.audit(audit.Entry{
 		Action: "agent.discard", Actor: "user", Target: r.Item(), Item: r.Item(), Project: r.Project,
 		Params: map[string]any{"run": r.ID, "branch": r.Branch, "ai_branch": aiBranch, "worktree": aiTree},
+	})
+	m.emit(r, "discarded", events.Info, false, "", "")
+	return r, nil
+}
+
+// discardInPlace restores the worktree of a run in review to the commit it
+// started from and cancels the run.
+func (m *Manager) discardInPlace(ctx context.Context, r Run) (Run, error) {
+	switch {
+	case r.State != StateReview:
+		return r, fmt.Errorf("run %s is %s: only a run in review has changes to discard (ade agent cancel %s stops a run)", r.ID, r.State, r.ID)
+	case r.accepted():
+		return r, fmt.Errorf("run %s was accepted: its commit is on %s already; undo it with git", r.ID, r.Branch)
+	case r.BaseSHA == "":
+		return r, fmt.Errorf("run %s changed nothing yet: there is nothing to discard (ade agent cancel %s stops a run)", r.ID, r.ID)
+	}
+	release, err := m.lockWorktree(r.Worktree, r.ID)
+	if err != nil {
+		return r, err
+	}
+	defer release()
+	if err := checkWorktree(ctx, r.Worktree, r.Branch); err != nil {
+		return r, err
+	}
+	if err := m.restoreStart(ctx, r); err != nil {
+		return r, err
+	}
+	r.Error = ""
+	if err := m.move(&r, StateCancelled); err != nil {
+		return r, err
+	}
+	m.audit(audit.Entry{
+		Action: "agent.discard", Actor: "user", Target: r.Item(), Item: r.Item(), Project: r.Project,
+		Params: map[string]any{"run": r.ID, "branch": r.Branch, "restored_to": short(r.BaseSHA), "worktree": r.Worktree},
 	})
 	m.emit(r, "discarded", events.Info, false, "", "")
 	return r, nil
@@ -787,18 +829,6 @@ func (m *Manager) commitPrefix(ctx context.Context, r Run) (prefix string, known
 	return prefix, prefix != ""
 }
 
-func (m *Manager) commitMessage(r Run) string {
-	c, _ := readContext(m.Store.Dir(r))
-	title := c.Issue.Title
-	if title == "" {
-		title = "Agent changes for " + r.Item()
-	}
-	if r.Kind == KindAddress {
-		title = "Address review comments on " + r.MR.String()
-	}
-	return fmt.Sprintf("%s\n\nWritten by ade agent run %s (%s, %s) and reviewed before pushing.\n", title, r.ID, r.Driver, r.Model)
-}
-
 // pushFailed keeps the run in review (nothing is lost, push can be retried)
 // and tells the user.
 func (m *Manager) pushFailed(r Run, what string, err error) error {
@@ -821,12 +851,14 @@ func (m *Manager) Cancel(id string) (Run, error) {
 	}
 	// The state goes first: the process's owner checks it the moment the
 	// kill lands, and must find the cancellation, not a failure.
-	pid := r.PID
-	r.PID = 0
+	pid, pstart := r.PID, r.PIDStart
+	r.PID, r.PIDStart = 0, 0
 	if err := m.move(&r, StateCancelled); err != nil {
 		return r, err
 	}
-	if err := killGroup(pid); err != nil {
+	// Only the process that was recorded: a pid that has been reused since is
+	// somebody else's.
+	if err := killVerified(pid, pstart); err != nil {
 		return r, fmt.Errorf("stop pid %d: %w", pid, err)
 	}
 	return r, nil
@@ -839,6 +871,11 @@ func (m *Manager) begin(r *Run, to State) error {
 		return err
 	}
 	r.Error = ""
+	if to.Active() {
+		// This process drives the run now: if it dies, Reconcile finds out.
+		pid := os.Getpid()
+		r.Owner, r.OwnerStart = pid, workspace.ProcessStart(pid)
+	}
 	if err := m.Store.Save(*r); err != nil {
 		return err
 	}
@@ -951,6 +988,11 @@ func (m *Manager) recordStop(item, feature, profile, model string, stop *ai.Stop
 // cost, the hard stop, audit start/end, cost.json. It does not change r's
 // state.
 func (m *Manager) call(ctx context.Context, r *Run, kind Kind, prompt string) (callResult, error) {
+	// The one place every run goes through: whatever state an approved plan,
+	// a queued run or a background child was left in, AI off means no agent.
+	if err := m.aiOff(); err != nil {
+		return callResult{}, err
+	}
 	name, p, err := m.Cfg.Profile(r.Profile)
 	if err != nil {
 		return callResult{}, err
@@ -962,10 +1004,29 @@ func (m *Manager) call(ctx context.Context, r *Run, kind Kind, prompt string) (c
 	if err := Available(drv); err != nil {
 		return callResult{}, fmt.Errorf("agent driver unavailable: %w", err)
 	}
+	if err := m.checkUncapped(drv.Name(), kind, r.CapUSD, r.Uncapped); err != nil {
+		return callResult{}, err
+	}
 	spec := Spec{Kind: kind, Model: r.Model, Dir: r.WorkDir(), AddDirs: r.AddDirs, Prompt: prompt, Price: priceOf(p, r.Model)}
+	// What this call may spend is the smaller of what the run's own cap has
+	// left and what the daily, weekly and sprint caps leave: a plan approved
+	// yesterday must not run past today's budget.
+	var limit string
 	if r.CapUSD > 0 {
-		if spec.MaxCostUSD = r.Remaining(); spec.MaxCostUSD <= 0 {
+		if spec.MaxCostUSD, limit = r.Remaining(), limitRun; spec.MaxCostUSD <= 0 {
 			return callResult{}, &ai.StopError{Source: "local", Message: fmt.Sprintf("run %s has used its cap of $%.2f", r.ID, r.CapUSD)}
+		}
+	}
+	period, err := m.periodRoom()
+	if err != nil {
+		return callResult{}, err
+	}
+	if period.Limited {
+		if period.USD <= 0 {
+			return callResult{}, &ai.StopError{Source: "local", Message: period.Which + ": nothing left for this call"}
+		}
+		if spec.MaxCostUSD == 0 || period.USD < spec.MaxCostUSD {
+			spec.MaxCostUSD, limit = period.USD, period.Which
 		}
 	}
 	dir := m.Store.Dir(*r)
@@ -992,8 +1053,8 @@ func (m *Manager) call(ctx context.Context, r *Run, kind Kind, prompt string) (c
 	cmd.Env = append(cmd.Env, workspace.AgentRunEnv+"=1") // only the child: ADE's own push stays unmarked
 	cmd.Unset = m.Cfg.AgentHiddenEnv()
 	hooks := procHooks{
-		transcript: tf, capUSD: r.CapUSD, spentBefore: spentBefore,
-		onStart: func(pid int) { r.PID = pid; m.saveLive(r) },
+		transcript: tf, redact: m.redactor(), spentBefore: spentBefore,
+		onStart: func(pid int) { r.PID, r.PIDStart = pid, workspace.ProcessStart(pid); m.saveLive(r) },
 		onProgress: func(pr Progress) {
 			r.CostUSD = spentBefore + pr.CostUSD
 			r.Calls[idx].CostUSD, r.Calls[idx].Turns = pr.CostUSD, pr.Turns
@@ -1001,7 +1062,14 @@ func (m *Manager) call(ctx context.Context, r *Run, kind Kind, prompt string) (c
 			m.saveLive(r)
 		},
 	}
+	if spec.MaxCostUSD > 0 {
+		hooks.capUSD = spentBefore + spec.MaxCostUSD
+	}
 	res := runProcess(ctx, cmd, drv.Parser(spec), hooks, drv.Name() == "omp")
+	res.Dest, res.Bytes = DestHost(drv.Name(), res.Progress.Provider), len(prompt)
+	if res.StoppedBy != "" {
+		res.Limit = limit
+	}
 	// An external `ade agent cancel` kills the process and marks the run.
 	if m.cancelled(r.ID) {
 		res.Err = ErrCancelled
@@ -1012,7 +1080,7 @@ func (m *Manager) call(ctx context.Context, r *Run, kind Kind, prompt string) (c
 	c.Ended, c.Exit, c.CostUSD, c.Turns = m.Now(), res.Exit, pr.CostUSD, pr.Turns
 	c.TokensIn, c.TokensOut, c.StoppedBy = pr.In, pr.Out, res.StoppedBy
 	c.Source = firstNonEmpty(pr.Source, CostUnknown)
-	r.CostUSD, r.PID = spentBefore+pr.CostUSD, 0
+	r.CostUSD, r.PID, r.PIDStart = spentBefore+pr.CostUSD, 0, 0
 	m.saveLive(r)
 	_ = m.Store.writeCost(*r)
 	m.recordCall(*r, *c, name, res)
@@ -1040,7 +1108,7 @@ func (m *Manager) recordCall(r Run, c Call, profile string, res callResult) {
 	outcome, errText := "ok", ""
 	switch {
 	case res.StoppedBy != "":
-		outcome, errText = "error", "stopped at the cost cap"
+		outcome, errText = "error", "stopped at the "+firstNonEmpty(res.Limit, "cost cap")
 	case res.Err != nil:
 		outcome, errText = "error", res.Err.Error()
 	case res.Exit != 0 || res.Progress.Failed != "":
@@ -1057,20 +1125,25 @@ func (m *Manager) recordCall(r Run, c Call, profile string, res callResult) {
 		AI: &audit.AIInfo{
 			Profile: profile, Driver: c.Driver, Model: firstNonEmpty(res.Progress.Model, c.Model),
 			TokensIn: c.TokensIn, TokensOut: c.TokensOut, TokensCache: res.Progress.Cache,
-			CostUSD: c.CostUSD, CostSource: c.Source,
+			CostUSD: c.CostUSD, CostSource: c.Source, DestHost: res.Dest, Bytes: res.Bytes,
 		},
 	})
-	if c.StoppedBy != "" {
+	// Only a daily, weekly or sprint cap is a budget stop that pauses
+	// automatic AI: one run's own cap says nothing about the day's budget.
+	if c.StoppedBy != "" && res.Limit != "" && res.Limit != limitRun {
 		m.recordStop(r.Item(), "agent-"+string(c.Kind), profile, c.Model,
-			&ai.StopError{Source: "local", Message: fmt.Sprintf("run %s stopped at its $%.2f cap (spent $%.4f)", r.ID, r.CapUSD, r.CostUSD)})
+			&ai.StopError{Source: "local", Message: fmt.Sprintf("run %s stopped at the %s (spent $%.4f)", r.ID, res.Limit, r.CostUSD)})
 	}
 }
+
+// limitRun names the run's own cap in callResult.Limit.
+const limitRun = "run cost cap"
 
 // outcome turns a finished process into an error, or nil when it succeeded.
 func (m *Manager) outcome(res callResult) error {
 	switch {
 	case res.StoppedBy != "":
-		return &ai.StopError{Source: "local", Message: fmt.Sprintf("cost cap reached (spent $%.4f)", res.Progress.CostUSD)}
+		return &ai.StopError{Source: "local", Message: fmt.Sprintf("%s reached (spent $%.4f)", firstNonEmpty(res.Limit, "cost cap"), res.Progress.CostUSD)}
 	case res.Exit != 0:
 		return fmt.Errorf("agent exited %d: %s", res.Exit, firstNonEmpty(res.Progress.Failed, res.Stderr))
 	case res.Progress.Failed != "":

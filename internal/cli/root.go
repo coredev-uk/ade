@@ -88,7 +88,8 @@ func newRoot() *cobra.Command {
 				return err
 			}
 			cmd.SetContext(context.WithValue(cmd.Context(), ctxKey{}, a))
-			return nil
+			// After the app loads, so a refusal still leaves its cli.* audit line.
+			return checkAgentRun(cmd)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if rootRun == nil {
@@ -103,13 +104,16 @@ func newRoot() *cobra.Command {
 	for _, b := range builders {
 		root.AddCommand(b())
 	}
+	markAgentRefused(root)
 	return root
 }
 
 // Execute runs the CLI and returns the process exit code. Every command that
 // got as far as loading the app leaves one `cli.<path>` audit line.
 func Execute() int {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// SIGHUP too: a closed terminal or zellij pane must stop an agent run
+	// cleanly (the agent runs in its own process group and gets no hangup).
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	cmd, err := newRoot().ExecuteContextC(ctx)
 	if a := appFrom(cmd); a != nil {

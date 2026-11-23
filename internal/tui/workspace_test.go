@@ -425,3 +425,27 @@ func TestPlainHostHintIsCopiedNotShownAsALongCommand(t *testing.T) {
 		t.Fatal("nothing to copy when the tab opened")
 	}
 }
+
+func TestWWithAIOffOpensNothingAndSaysSo(t *testing.T) {
+	h := newWsHarness(t)
+	h.m.app.Config.AI.Mode = "off"
+	h.selectRef("g/tracker#3")
+	next, cmd := h.m.Update(keyPress("W"))
+	h.m = next.(model)
+	if cmd != nil || len(h.calls) != 0 {
+		t.Fatalf("W opened a tab with AI off: %+v", h.calls)
+	}
+	if e := h.lastToast(); !strings.Contains(e.Title, "AI is off: no agent pane") {
+		t.Fatalf("pop-up: %+v", e)
+	}
+}
+
+func TestOpenNoticeIsAWarningPopUp(t *testing.T) {
+	h := newWsHarness(t)
+	h.res = workspace.OpenResult{Created: true, Notice: workspace.NoticeNoOmp}
+	h.selectRef("g/tracker#3")
+	h.press()
+	if e := h.lastToast(); e.Kind != "workspace.hint" || e.Severity != events.Warn || !e.Transient || e.Title != workspace.NoticeNoOmp {
+		t.Fatalf("pop-up: %+v", e)
+	}
+}

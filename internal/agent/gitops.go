@@ -80,12 +80,36 @@ func worktreeDiff(ctx context.Context, dir, base string, patch bool) (DiffSummar
 	if _, err := gitIn(ctx, dir, env, "add", "-A"); err != nil {
 		return DiffSummary{}, err
 	}
+	return summarise(ctx, dir, env, base, true, patch)
+}
+
+// committedDiff is what the commits since base changed: HEAD against base,
+// whatever uncommitted files the tree also holds. It is the diff of a run
+// whose work already sits in the item's branch.
+func committedDiff(ctx context.Context, dir, base string, patch bool) (DiffSummary, error) {
+	return summarise(ctx, dir, nil, base, false, patch)
+}
+
+// summarise runs the diff of base against the index (cached) or against HEAD.
+func summarise(ctx context.Context, dir string, env []string, base string, cached, patch bool) (DiffSummary, error) {
+	args := func(extra ...string) []string {
+		a := []string{"diff", "--no-ext-diff"}
+		if cached {
+			a = append(a, "--cached")
+		}
+		a = append(a, extra...)
+		a = append(a, base)
+		if !cached {
+			a = append(a, "HEAD")
+		}
+		return a
+	}
 	d := DiffSummary{Base: base}
-	names, err := gitIn(ctx, dir, env, "diff", "--cached", "--no-ext-diff", "--name-status", base)
+	names, err := gitIn(ctx, dir, env, args("--name-status")...)
 	if err != nil {
 		return d, err
 	}
-	nums, err := gitIn(ctx, dir, env, "diff", "--cached", "--no-ext-diff", "--numstat", base)
+	nums, err := gitIn(ctx, dir, env, args("--numstat")...)
 	if err != nil {
 		return d, err
 	}
@@ -109,11 +133,11 @@ func worktreeDiff(ctx context.Context, dir, base string, patch bool) (DiffSummar
 		c := counts[path]
 		d.Files = append(d.Files, FileChange{Path: path, Status: string(f[0][0]), Added: c[0], Removed: c[1]})
 	}
-	if d.Stat, err = gitIn(ctx, dir, env, "diff", "--cached", "--no-ext-diff", "--no-color", "--stat", base); err != nil {
+	if d.Stat, err = gitIn(ctx, dir, env, args("--no-color", "--stat")...); err != nil {
 		return d, err
 	}
 	if patch {
-		if d.Patch, err = gitIn(ctx, dir, env, "diff", "--cached", "--no-ext-diff", "--no-color", "--no-textconv", base); err != nil {
+		if d.Patch, err = gitIn(ctx, dir, env, args("--no-color", "--no-textconv")...); err != nil {
 			return d, err
 		}
 	}
@@ -296,3 +320,45 @@ func fastForward(ctx context.Context, workTree, rev string) error {
 }
 
 var errNoChanges = errors.New("the agent made no changes")
+
+// dirtyPaths lists the paths with uncommitted changes in dir (status
+// --porcelain, untracked included), as git prints them.
+func dirtyPaths(ctx context.Context, dir string) ([]string, error) {
+	out, err := gitIn(ctx, dir, nil, "status", "--porcelain")
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for ln := range strings.SplitSeq(strings.TrimRight(out, "\n"), "\n") {
+		if len(ln) > 3 {
+			paths = append(paths, ln[3:])
+		}
+	}
+	return paths, nil
+}
+
+// commitsSince lists "<short sha> <subject>" of the commits HEAD has beyond base.
+func commitsSince(ctx context.Context, dir, base string) ([]string, error) {
+	out, err := gitIn(ctx, dir, nil, "log", "--format=%h %s", base+"..HEAD")
+	if err != nil {
+		return nil, err
+	}
+	var lines []string
+	for ln := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
+		if ln != "" {
+			lines = append(lines, ln)
+		}
+	}
+	return lines, nil
+}
+
+// restoreTo puts dir's tree back to commit base: tracked changes are reset and
+// untracked files removed (ignored files stay). Only safe where the tree was
+// clean when the agent started and HEAD has not moved.
+func restoreTo(ctx context.Context, dir, base string) error {
+	if _, err := gitIn(ctx, dir, nil, "reset", "-q", "--hard", base); err != nil {
+		return err
+	}
+	_, err := gitIn(ctx, dir, nil, "clean", "-q", "-fd")
+	return err
+}

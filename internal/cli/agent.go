@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -38,9 +39,13 @@ func newAgentCmd() *cobra.Command {
 			"moved on) and `ade agent discard <run>` throws the -ai branch away. Neither pushes.\n\n" +
 			"`ade agent address <tracker-ref>` takes the MR's unresolved threads, edits code and drafts\n" +
 			"replies into the review drafts: nothing is posted until you triage and submit them.\n\n" +
-			"Every run has a hard cost cap (budget.agent_run_usd, lowered with --max-usd): the agent\n" +
-			"process is killed when its reported cost passes it. The transcript lives only in the run's\n" +
-			"directory in the item record.",
+			"Every run has a cost cap (budget.agent_run_usd, lowered with --max-usd; 0 means none), and the\n" +
+			"daily, weekly and sprint caps bound each call too: the agent process is killed when its\n" +
+			"reported cost passes the smaller of them. codex reports cost only when a turn completes, so\n" +
+			"it cannot be stopped mid-edit: `run` and `address` refuse it under a cap unless you pass\n" +
+			"--allow-uncapped. The transcript lives only in the run's directory in the item record.\n\n" +
+			"While an agent runs, ADE_AGENT_RUN=1 is set for it and ade refuses the commands that write to\n" +
+			"a forge, approve a plan, accept a triage or submit a review.",
 	}
 	cmd.AddCommand(
 		newAgentPlanCmd(), newAgentApproveCmd(), newAgentRunCmd(), newAgentAddressCmd(),
@@ -76,6 +81,7 @@ type agentStartFlags struct {
 	maxUSD                float64
 	yes, dryRun           bool
 	noNotes               bool
+	allowUncapped         bool
 }
 
 func (f *agentStartFlags) bind(cmd *cobra.Command) {
@@ -84,13 +90,13 @@ func (f *agentStartFlags) bind(cmd *cobra.Command) {
 	fl.StringVar(&f.driver, "driver", "", "agent CLI: omp | claude | codex (default: the profile's agent)")
 	fl.StringVar(&f.profile, "profile", "", "AI profile (default: the active one)")
 	fl.Float64Var(&f.maxUSD, "max-usd", 0, "lower the run's cost cap below budget.agent_run_usd")
-	fl.BoolVar(&f.yes, "yes", false, "skip the pre-flight confirmation")
+	fl.BoolVar(&f.yes, "yes", false, "skip the pre-flight confirmation (address: and the confirmation of the threads that will be sent)")
 	fl.BoolVar(&f.dryRun, "dry-run", false, "show the target and the pre-flight; start nothing, spend nothing")
 	fl.BoolVar(&f.noNotes, "no-notes", false, "leave your notes on the item out of the prompts (they are included by default)")
 }
 
 func (f agentStartFlags) request(kind agent.Kind, t agent.Target, c agent.Context) agent.Request {
-	return agent.Request{Kind: kind, Target: t, Context: c, Profile: f.profile, Driver: f.driver, MaxUSD: f.maxUSD, Assume: f.yes, DryRun: f.dryRun}
+	return agent.Request{Kind: kind, Target: t, Context: c, Profile: f.profile, Driver: f.driver, MaxUSD: f.maxUSD, Assume: f.yes, DryRun: f.dryRun, AllowUncapped: f.allowUncapped}
 }
 
 func newAgentPlanCmd() *cobra.Command {
@@ -118,6 +124,7 @@ func newAgentAddressCmd() *cobra.Command {
 		},
 	}
 	f.bind(cmd)
+	cmd.Flags().BoolVar(&f.allowUncapped, "allow-uncapped", false, "run a codex agent although its cost cap cannot be enforced mid-run (codex reports cost once a turn ends)")
 	return cmd
 }
 
@@ -142,6 +149,13 @@ func runAgentStart(cmd *cobra.Command, refArg string, f agentStartFlags, kind ag
 	}
 	defer s.stop()
 	req := f.request(kind, t, c)
+	if kind == agent.KindAddress && !f.dryRun {
+		// The threads are other people's text and the agent can run commands:
+		// a person sees what is sent before anything is.
+		if err := confirmThreads(cmd, t, c, f.yes); err != nil {
+			return err
+		}
+	}
 	if !f.yes {
 		req.Confirm = confirmPreflight(cmd)
 	}
@@ -180,6 +194,41 @@ func confirmPreflight(cmd *cobra.Command) func(ai.Preflight) (bool, error) {
 		fmt.Fscanln(os.Stdin, &ans) //nolint:errcheck // an empty answer is a no
 		return strings.HasPrefix(strings.ToLower(ans), "y"), nil
 	}
+}
+
+// confirmThreads shows the review threads an address run will send to the
+// agent and asks, on a terminal, for a yes; --yes skips the question (scripts),
+// anything else that cannot ask refuses.
+func confirmThreads(cmd *cobra.Command, t agent.Target, c agent.Context, yes bool) error {
+	w := cmd.ErrOrStderr()
+	fmt.Fprintf(w, "address sends %d unresolved thread(s) of %s to the agent. Their text was written by other people, and the agent can run commands in %s:\n", len(c.Threads), t.MR, t.Worktree)
+	for _, th := range c.Threads {
+		loc := "overview"
+		if th.Position != nil && th.Position.Path != "" {
+			loc = th.Position.Path
+		}
+		who, text := "", ""
+		if len(th.Notes) > 0 {
+			who, text = th.Notes[0].Author.Username, strings.Join(strings.Fields(th.Notes[0].Body), " ")
+		}
+		if r := []rune(text); len(r) > 100 {
+			text = string(r[:100]) + "…"
+		}
+		fmt.Fprintf(w, "  %s · %s: %s\n", loc, who, text)
+	}
+	if yes {
+		return nil
+	}
+	if jsonOut || !isTerminal(os.Stdin) {
+		return withCode(exitNeedsConfirm, errors.New("not sending the threads to the agent without a confirmation: pass --yes"))
+	}
+	fmt.Fprint(w, "send them and start the agent? [y/N] ")
+	var ans string
+	fmt.Fscanln(os.Stdin, &ans) //nolint:errcheck // an empty answer is a no
+	if !strings.HasPrefix(strings.ToLower(ans), "y") {
+		return ai.ErrCancelled
+	}
+	return nil
 }
 
 // printRun reports a run after a step. err is the step's error: the run is
@@ -242,7 +291,7 @@ func newAgentApproveCmd() *cobra.Command {
 }
 
 func newAgentRunCmd() *cobra.Command {
-	var apart, background bool
+	var apart, background, detached, allowUncapped bool
 	cmd := &cobra.Command{
 		Use:   "run <run>",
 		Short: "Implement the approved plan in the item's worktree (or, with --ai-branch, on a separate branch)",
@@ -255,7 +304,11 @@ func newAgentRunCmd() *cobra.Command {
 			"checkout: ignored files of your worktree (node_modules, .env) are not in it.\n\n" +
 			"--background starts the run as a detached process (it implies --ai-branch: the agent must\n" +
 			"not share the tree you keep working in) and returns at once. Its output goes to\n" +
-			"background.log in the run's directory, and the inbox reports when it is ready for review.",
+			"background.log in the run's directory, and the inbox reports when it is ready for review.\n" +
+			"The checks that can fail up front (approval, AI mode, the agent CLI, a leftover -ai branch)\n" +
+			"run before it detaches; one that fails after it did is raised as an agent.run.failed event.\n\n" +
+			"A codex run that edits files cannot be stopped at the cost cap (codex reports cost once a turn\n" +
+			"ends), so it is refused under a cap unless you pass --allow-uncapped.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := newAgentSession(cmd)
@@ -263,6 +316,12 @@ func newAgentRunCmd() *cobra.Command {
 				return err
 			}
 			defer s.stop()
+			if allowUncapped {
+				if _, err := s.m.AllowUncapped(args[0]); err != nil {
+					return err
+				}
+			}
+			s.m.Detached = detached
 			if background {
 				return startBackgroundRun(cmd, s, args[0])
 			}
@@ -276,6 +335,9 @@ func newAgentRunCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&apart, "ai-branch", false, "work on a separate <branch>-ai branch and worktree; accept or discard it afterwards")
 	cmd.Flags().BoolVar(&background, "background", false, "start the run detached and return at once (implies --ai-branch)")
+	cmd.Flags().BoolVar(&allowUncapped, "allow-uncapped", false, "run a codex agent although its cost cap cannot be enforced mid-run")
+	cmd.Flags().BoolVar(&detached, "detached", false, "set by --background in the child it starts: setup failures are raised as events")
+	_ = cmd.Flags().MarkHidden("detached")
 	return cmd
 }
 
@@ -308,12 +370,17 @@ func newAgentAcceptCmd() *cobra.Command {
 }
 
 func newAgentDiscardCmd() *cobra.Command {
-	return &cobra.Command{
+	var yes bool
+	cmd := &cobra.Command{
 		Use:   "discard <run>",
-		Short: "Throw a --ai-branch run's work away: removes the -ai worktree and branch",
-		Long: "Removes the -ai worktree (with whatever the agent left in it) and the -ai branch, and\n" +
-			"cancels a run still in review. The item's own branch and worktree are not touched. Also\n" +
-			"cleans up after an --ai-branch run that failed or was cancelled.",
+		Short: "Throw a run's changes away: an --ai-branch run's worktree and branch, or a worktree run's edits",
+		Long: "An --ai-branch run: removes the -ai worktree (with whatever the agent left in it) and the -ai\n" +
+			"branch, and cancels a run still in review. The item's own branch and worktree are not touched.\n" +
+			"Also cleans up after an --ai-branch run that failed or was cancelled.\n\n" +
+			"A run that worked in the item's own worktree and waits in review: puts the worktree back to\n" +
+			"the commit the run started from (tracked files are reset, untracked files removed, ignored\n" +
+			"files kept). It refuses when the branch has moved since. It lists what goes and asks first on\n" +
+			"a terminal; --yes skips the question.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := newAgentSession(cmd)
@@ -321,13 +388,44 @@ func newAgentDiscardCmd() *cobra.Command {
 				return err
 			}
 			defer s.stop()
-			r, err := s.m.Discard(cmd.Context(), args[0])
+			r, err := s.m.Get(args[0])
+			if err != nil {
+				return err
+			}
+			if !r.Isolated() && r.State == agent.StateReview && r.AcceptedAt.IsZero() && r.BaseSHA != "" && !yes {
+				if err := confirmRestore(cmd, s, r); err != nil {
+					return err
+				}
+			}
+			r, err = s.m.Discard(cmd.Context(), r.ID)
 			if err != nil {
 				return err
 			}
 			return printRun(cmd, s, r, nil)
 		},
 	}
+	cmd.Flags().BoolVar(&yes, "yes", false, "do not ask before restoring the worktree of a run that worked in it")
+	return cmd
+}
+
+// confirmRestore lists what discarding a worktree run removes and asks.
+func confirmRestore(cmd *cobra.Command, s *agentSession, r agent.Run) error {
+	w := cmd.ErrOrStderr()
+	d, _, err := s.m.Diff(cmd.Context(), r.ID, false)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "discarding run %s puts %s back to %s: the agent's %d file(s) go\n%s", r.ID, r.Worktree, r.BaseSHA[:min(8, len(r.BaseSHA))], len(d.Files), d.Stat)
+	if jsonOut || !isTerminal(os.Stdin) {
+		return withCode(exitNeedsConfirm, errors.New("not discarding without a confirmation: pass --yes"))
+	}
+	fmt.Fprint(w, "discard them? [y/N] ")
+	var ans string
+	fmt.Fscanln(os.Stdin, &ans) //nolint:errcheck // an empty answer is a no
+	if !strings.HasPrefix(strings.ToLower(ans), "y") {
+		return ai.ErrCancelled
+	}
+	return nil
 }
 
 // adeExecutable is the binary --background starts; tests replace it.
@@ -337,7 +435,7 @@ var adeExecutable = os.Executable
 // `ade agent run <id> --ai-branch` in its own session with its output in the
 // run's directory, and returns without waiting for it.
 func startBackgroundRun(cmd *cobra.Command, s *agentSession, id string) error {
-	if err := s.m.CanImplement(id); err != nil {
+	if err := s.m.CheckImplement(cmd.Context(), id, true); err != nil {
 		return err
 	}
 	r, err := s.m.Store.Get(id)
@@ -354,7 +452,7 @@ func startBackgroundRun(cmd *cobra.Command, s *agentSession, id string) error {
 		return err
 	}
 	defer logf.Close()
-	child := exec.Command(exe, "agent", "run", r.ID, "--ai-branch")
+	child := exec.Command(exe, "agent", "run", r.ID, "--ai-branch", "--detached")
 	child.Stdout, child.Stderr = logf, logf
 	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := child.Start(); err != nil {
@@ -433,12 +531,18 @@ func newAgentReviewCmd() *cobra.Command {
 
 func newAgentPushCmd() *cobra.Command {
 	var msg string
+	var dryRun, yes bool
 	cmd := &cobra.Command{
 		Use:   "push <run>",
 		Short: "Commit the reviewed diff (synthetic author from git config) and push the branch",
 		Long: "Your approval of the diff made real: everything in the worktree is committed, as the\n" +
 			"configured git user marked \"(ade agent)\", and the branch is pushed. The merge request,\n" +
-			"which tracks the branch, updates by itself.",
+			"which tracks the branch, updates by itself.\n\n" +
+			"After `ade agent accept` the work is committed already: push sends the branch as it is and\n" +
+			"commits nothing, so your own uncommitted files in the worktree are not touched.\n\n" +
+			"On a terminal it shows the diff stat, the commit message and the ref first and asks; --yes\n" +
+			"skips the question (and scripts without a terminal are not asked). --dry-run shows the same\n" +
+			"and changes nothing.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := newAgentSession(cmd)
@@ -446,7 +550,34 @@ func newAgentPushCmd() *cobra.Command {
 				return err
 			}
 			defer s.stop()
-			r, err := s.m.Push(cmd.Context(), args[0], agent.PushOpts{Message: msg})
+			ctx := cmd.Context()
+			o := agent.PushOpts{Message: msg}
+			p, err := s.m.PushPlan(ctx, args[0], o)
+			if err != nil {
+				return err
+			}
+			if dryRun {
+				o.DryRun = true
+				if _, err := s.m.Push(ctx, args[0], o); err != nil {
+					return err
+				}
+				if jsonOut {
+					return printJSON(cmd.OutOrStdout(), p)
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), "dry run: nothing was committed or pushed")
+				printPushPreview(cmd.OutOrStdout(), p)
+				return nil
+			}
+			if !yes && !jsonOut && isTerminal(os.Stdin) {
+				printPushPreview(cmd.ErrOrStderr(), p)
+				fmt.Fprint(cmd.ErrOrStderr(), "push? [y/N] ")
+				var ans string
+				fmt.Fscanln(os.Stdin, &ans) //nolint:errcheck // an empty answer is a no
+				if !strings.HasPrefix(strings.ToLower(ans), "y") {
+					return errors.New("not pushed")
+				}
+			}
+			r, err := s.m.Push(ctx, args[0], o)
 			if err != nil {
 				return err
 			}
@@ -457,8 +588,34 @@ func newAgentPushCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&msg, "message", "m", "", "commit message (default: the issue title and the run id)")
+	cmd.Flags().StringVarP(&msg, "message", "m", "", "commit message (default: the issue title and the run id; a \"Written by ade agent\" line is always added)")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show the diff stat, commit message and ref; commit and push nothing")
+	cmd.Flags().BoolVar(&yes, "yes", false, "do not ask before pushing on a terminal")
 	return cmd
+}
+
+// printPushPreview says what a push will send.
+func printPushPreview(w io.Writer, p agent.PushPreview) {
+	fmt.Fprintf(w, "push run %s: %s → %s\n", p.Run.ID, p.Branch, p.Remote)
+	switch {
+	case p.Commit:
+		fmt.Fprintf(w, "commit everything in %s as %q:\n", p.Run.Worktree, p.Author)
+		for _, ln := range strings.Split(strings.TrimRight(p.Message, "\n"), "\n") {
+			fmt.Fprintf(w, "  | %s\n", ln)
+		}
+	default:
+		fmt.Fprintf(w, "no commit is made: the work is committed already (accepted)\n")
+	}
+	if len(p.Commits) > 0 {
+		fmt.Fprintf(w, "commits already on the branch since the run began:\n")
+		for _, c := range p.Commits {
+			fmt.Fprintf(w, "  %s\n", c)
+		}
+	}
+	fmt.Fprintf(w, "%d file(s), +%d -%d\n%s", len(p.Diff.Files), p.Diff.Added(), p.Diff.Removed(), p.Diff.Stat)
+	if len(p.Left) > 0 {
+		fmt.Fprintf(w, "not touched, still uncommitted in the worktree: %s\n", strings.Join(p.Left, ", "))
+	}
 }
 
 func newAgentCancelCmd() *cobra.Command {
@@ -492,7 +649,7 @@ func newAgentShowCmd() *cobra.Command {
 				return err
 			}
 			defer s.stop()
-			r, err := s.m.Store.Get(args[0])
+			r, err := s.m.Get(args[0])
 			if err != nil {
 				return err
 			}
@@ -532,7 +689,7 @@ func newAgentListCmd() *cobra.Command {
 				return err
 			}
 			defer s.stop()
-			rs, err := s.m.Store.List()
+			rs, err := s.m.List()
 			if err != nil {
 				return err
 			}

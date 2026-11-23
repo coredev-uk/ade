@@ -1036,3 +1036,23 @@ func TestStartOnStartedWorkWithAWriteLeftAsks(t *testing.T) {
 		t.Error("looking for the started work wrote to the forge")
 	}
 }
+
+func TestStartDialogHidesTheAgentPaneWhenAIIsOff(t *testing.T) {
+	e := newSWEnv(t)
+	e.m.app.Config.AI.Mode = "off"
+	e.m.app.Config.Host.Layout = workspace.LayoutAgent // asks for omp; AI is off
+	e.m.w, e.m.h = 140, 60
+	e.selectRow(trk(3).String())
+	e.press("s")
+	e.want("Main pane")
+	e.wantNot("omp")
+	if e.m.sw.ch.Layout != workspace.LayoutCode {
+		t.Fatalf("preselected %q, want code", e.m.sw.ch.Layout)
+	}
+	for range 3 {
+		e.press("a")
+		if e.m.sw.ch.Layout == workspace.LayoutAgent {
+			t.Fatal("a cycled to the agent pane")
+		}
+	}
+}
