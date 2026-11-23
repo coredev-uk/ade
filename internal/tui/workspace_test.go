@@ -47,7 +47,7 @@ func newWsHarness(t *testing.T) *wsHarness {
 		t.Fatal(err)
 	}
 	cfg := config.Defaults()
-	a := &app.App{Paths: paths.Paths{CacheDir: t.TempDir()}, Config: &cfg, Root: root}
+	a := &app.App{Paths: paths.Paths{CacheDir: t.TempDir()}, Config: &cfg, Root: root, RecordsDir: t.TempDir()}
 	t.Cleanup(func() { a.Close() })
 	st, err := a.Cache()
 	if err != nil {

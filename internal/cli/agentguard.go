@@ -43,6 +43,8 @@ var agentRefused = map[string]string{
 	"mr retry":       "writes to the forge",
 	"mr create":      "creates a merge request on the forge",
 	"mr from-branch": "creates a merge request on the forge",
+	"mr close":       "closes the merge request on the forge",
+	"mr reopen":      "reopens the merge request on the forge",
 
 	"issue weight": "writes to the forge",
 	"issue move":   "writes to the forge",

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -44,6 +45,9 @@ type ResearchOpts struct {
 	Assume   bool // skip the confirmation
 	Notify   bool // raise an event (inbox, toast) when the job finishes: set for detached workers
 	Confirm  func(Preflight) (bool, error)
+	// InputHash is the hash of the input the pre-flight was confirmed on
+	// (JobHash): the worker refuses to send anything else.
+	InputHash string
 }
 
 // ResearchSpawnSpec is what the worker process is told.
@@ -54,7 +58,14 @@ type ResearchSpawnSpec struct {
 	Profile  string
 	Refresh  bool
 	Override bool
-	Log      string // file the worker's output goes to
+	// NoNotes is true when the confirmed prompt left the user's notes out
+	// (--no-notes, or there were none): the worker must build it the same way.
+	NoNotes bool
+	// InputHash is JobHash of the confirmed job. The worker rebuilds the job
+	// and refuses to send it when its hash differs (the issue, the notes or the
+	// flags changed since the yes).
+	InputHash string
+	Log       string // file the worker's output goes to
 }
 
 // ResearchSpawn starts the worker and returns its pid. Production runs this
@@ -75,6 +86,12 @@ func spawnResearchWorker(sp ResearchSpawnSpec) (int, error) {
 	}
 	if sp.Override {
 		args = append(args, "--override-budget")
+	}
+	if sp.NoNotes {
+		args = append(args, "--no-notes")
+	}
+	if sp.InputHash != "" {
+		args = append(args, "--input-hash", sp.InputHash)
 	}
 	if err := os.MkdirAll(filepath.Dir(sp.Log), 0o700); err != nil {
 		return 0, err
@@ -167,8 +184,13 @@ func (s *Service) StartResearch(ctx context.Context, forgeName string, j Job, o 
 	if err := s.Records.WriteResearch(forgeName, j.Ref, st); err != nil {
 		return ResearchStart{Preflight: pf}, err
 	}
+	hash, err := s.JobHash(j)
+	if err != nil {
+		return ResearchStart{Preflight: pf}, err
+	}
 	_, err = ResearchSpawn(ResearchSpawnSpec{
 		Forge: forgeName, Ref: j.Ref, JobID: st.ID, Profile: o.Profile, Refresh: o.Refresh, Override: o.Override,
+		NoNotes: !j.Notes, InputHash: hash,
 		Log: s.Records.ResearchLogPath(forgeName, j.Ref),
 	})
 	if err != nil {
@@ -193,7 +215,11 @@ func (s *Service) RunResearch(ctx context.Context, forgeName, jobID string, j Jo
 	if err := s.Records.WriteResearch(forgeName, j.Ref, st); err != nil {
 		return Result{}, err
 	}
-	res, err := s.Run(ctx, j)
+	var res Result
+	err = s.checkInput(j, o.InputHash)
+	if err == nil {
+		res, err = s.Run(ctx, j)
+	}
 	st.Finished = s.Now().UTC()
 	if err != nil {
 		st.State, st.Error = records.ResearchFailed, err.Error()
@@ -264,4 +290,108 @@ func (s *Service) workerAlive(r records.Research) bool {
 	}
 	err := syscall.Kill(r.PID, 0)
 	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
+// ErrInputChanged is returned by a research worker whose rebuilt prompt is not
+// the one the pre-flight was confirmed on: it sends nothing.
+var ErrInputChanged = errors.New("the research input changed since you confirmed the pre-flight (the issue, your notes or the options): nothing was sent; start it again")
+
+// JobHash is the hash that keys j's cached answer: prompt version, role,
+// model, system prompt and prompt. Two jobs with the same hash send the same
+// request to the same model.
+func (s *Service) JobHash(j Job) (string, error) {
+	_, _, model, err := s.profileFor(j)
+	if err != nil {
+		return "", err
+	}
+	return InputHash(j.PromptVersion, string(j.Role), model, j.System, j.Prompt), nil
+}
+
+// checkInput refuses a job whose hash is not want. An empty want checks nothing
+// (a foreground run has no earlier confirmation to match).
+func (s *Service) checkInput(j Job, want string) error {
+	if want == "" {
+		return nil
+	}
+	h, err := s.JobHash(j)
+	if err != nil {
+		return err
+	}
+	if h != want {
+		return ErrInputChanged
+	}
+	return nil
+}
+
+// Cancelled is the outcome of CancelResearch.
+type Cancelled struct {
+	// PID is the worker's pid (0 when it never started).
+	PID int
+	// Signalled is true when the worker was sent SIGTERM. False with a PID means
+	// the job is filed as cancelled but the process was left alone: it could not
+	// be verified as this job's worker (no /proc to read its command line), and
+	// signalling a pid on trust could hit a stranger.
+	Signalled bool
+}
+
+// CancelResearch stops the detached worker of the item's research job and files
+// the job as failed ("cancelled by you"). It signals the worker's process group
+// (the worker is its own session leader, so omp, its child, goes with it). A pid
+// is signalled only when it is alive and its command line (/proc) says it is
+// this job's worker: a stale pid something else has taken is refused with an
+// error, and one that cannot be verified (no /proc, as on macOS) is not signalled
+// but the job is still filed as cancelled, and the caller is told the pid.
+// ErrNotRunning when there is nothing to cancel.
+func (s *Service) CancelResearch(forgeName string, ref forge.Ref) (Cancelled, error) {
+	r, err := s.Records.ReadResearch(forgeName, ref)
+	if err != nil || r.State != records.ResearchRunning {
+		return Cancelled{}, ErrNotRunning
+	}
+	out := Cancelled{PID: r.PID}
+	if r.PID > 0 && s.workerAlive(r) {
+		switch isWorkerOf(r.PID, r.ID) {
+		case workerNo:
+			return out, fmt.Errorf("pid %d is not this research job's worker any more: not signalling it", r.PID)
+		case workerYes:
+			if err := syscall.Kill(-r.PID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+				if err := syscall.Kill(r.PID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+					return out, fmt.Errorf("stop the worker (pid %d): %w", r.PID, err)
+				}
+			}
+			out.Signalled = true
+		}
+	}
+	r.State, r.Finished, r.Error = records.ResearchFailed, s.Now().UTC(), "cancelled by you"
+	if err := s.Records.WriteResearch(forgeName, ref, r); err != nil {
+		return out, err
+	}
+	s.record(audit.Entry{Action: "research.cancel", Item: ref.String(), Target: ref.String(), Params: map[string]any{"job": r.ID, "pid": r.PID, "signalled": out.Signalled}})
+	return out, nil
+}
+
+// ErrNotRunning is returned by CancelResearch for an item with no running job.
+var ErrNotRunning = errors.New("no research is running for this issue")
+
+// procCmdline reads a process's command line; tests replace it.
+var procCmdline = func(pid int) ([]byte, error) { return os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid)) }
+
+type workerCheck int
+
+const (
+	workerUnknown workerCheck = iota // the command line cannot be read
+	workerYes
+	workerNo
+)
+
+// isWorkerOf reports whether pid is the worker of job id, from its command
+// line. Without /proc it cannot say: workerUnknown, never a guess.
+func isWorkerOf(pid int, id string) workerCheck {
+	cmdline, err := procCmdline(pid)
+	switch {
+	case err != nil:
+		return workerUnknown
+	case strings.Contains(string(cmdline), "--worker\x00"+id):
+		return workerYes
+	}
+	return workerNo
 }

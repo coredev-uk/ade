@@ -52,6 +52,12 @@ type Call struct {
 	// enforce it (OpenAI-style response_format). Drivers or gateways that
 	// cannot simply answer in text, which the caller parses either way.
 	Schema *Schema
+	// Price is the model's list price as the pre-flight resolved it (the
+	// profile's table, else what the driver publishes, under the bare or the
+	// provider/model name). The driver books the call's cost from it when the
+	// response carries none; nil leaves the driver to look in the profile's
+	// own table.
+	Price *config.Price
 }
 
 // Schema is the JSON Schema of a structured answer.
@@ -75,7 +81,7 @@ type Response struct {
 	CostUSD    float64
 	CostSource string
 	DestHost   string // where the prompt went, for the audit trail (4.3)
-	Bytes      int    // request body size
+	Bytes      int    // request bytes sent: every attempt, retries and re-sends included, and also when the call failed
 	// Structured is true when the call carried a Schema and the endpoint
 	// accepted it; false when none was asked for or the endpoint refused it
 	// and the answer is free text.
@@ -103,11 +109,15 @@ func retryTruncated(ctx context.Context, c Call, once func(context.Context, Call
 	second.Usage.Out += first.Usage.Out
 	second.Usage.Cache += first.Usage.Cache
 	second.CostUSD += first.CostUSD
+	second.Bytes += first.Bytes
+	if second.CostSource == "" {
+		second.CostSource = first.CostSource
+	}
 	if err != nil {
 		if _, stop := AsStop(err); stop {
 			return second, err
 		}
-		first.Usage, first.CostUSD = second.Usage, second.CostUSD
+		first.Usage, first.CostUSD, first.Bytes = second.Usage, second.CostUSD, second.Bytes
 		return first, nil
 	}
 	return second, nil

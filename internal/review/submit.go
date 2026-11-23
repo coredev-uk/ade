@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/coredev-uk/ade/internal/aimark"
 	"github.com/coredev-uk/ade/internal/audit"
 	"github.com/coredev-uk/ade/internal/events"
 	"github.com/coredev-uk/ade/internal/forge"
@@ -256,12 +257,25 @@ func (o *options) diffFor(ctx context.Context, w forge.MRWriter, mr forge.Ref, a
 }
 
 // Render is the text a draft is posted as: the body, led by its severity
-// ("**blocking:** ...") so the author sees how strongly it is meant.
+// ("**blocking:** ...") so the author sees how strongly it is meant. A draft an
+// agent wrote (Source is not you) is made safe to post and marked as AI
+// drafted: every line that is a quick action is neutralised, since forge
+// content steered the model and the forge would run it when the review is
+// published, and the text ends with the AI mark (aimark). Your own drafts are
+// posted as written.
 func Render(d Draft) string {
-	if d.Severity == SeverityNone {
-		return d.Body
+	body := d.Body
+	ai := d.Source != "" && d.Source != SourceYou
+	if ai {
+		body = aimark.NoQuickActions(body)
 	}
-	return "**" + string(d.Severity) + ":** " + d.Body
+	if d.Severity != SeverityNone {
+		body = "**" + string(d.Severity) + ":** " + body
+	}
+	if ai {
+		body = aimark.Mark(body)
+	}
+	return body
 }
 
 // adopt finds a draft note on the forge that is this comment already: same

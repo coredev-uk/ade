@@ -708,7 +708,7 @@ func (d *startDialog) swEditHere() {
 		return
 	}
 	tp := d.plan.Targets[d.preview]
-	if tp.Found.MR != nil || !hasStep(d.plan, startwork.StepMR, tp.Target.Name) {
+	if tp.Found.MR != nil || tp.Found.ClosedMR != nil || !hasStep(d.plan, startwork.StepMR, tp.Target.Name) {
 		return // no MR step to carry a body
 	}
 	var child forge.Ref
@@ -1060,10 +1060,12 @@ func (m model) swStations(d *startDialog, inner int, compact bool) []string {
 // stepSummary is a repo's steps on one line: what the forge will write, what
 // git will do, what exists already, each group by its mark and words.
 func stepSummary(g glyphs, steps []startwork.Step) string {
-	var forgeW, local, done []string
+	var forgeW, local, done, closed []string
 	for _, s := range steps {
 		w := stepWord(s.Kind)
 		switch {
+		case s.Closed:
+			closed = append(closed, w)
 		case s.Done:
 			done = append(done, w)
 		case s.Write:
@@ -1078,6 +1080,9 @@ func stepSummary(g glyphs, steps []startwork.Step) string {
 	}
 	if len(local) > 0 {
 		parts = append(parts, "+ local "+strings.Join(local, ", "))
+	}
+	if len(closed) > 0 {
+		parts = append(parts, stWarn.Render(g.Warn+" closed "+strings.Join(closed, ", ")))
 	}
 	if len(done) > 0 {
 		parts = append(parts, stFaint.Render(g.OK+" exists "+strings.Join(done, ", ")))
@@ -1107,7 +1112,7 @@ type swMRBlock struct {
 func (m model) swMRParts(d *startDialog, inner int) (swMRBlock, bool) {
 	p := d.plan
 	tp := p.Targets[d.preview]
-	if tp.Found.MR != nil || !hasStep(p, startwork.StepMR, tp.Target.Name) {
+	if tp.Found.MR != nil || tp.Found.ClosedMR != nil || !hasStep(p, startwork.StepMR, tp.Target.Name) {
 		return swMRBlock{}, false
 	}
 	guide := "no template in " + tp.Target.Project
@@ -1346,6 +1351,8 @@ func (m model) swNote(n string, inner int) []string {
 // local git step, or something that exists already.
 func stepMark(g glyphs, s startwork.Step) string {
 	switch {
+	case s.Closed:
+		return stWarn.Render(g.Warn + " closed")
 	case s.Done:
 		return stFaint.Render(g.OK + " exists")
 	case s.Write:

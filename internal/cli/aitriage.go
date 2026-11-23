@@ -60,7 +60,16 @@ func printTriage(w io.Writer, ref forge.Ref, ds []review.Draft) {
 		if len(d.Body) > longDraft {
 			flags = " long"
 		}
+		lines := strings.Split(strings.TrimSpace(d.Body), "\n")
+		if len(lines) > 1 {
+			// Every line is posted, not just the first: show them all, so a line
+			// that does not belong in a review comment is seen before accepting.
+			flags += fmt.Sprintf(" multi-line(%d)", len(lines))
+		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s:%d\t%s%s\n", d.ID, d.Source, d.State, nonEmpty(string(d.Severity), "-"), d.Path, d.Line, firstLine(d.Body), flags)
+		for _, l := range lines[min(1, len(lines)):] {
+			fmt.Fprintf(tw, "\t\t\t\t\t│ %s\n", l)
+		}
 	}
 	tw.Flush()
 }
