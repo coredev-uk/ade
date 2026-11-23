@@ -132,6 +132,10 @@ func (m model) paletteEntries() []palEntry {
 	if !onHome {
 		return es
 	}
+	digestName := "New comments since you last looked (listed as they are)"
+	if m.aiOn() {
+		digestName = "AI digest of new comments"
+	}
 	home := []palEntry{
 		{name: "Search work items and open MRs", key: "/", needHome: true, run: func(m model) (model, tea.Cmd) { return m.openSearch() }},
 		{name: "Clear search and filters", needHome: true, run: func(m model) (model, tea.Cmd) { return m.clearFilters(), nil }},
@@ -146,8 +150,7 @@ func (m model) paletteEntries() []palEntry {
 		{name: "Start work: choose repos, mode, branches", cli: "ade start <ref> --repo <repo> --mode <mode>", needHome: true, run: func(m model) (model, tea.Cmd) { return m.openStartAsk() }},
 		pressEntry("Create the MR for started work", "M", "ade mr create", true),
 		pressEntry("Classify: suggest type and app labels", "c", "ade ai classify", true),
-		{name: "AI digest of new comments", cli: "ade ai digest <ref>", needHome: true, run: func(m model) (model, tea.Cmd) { return m.openAIText(aiTextDigest) }},
-		{name: "AI stand-in description for an empty issue", cli: "ade ai standin <ref>", needHome: true, run: func(m model) (model, tea.Cmd) { return m.openAIText(aiTextStandIn) }},
+		{name: digestName, cli: "ade ai digest <ref>", needHome: true, run: func(m model) (model, tea.Cmd) { return m.openAIText(aiTextDigest) }},
 		pressEntry("Agents for this item", "a", "ade agent", true),
 		pressEntry("Agents: every run", "A", "ade agent list", true),
 		pressEntry("Open workspace", "w", "ade ws up", true),
@@ -164,8 +167,10 @@ func (m model) paletteEntries() []palEntry {
 		pressEntry("Move the workflow label to match the stage", "m", "ade issue stage <ref>", true),
 		pressEntry("Push the item's branches", "u", "ade push", true),
 	}
-	if m.aiOn() {
-		home = append(home, pressEntry("Research the issue in the background", "R", "ade ai research <ref> --detach", true))
+	if m.aiOn() { // these have no list or keyword form: without AI they are not offered
+		home = append(home,
+			palEntry{name: "AI stand-in description for an empty issue", cli: "ade ai standin <ref>", needHome: true, run: func(m model) (model, tea.Cmd) { return m.openAIText(aiTextStandIn) }},
+			pressEntry("Research the issue in the background", "R", "ade ai research <ref> --detach", true))
 	}
 	es = append(home, es...)
 	// Named filters and project choices, directly.

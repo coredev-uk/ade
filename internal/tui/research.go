@@ -61,8 +61,8 @@ func (m model) openResearch() (model, tea.Cmd) {
 		m.homeSel >= len(m.homeRows) || m.homeRows[m.homeSel].item == nil {
 		return m, nil
 	}
-	if !m.aiOn() {
-		return m.toast("ui.hint", events.Info, "Research needs AI: ai.mode is off or no profile is set", ""), nil
+	if ok, why := m.aiAvail(); !ok {
+		return m.toast("ui.hint", events.Info, "Research needs AI: "+why, ""), nil
 	}
 	it := m.homeRows[m.homeSel].item
 	d := &notesDialog{ref: it.Ref, title: it.Issue.Title, item: *it, rs: &researchState{}}

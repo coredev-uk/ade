@@ -80,17 +80,11 @@ type aiAnswer struct {
 	draft    string // describe: the text that enter writes to the MR
 }
 
-// aiOn reports whether the page offers AI at all: ai.mode is not off and a
-// profile is configured. A machine without AI sees none of it.
+// aiOn reports whether the page offers AI at all: ai.mode is not off and the
+// selected profile is defined (config.AI.Available). A machine without AI sees
+// none of it.
 func (m model) aiOn() bool {
-	if m.app == nil || m.app.Config == nil {
-		return false
-	}
-	c := m.app.Config.AI
-	if c.Mode == "off" || c.Profile == "" {
-		return false
-	}
-	_, ok := c.Profiles[c.Profile]
+	ok, _ := m.aiAvail()
 	return ok
 }
 
@@ -176,7 +170,7 @@ func (m *model) aiAsk(d *mrData, k aiKey, refresh, assume bool) tea.Cmd {
 		}
 		if !haveDiff {
 			if diff, err = be.MRDiff(ctx, ref); err != nil {
-				return nil, fmt.Errorf("read the diff of %s: %w", ref, err)
+				return nil, forgeRead(fmt.Errorf("read the diff of %s: %w", ref, err))
 			}
 		}
 		var job ai.Job
@@ -194,7 +188,7 @@ func (m *model) aiAsk(d *mrData, k aiKey, refresh, assume bool) tea.Cmd {
 		case aiReview:
 			threads, err := be.Discussions(ctx, ref)
 			if err != nil {
-				return nil, fmt.Errorf("read the threads of %s: %w", ref, err)
+				return nil, forgeRead(fmt.Errorf("read the threads of %s: %w", ref, err))
 			}
 			// The repo's AGENTS.md is part of the review's input (PLAN §6.9), as
 			// `ade ai review` reads it.
@@ -311,20 +305,32 @@ func (m *model) onAI(d *mrData, msg mrResultMsg) tea.Cmd {
 
 // aiCause words why a call failed for the screen.
 func aiCause(err error) string {
-	var nc *ai.NotInstalledError
 	if stop, ok := ai.AsStop(err); ok {
 		return "budget stop: " + stop.Message
 	}
-	switch {
-	case errors.Is(err, ai.ErrAutoPaused):
+	if errors.Is(err, ai.ErrAutoPaused) {
 		return "AI budget reached today; s asks anyway"
-	case errors.Is(err, ai.ErrDisabled):
-		return "AI is off (ai.mode = off)"
-	case errors.As(err, &nc):
-		return nc.Error()
 	}
+	var fr *forgeReadError
+	if errors.As(err, &fr) {
+		return shortCause(fr.err) // the forge failed, not the model
+	}
+	if s, ok := ai.HumanKnown(err); ok {
+		return s
+	}
+	// Not a failure of the model call ADE knows: a refusal or a local error
+	// with its own words, which were never written to the log.
 	return oneLine(err.Error())
 }
+
+// forgeReadError marks a failure to read from the forge while preparing an AI
+// call: it is worded as a forge problem, not an AI one.
+type forgeReadError struct{ err error }
+
+func (e *forgeReadError) Error() string { return e.err.Error() }
+func (e *forgeReadError) Unwrap() error { return e.err }
+
+func forgeRead(err error) error { return &forgeReadError{err} }
 
 // deliverReply puts a finished draft reply in the editor when the page still
 // shows that thread; otherwise it waits for r. It is never posted by itself.
