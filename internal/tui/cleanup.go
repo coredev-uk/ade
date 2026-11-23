@@ -19,10 +19,11 @@ import (
 // the CLI does (merge requests merged or closed, tree clean, everything
 // pushed), list what would go and what stays with the reason, and remove only
 // on enter. `x` is `ade cleanup <ref>`: it also fast-forwards the repo's
-// default branch (clean trees only) and deletes the local branches, with
-// `git branch -D` for a squash-merged one whose commits are in the merged
-// MR's head. The palette entry is `ade gc`: worktrees only, branches that git
-// sees as merged.
+// default branch (clean trees only). Both delete the local branch of a removed
+// worktree: with `git branch -d` when git sees it merged, with `git branch -D`
+// when it is a squash-merged branch whose commits are all in the merged MR's
+// head; the preview says which, and why a branch stays. The palette entry is
+// `ade gc`: every project's worktrees, no default-branch update.
 
 // mrLookup asks the forge each manifest names for the MRs of a branch, opening
 // one client per forge (through the sync service's opener in tests).
@@ -123,17 +124,13 @@ func cleanupPlan(ctx context.Context, ps *project.Service, trees []project.Tree,
 		return actionPlan{nothing: true, lines: append(lines, "", "Nothing can be removed yet.")}
 	}
 	verb := "remove"
+	lines = append(lines, "")
 	if item {
 		// The same dry run `ade cleanup --dry-run` shows: the branches and the
 		// default branch's fast-forward.
 		cleaned, baselines, _ := ps.CleanTrees(ctx, doomed, true)
-		lines = append(lines, "")
 		for i, c := range cleaned {
-			if c.WouldForce {
-				lines = append(lines, fmt.Sprintf("branch %s: deleted with git branch -D (%s)", doomed[i].Branch, c.WouldWhy))
-			} else {
-				lines = append(lines, fmt.Sprintf("branch %s: deleted if git sees it merged (%s)", doomed[i].Branch, c.WouldWhy))
-			}
+			lines = append(lines, branchPlanLine(doomed[i].Branch, c.WouldForce, c.WouldWhy))
 		}
 		for _, b := range baselines {
 			name := b.Project + "/" + b.Repo + "/" + b.Branch
@@ -147,10 +144,15 @@ func cleanupPlan(ctx context.Context, ps *project.Service, trees []project.Tree,
 			}
 		}
 		verb = "clean up"
+	} else {
+		for _, t := range doomed {
+			forced, why := ps.PlanBranch(ctx, t)
+			lines = append(lines, branchPlanLine(t.Branch, forced, why))
+		}
 	}
 	return actionPlan{
 		lines: lines, verb: verb,
-		note: "Only worktrees that are clean, pushed, and whose merge requests are merged or closed are removed; nothing is forced.",
+		note: "Only worktrees that are clean, pushed, and whose merge requests are merged or closed are removed, and git refuses one that changed since. A branch git does not see as merged is deleted with -D only when all its commits are in a merged MR's head (the rows above say which).",
 		apply: func(ctx context.Context) ([]string, error) {
 			if item {
 				return applyCleanup(ctx, ps, doomed)
@@ -159,6 +161,15 @@ func cleanupPlan(ctx context.Context, ps *project.Service, trees []project.Tree,
 		},
 		after: func(m model) tea.Cmd { return m.loadStatus() },
 	}
+}
+
+// branchPlanLine says what enter does to a branch: git's -d if it sees it
+// merged, -D on the proof that a merged MR holds its commits, else nothing.
+func branchPlanLine(branch string, forced bool, why string) string {
+	if forced {
+		return fmt.Sprintf("branch %s: deleted with git branch -D (%s)", branch, why)
+	}
+	return fmt.Sprintf("branch %s: deleted if git sees it merged, else kept (%s)", branch, why)
 }
 
 func applyCleanup(ctx context.Context, ps *project.Service, doomed []project.Tree) ([]string, error) {

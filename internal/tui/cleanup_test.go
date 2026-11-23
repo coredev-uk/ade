@@ -124,6 +124,9 @@ func TestHomeCleanupKeepsWorkWithAnOpenMRAndPaletteGCSaysTheSame(t *testing.T) {
 		t.Fatalf("dialog = %+v", e.m.act)
 	}
 	out := strings.Join(e.m.act.plan.lines, "\n")
+	if !strings.Contains(out, "branch "+webMergedBranch+": deleted") {
+		t.Fatalf("the gc preview does not say what happens to the branch:\n%s", out)
+	}
 	if !strings.Contains(out, "remove  demo-gl/web/"+webMergedBranch) || !strings.Contains(out, "keep    demo-gl/api/"+apiOpenBranch) {
 		t.Fatalf("plan:\n%s", out)
 	}
