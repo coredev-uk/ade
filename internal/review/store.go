@@ -26,6 +26,8 @@ func init() {
 		created_at TEXT NOT NULL,
 		PRIMARY KEY (mr, id)
 	)`)
+	// A reply's thread: older rows are comments of their own.
+	store.Register("review.drafts_in_reply_to", `ALTER TABLE review_drafts ADD COLUMN in_reply_to TEXT NOT NULL DEFAULT ''`)
 }
 
 // Store keeps unsubmitted drafts in cache.db, keyed by MR, so quitting the
@@ -36,7 +38,7 @@ type Store struct{ db *sql.DB }
 // NewStore wraps an open cache.
 func NewStore(st *store.Store) *Store { return &Store{db: st.DB} }
 
-const draftColumns = `id, path, old_path, line, side, body, severity, source, state, remote_id, published, created_at`
+const draftColumns = `id, path, old_path, line, side, body, severity, source, state, remote_id, published, created_at, in_reply_to`
 
 // List returns the MR's drafts oldest first.
 func (s *Store) List(mr forge.Ref) ([]Draft, error) {
@@ -53,7 +55,7 @@ func (s *Store) List(mr forge.Ref) ([]Draft, error) {
 			pub     int
 		)
 		if err := rows.Scan(&d.ID, &d.Path, &d.OldPath, &d.Line, &d.Side, &d.Body, &d.Severity, &d.Source, &d.State,
-			&d.RemoteID, &pub, &created); err != nil {
+			&d.RemoteID, &pub, &created, &d.InReplyTo); err != nil {
 			return nil, err
 		}
 		d.Published = pub != 0
@@ -80,12 +82,13 @@ func put(db execer, mr forge.Ref, d Draft) error {
 	if d.Published {
 		pub = 1
 	}
-	_, err := db.Exec(`INSERT INTO review_drafts (mr, `+draftColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	_, err := db.Exec(`INSERT INTO review_drafts (mr, `+draftColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (mr, id) DO UPDATE SET path = excluded.path, old_path = excluded.old_path, line = excluded.line,
 			side = excluded.side, body = excluded.body, severity = excluded.severity, source = excluded.source,
-			state = excluded.state, remote_id = excluded.remote_id, published = excluded.published`,
+			state = excluded.state, remote_id = excluded.remote_id, published = excluded.published,
+			in_reply_to = excluded.in_reply_to`,
 		mr.String(), d.ID, d.Path, d.OldPath, d.Line, d.Side, d.Body, d.Severity, d.Source, d.State, d.RemoteID, pub,
-		d.CreatedAt.UTC().Format(time.RFC3339Nano))
+		d.CreatedAt.UTC().Format(time.RFC3339Nano), d.InReplyTo)
 	return err
 }
 

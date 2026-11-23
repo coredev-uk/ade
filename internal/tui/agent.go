@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -8,10 +9,13 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/coredev-uk/ade/internal/agent"
+	"github.com/coredev-uk/ade/internal/ai"
 	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/domain"
 	hostedit "github.com/coredev-uk/ade/internal/editor"
@@ -32,11 +36,12 @@ import (
 type agStage int
 
 const (
-	agList    agStage = iota // start choices and runs
-	agPlan                   // a plan awaiting approval, read here
-	agDetail                 // a run's state, spend, diff
-	agConfirm                // push, asked
-	agDiscard                // discard a -ai branch, asked
+	agList         agStage = iota // start choices and runs
+	agPlan                        // a plan awaiting approval, read here
+	agDetail                      // a run's state, spend, diff
+	agConfirm                     // push, asked
+	agDiscard                     // discard a run's changes (the -ai branch, or the worktree's edits), asked
+	agStartConfirm                // start a plan or an address run, asked: what is sent, what it may cost
 )
 
 // agentDialog is the dialog's state. The model holds a pointer (nil when
@@ -70,6 +75,14 @@ type agentDialog struct {
 	// the runs started from this dialog (n toggles).
 	notes   string
 	noNotes bool
+
+	// aiOff is ai.mode = "off": the start rows give way to a line saying why;
+	// the run list keeps working (a run in review can still be pushed or discarded).
+	aiOff bool
+	// pend is the start the dialog asks about (stage agStartConfirm).
+	pend *agPending
+	// wantDiscard opens the run on its discard question, not its page.
+	wantDiscard bool
 }
 
 // agRepo is one repo of a multi-repo item and the MR the agent would address
@@ -130,6 +143,22 @@ func (d *agentDialog) repo() string {
 	return d.repos[d.ri].name
 }
 
+// agPending is a start that waits for the user's yes: the target and context
+// are resolved already (the network part), nothing is created or sent yet.
+type agPending struct {
+	kind agent.Kind
+	t    agent.Target
+	c    agent.Context
+	pf   ai.Preflight
+	// uncapped is set when the driver is codex and a cap applies: the run is
+	// created only with the user's explicit yes to running it uncapped.
+	uncapped bool
+	// runID is set for the implementation of an approved plan (kind run): the
+	// run exists already and only the yes to an uncapped codex run is asked.
+	runID string
+	apart bool
+}
+
 // --- messages -----------------------------------------------------------------
 
 type (
@@ -143,6 +172,11 @@ type (
 		run  agent.Run
 		kind agent.Kind
 		err  error
+	}
+	// agPendingMsg is a start that needs the user's yes first.
+	agPendingMsg struct {
+		d    *agentDialog
+		pend *agPending
 	}
 	// agStepMsg is the end of a long step (plan, run, address, push).
 	agStepMsg struct {
@@ -185,7 +219,7 @@ func (m model) openAgent(item *domain.WorkItem, all bool) (model, tea.Cmd) {
 		return m, nil
 	}
 	mgr, err := agentOpen(m.app)
-	d := &agentDialog{stage: agList, mgr: mgr, item: item}
+	d := &agentDialog{stage: agList, mgr: mgr, item: item, aiOff: m.agAIOff()}
 	m.agt = d
 	if err != nil {
 		d.err = err
@@ -225,12 +259,42 @@ func (m model) agLoad(d *agentDialog) tea.Cmd {
 	return func() tea.Msg {
 		var runs []agent.Run
 		var err error
+		// Through the manager: a run whose process died is marked failed first.
 		if d.item != nil {
-			runs, err = d.mgr.Store.ForItem(d.item.Ref)
+			runs, err = d.mgr.ForItem(d.item.Ref)
 		} else {
-			runs, err = d.mgr.Store.List()
+			runs, err = d.mgr.List()
 		}
 		return agRunsMsg{d: d, runs: runs, err: err}
+	}
+}
+
+// agAIOff reports ai.mode = "off": no agent can be started.
+func (m model) agAIOff() bool {
+	return m.app != nil && m.app.Config != nil && m.app.Config.AI.Mode == "off"
+}
+
+// agentSteps counts the agent steps in flight (plan, implement, address): quitting
+// the dashboard cancels them and waits for each to write its state, so a run is
+// never left "running" by a closed dashboard.
+var agentSteps sync.WaitGroup
+
+// agGo runs an agent step as a command and counts it in agentSteps.
+func agGo(step func() tea.Msg) tea.Cmd {
+	return func() tea.Msg {
+		agentSteps.Add(1)
+		defer agentSteps.Done()
+		return step()
+	}
+}
+
+// waitAgentSteps waits for the steps in flight to settle, at most d.
+func waitAgentSteps(d time.Duration) {
+	done := make(chan struct{})
+	go func() { agentSteps.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(d):
 	}
 }
 
@@ -261,6 +325,13 @@ func (m model) agentUpdate(msg tea.Msg) (model, tea.Cmd, bool) {
 		return m, nil, true
 	case agStartedMsg:
 		return m.agStarted(msg)
+	case agPendingMsg:
+		d := m.agt
+		if d == nil || msg.d != d {
+			return m, nil, true
+		}
+		d.busy, d.warn, d.pend, d.stage = "", "", msg.pend, agStartConfirm
+		return m, nil, true
 	case agStepMsg:
 		d := m.agt
 		if d == nil || msg.d != d {
@@ -287,6 +358,12 @@ func (m model) agentUpdate(msg tea.Msg) (model, tea.Cmd, bool) {
 		d.stage = agDetail
 		if msg.run.State == agent.StateAwaiting {
 			d.stage = agPlan
+		}
+		if d.wantDiscard {
+			d.wantDiscard = false
+			if msg.run.State == agent.StateReview {
+				d.stage = agDiscard
+			}
 		}
 		return m, nil, true
 	case agEditMsg:
@@ -331,7 +408,7 @@ func (m model) agStarted(msg agStartedMsg) (model, tea.Cmd, bool) {
 	}
 	d.warn, d.cur = "", msg.run
 	ctx, mgr, id := m.ctx, d.mgr, msg.run.ID
-	return m, tea.Batch(m.agLoad(d), func() tea.Msg {
+	return m, tea.Batch(m.agLoad(d), agGo(func() tea.Msg {
 		var r agent.Run
 		var err error
 		if msg.kind == agent.KindAddress {
@@ -340,11 +417,16 @@ func (m model) agStarted(msg agStartedMsg) (model, tea.Cmd, bool) {
 			r, err = mgr.Plan(ctx, id)
 		}
 		return agStepMsg{d: d, run: r, err: err}
-	}), true
+	})), true
 }
 
-// agStart creates a run for the dialog's item and starts its first step: the
-// target and the issue's context are read first (the network part).
+// agStart reads the target and the issue's context for the dialog's item (the
+// network part), asks the manager what the start would cost, and either
+// creates the run at once (a plan that needs no yes) or waits for the user's
+// yes in agStartConfirm: always for address (the threads are other people's
+// text sent to an agent that runs commands), and whenever the pre-flight asks
+// (ai.mode = "ask" over confirm_over_usd or the weekly soft cap) or a codex
+// run could not be stopped at its cap. Nothing is created before that.
 func (m model) agStart(d *agentDialog, kind agent.Kind) tea.Cmd {
 	ctx, a, mgr, ref, repo := m.ctx, m.app, d.mgr, d.item.Ref, d.repo()
 	d.busy, d.warn = "reading "+ref.String()+" and its worktree", ""
@@ -362,11 +444,34 @@ func (m model) agStart(d *agentDialog, kind agent.Kind) tea.Cmd {
 				return agStartedMsg{d: d, err: err}
 			}
 		}
-		// The pre-flight's confirmation is the dialog itself: the user
-		// pressed p, and the run is capped.
-		r, _, err := mgr.New(ctx, agent.Request{Kind: kind, Target: t, Context: c, Assume: true})
-		return agStartedMsg{d: d, run: r, kind: kind, err: err}
+		pend := &agPending{kind: kind, t: t, c: c}
+		req := agent.Request{Kind: kind, Target: t, Context: c, DryRun: true}
+		_, pf, err := mgr.New(ctx, req)
+		if errors.Is(err, agent.ErrUncapped) {
+			// codex under a cap: ask, then price the call as the run would be.
+			pend.uncapped, req.AllowUncapped = true, true
+			_, pf, err = mgr.New(ctx, req)
+		}
+		var need *ai.ErrNeedsConfirm
+		switch {
+		case errors.As(err, &need):
+			pf = need.Preflight
+		case err != nil:
+			return agStartedMsg{d: d, err: err}
+		}
+		pend.pf = pf
+		if kind == agent.KindAddress || pend.uncapped || len(pf.Confirm) > 0 {
+			return agPendingMsg{d: d, pend: pend}
+		}
+		return agCreate(ctx, mgr, d, pend)
 	}
+}
+
+// agCreate creates the run of a start the user has agreed to (or that needed
+// no yes).
+func agCreate(ctx context.Context, mgr *agent.Manager, d *agentDialog, p *agPending) tea.Msg {
+	r, _, err := mgr.New(ctx, agent.Request{Kind: p.kind, Target: p.t, Context: p.c, Assume: len(p.pf.Confirm) > 0, AllowUncapped: p.uncapped})
+	return agStartedMsg{d: d, run: r, kind: p.kind, err: err}
 }
 
 // agOpenRun loads what a run's page shows: the plan, or the diff summary.
@@ -419,6 +524,9 @@ func (m model) agKey(k tea.KeyPressMsg) (model, tea.Cmd) {
 		case "y", "enter":
 			d.stage, d.busy = agDetail, "committing and pushing"
 			ctx, mgr, id := m.ctx, d.mgr, d.cur.ID
+			if !d.cur.AcceptedAt.IsZero() {
+				d.busy = "pushing"
+			}
 			return m, func() tea.Msg {
 				r, err := mgr.Push(ctx, id, agent.PushOpts{})
 				return agStepMsg{d: d, run: r, err: err}
@@ -430,6 +538,9 @@ func (m model) agKey(k tea.KeyPressMsg) (model, tea.Cmd) {
 		switch ks {
 		case "y", "enter":
 			d.stage, d.busy = agDetail, "removing the -ai worktree and branch"
+			if !d.cur.Isolated() {
+				d.busy = "putting the worktree back to where the run started"
+			}
 			ctx, mgr, id := m.ctx, d.mgr, d.cur.ID
 			return m, func() tea.Msg {
 				r, err := mgr.Discard(ctx, id)
@@ -438,6 +549,8 @@ func (m model) agKey(k tea.KeyPressMsg) (model, tea.Cmd) {
 		case "n", "esc":
 			d.stage = agDetail
 		}
+	case agStartConfirm:
+		return m.agStartConfirmKey(d, ks)
 	}
 	return m, nil
 }
@@ -466,10 +579,16 @@ func (m model) agListKey(d *agentDialog, ks string) (model, tea.Cmd) {
 		if d.item == nil || d.busy != "" {
 			return m, nil
 		}
+		if d.aiOff {
+			d.warn = agAIOffReason
+			return m, nil
+		}
 		return m, m.agStart(d, agent.KindPlan)
 	case "c":
 		switch {
 		case d.item == nil || d.busy != "":
+		case d.aiOff:
+			d.warn = agAIOffReason
 		case d.mr == nil:
 			d.warn = "no open MR with unresolved threads to address"
 		default:
@@ -486,6 +605,12 @@ func (m model) agListKey(d *agentDialog, ks string) (model, tea.Cmd) {
 		}
 	case "x":
 		if d.sel < len(d.runs) && !d.runs[d.sel].State.Terminal() {
+			if r := d.runs[d.sel]; r.State == agent.StateReview && !r.Isolated() && r.AcceptedAt.IsZero() {
+				// Changes sit in the worktree: cancelling would keep them, and
+				// "discard" asks first and puts the worktree back.
+				d.cur, d.wantDiscard = r, true
+				return m, m.agOpenRun(d, r)
+			}
 			if _, err := d.mgr.Cancel(d.runs[d.sel].ID); err != nil {
 				d.warn = err.Error()
 			}
@@ -512,7 +637,7 @@ func (m model) agPlanKey(d *agentDialog, ks string) (model, tea.Cmd) {
 		d.scroll = 0
 	case "e":
 		if d.cur.Approved {
-			d.warn = "approved: editing the plan voids the approval; x discards the run"
+			d.warn = "approved: editing the plan voids the approval; enter approves the edited plan, x cancels the run"
 		}
 		path := filepath.Join(d.mgr.Store.Dir(d.cur), agent.FilePlan)
 		return m, tea.ExecProcess(agEditor(m.hostEditor(), path), func(error) tea.Msg { return agEditMsg{d} })
@@ -520,7 +645,9 @@ func (m model) agPlanKey(d *agentDialog, ks string) (model, tea.Cmd) {
 		if d.busy != "" {
 			return m, nil
 		}
-		if !d.cur.Approved {
+		if !d.cur.Approved || !d.mgr.PlanIntact(d.cur) {
+			// First approval, or the plan was edited after one: approve what is
+			// on disk now (the manager keeps the hash of what was approved).
 			r, err := d.mgr.Approve(d.cur.ID)
 			if err != nil {
 				d.warn = err.Error()
@@ -529,25 +656,17 @@ func (m model) agPlanKey(d *agentDialog, ks string) (model, tea.Cmd) {
 			d.cur, d.warn = r, ""
 			return m, m.agLoad(d)
 		}
-		ctx, mgr, id := m.ctx, d.mgr, d.cur.ID
 		d.stage, d.busy = agList, ""
-		return m, tea.Batch(m.agLoad(d), func() tea.Msg {
-			r, err := mgr.Implement(ctx, id)
-			return agStepMsg{d: d, run: r, err: err}
-		})
+		return m, m.agImplement(d, d.cur.ID, false)
 	case "i":
-		if d.busy != "" || !d.cur.Approved {
-			if !d.cur.Approved {
+		if d.busy != "" || !d.cur.Approved || !d.mgr.PlanIntact(d.cur) {
+			if !d.cur.Approved || !d.mgr.PlanIntact(d.cur) {
 				d.warn = "approve the plan first (enter)"
 			}
 			return m, nil
 		}
-		ctx, mgr, id := m.ctx, d.mgr, d.cur.ID
 		d.stage, d.busy = agList, ""
-		return m, tea.Batch(m.agLoad(d), func() tea.Msg {
-			r, err := mgr.ImplementApart(ctx, id)
-			return agStepMsg{d: d, run: r, err: err}
-		})
+		return m, m.agImplement(d, d.cur.ID, true)
 	case "x":
 		if _, err := d.mgr.Cancel(d.cur.ID); err != nil {
 			d.warn = err.Error()
@@ -598,6 +717,11 @@ func (m model) agDetailKey(d *agentDialog, ks string) (model, tea.Cmd) {
 		if d.cur.State.Terminal() {
 			return m, nil
 		}
+		if d.cur.State == agent.StateReview && !d.cur.Isolated() && d.cur.AcceptedAt.IsZero() {
+			// The agent's edits are in the worktree: discard asks, then puts it back.
+			d.stage, d.warn = agDiscard, ""
+			return m, nil
+		}
 		if _, err := d.mgr.Cancel(d.cur.ID); err != nil {
 			d.warn = err.Error()
 			return m, nil
@@ -610,6 +734,62 @@ func (m model) agDetailKey(d *agentDialog, ks string) (model, tea.Cmd) {
 				d.stage = agDetail
 			}
 		}
+	}
+	return m, nil
+}
+
+// agAIOffReason is the one line that replaces the start rows with ai.mode = "off".
+const agAIOffReason = `AI is off (ai.mode = "off"): plans and replies to comments need it`
+
+// agImplement implements the approved plan of run id (in the worktree, or on a
+// -ai branch). A codex run that a cap cannot stop first asks the user.
+func (m model) agImplement(d *agentDialog, id string, apart bool) tea.Cmd {
+	ctx, mgr := m.ctx, d.mgr
+	return tea.Batch(m.agLoad(d), agGo(func() tea.Msg {
+		if err := mgr.CheckImplement(ctx, id, apart); errors.Is(err, agent.ErrUncapped) {
+			return agPendingMsg{d: d, pend: &agPending{kind: agent.KindRun, runID: id, apart: apart, uncapped: true}}
+		}
+		implement := mgr.Implement
+		if apart {
+			implement = mgr.ImplementApart
+		}
+		r, err := implement(ctx, id)
+		return agStepMsg{d: d, run: r, err: err}
+	}))
+}
+
+// agStartConfirmKey answers the question of a pending start.
+func (m model) agStartConfirmKey(d *agentDialog, ks string) (model, tea.Cmd) {
+	p := d.pend
+	switch ks {
+	case "n", "esc":
+		d.stage, d.pend = agList, nil
+		return m, m.agLoad(d)
+	case "y", "enter":
+		if p == nil {
+			return m, nil
+		}
+		ctx, mgr := m.ctx, d.mgr
+		d.stage, d.pend = agList, nil
+		if p.runID != "" {
+			// An approved plan whose codex run cannot be capped: the yes is recorded
+			// on the run (audited) before it starts.
+			d.busy = "implementing"
+			id, apart := p.runID, p.apart
+			return m, tea.Batch(m.agLoad(d), agGo(func() tea.Msg {
+				if _, err := mgr.AllowUncapped(id); err != nil {
+					return agStepMsg{d: d, err: err}
+				}
+				implement := mgr.Implement
+				if apart {
+					implement = mgr.ImplementApart
+				}
+				r, err := implement(ctx, id)
+				return agStepMsg{d: d, run: r, err: err}
+			}))
+		}
+		d.busy = "starting"
+		return m, func() tea.Msg { return agCreate(ctx, mgr, d, p) }
 	}
 	return m, nil
 }

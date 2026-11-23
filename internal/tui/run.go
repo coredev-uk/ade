@@ -4,6 +4,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -48,7 +49,13 @@ func Run(ctx context.Context, a *app.App) error {
 	defer stop()
 
 	_, err = p.Run()
-	if err != nil && ctx.Err() != nil {
+	interrupted := ctx.Err() != nil
+	// Quitting (q, a closed terminal, a signal) cancels the agent steps this
+	// dashboard started and waits for each to write its state: a run is marked
+	// cancelled (its edits stay in the worktree), never left "running".
+	cancel()
+	waitAgentSteps(10 * time.Second)
+	if err != nil && interrupted {
 		return nil // interrupted: not a failure
 	}
 	return err

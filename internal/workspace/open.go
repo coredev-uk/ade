@@ -87,6 +87,12 @@ func WithItem(it ItemRef) OpenOption { return func(c *openConfig) { c.item = &it
 // worktree's branch (WithItem wins when both are given).
 func WithItems(items []ItemRef) OpenOption { return func(c *openConfig) { c.items = items } }
 
+// The notices OpenResult.Notice carries.
+const (
+	NoticeAIOff = "AI is off: opened the editor layout instead of agent"
+	NoticeNoOmp = "omp not on PATH: the agent pane is a shell"
+)
+
 // OpenResult says what Open did.
 type OpenResult struct {
 	Host       string `json:"host"`
@@ -98,6 +104,10 @@ type OpenResult struct {
 	TasksFile  string `json:"tasks_file,omitempty"`
 	// Hint is what to do by hand when the host cannot open it (plain, or code missing).
 	Hint string `json:"hint,omitempty"`
+	// Notice says what differs from what was asked for: the agent layout fell
+	// back to the editor because AI is off, or its pane is a shell because omp
+	// is not on PATH. The tab opened either way.
+	Notice string `json:"notice,omitempty"`
 	// Warnings are problems that did not stop the workspace opening (e.g. the
 	// worktree's git config could not be written).
 	Warnings []string `json:"warnings,omitempty"`
@@ -226,6 +236,15 @@ func prepare(ctx context.Context, a *app.App, project, repo, worktree string, op
 	if !ValidLayout(layout) {
 		return nil, fmt.Errorf("unknown layout %q (want code, agent, review or manual)", layout)
 	}
+	var notice string
+	switch {
+	case layout == LayoutAgent && a.Config.AI.Mode == "off":
+		layout, notice = LayoutCode, NoticeAIOff
+	case layout == LayoutAgent:
+		if _, err := exec.LookPath("omp"); err != nil {
+			notice = NoticeNoOmp
+		}
+	}
 	p := &prepared{loc: loc, editor: editor.Resolve(a.Config.Host.Editor, editor.FromOS()), agentUnset: a.Config.AgentHiddenEnv()}
 	if cfg.item != nil {
 		p.item = cfg.item
@@ -254,7 +273,7 @@ func prepare(ctx context.Context, a *app.App, project, repo, worktree string, op
 	if title == "" {
 		title = filepath.Base(loc.Tree)
 	}
-	p.res = OpenResult{Tab: repo + "/" + title, Layout: layout}
+	p.res = OpenResult{Tab: repo + "/" + title, Layout: layout, Notice: notice}
 	if p.ade, err = os.Executable(); err != nil {
 		return nil, fmt.Errorf("locate ade executable: %w", err)
 	}

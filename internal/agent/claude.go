@@ -2,6 +2,8 @@ package agent
 
 import (
 	"encoding/json"
+	"fmt"
+	"path/filepath"
 	"strings"
 )
 
@@ -27,14 +29,26 @@ func (d *claudeDriver) Command(s Spec) Cmd {
 	if s.Model != "" {
 		args = append(args, "--model", s.Model)
 	}
+	// Isolation, like omp's --no-extensions: no MCP servers (--strict-mcp-config
+	// with no --mcp-config loads none, and mcp__* is denied for the tools that
+	// slip through), no project or local settings (a repo's hooks), no slash
+	// commands or skills. The user's own settings still load: that is where
+	// the CLI's credentials and proxy live.
+	deny := []string{"mcp__*"}
+	args = append(args, "--strict-mcp-config", "--setting-sources", "user", "--disable-slash-commands")
 	if s.Writes() {
 		args = append(args, "--tools", claudeWriteTools, "--allowedTools", claudeWriteTools, "--permission-mode", "acceptEdits")
 	} else {
 		args = append(args, "--tools", claudeReadTools, "--allowedTools", claudeReadTools, "--permission-mode", "plan")
 	}
+	// --add-dir grants "read and edit": the required repos are readable only,
+	// so the file-editing tools are denied there (// anchors an absolute path).
 	for _, dir := range s.AddDirs {
 		args = append(args, "--add-dir", dir)
+		deny = append(deny, "Edit(/"+filepath.ToSlash(dir)+"/**)", "Write(/"+filepath.ToSlash(dir)+"/**)")
 	}
+	args = append(args, "--disallowedTools")
+	args = append(args, deny...)
 	if s.MaxCostUSD > 0 {
 		args = append(args, "--max-budget-usd", ftoa(s.MaxCostUSD))
 	}
@@ -46,8 +60,15 @@ func (d *claudeDriver) Parser(s Spec) Parser { return &claudeParser{spec: s} }
 type claudeParser struct {
 	spec Spec
 	p    Progress
-	// est is the running price-table estimate, dropped for the reported total.
-	est      float64
+	// msgs is the usage of each assistant message by id. Claude Code emits
+	// one event per content block of a message, each carrying the message's
+	// whole usage (anthropics/claude-code#6805), so adding per event would
+	// count a message once per block: the last event of an id replaces the
+	// earlier ones. anon numbers the events that carry no id.
+	msgs map[string]claudeUsage
+	anon int
+	// reported is set once the result event's total_cost_usd has replaced
+	// the price-table estimate.
 	reported bool
 }
 
@@ -60,6 +81,22 @@ type claudeUsage struct {
 	CacheWrite int `json:"cache_creation_input_tokens"`
 }
 
+// sum is the usage of every message seen.
+func (c *claudeParser) sum() (u claudeUsage) {
+	for _, m := range c.msgs {
+		u.Input += m.Input
+		u.Output += m.Output
+		u.CacheRead += m.CacheRead
+		u.CacheWrite += m.CacheWrite
+	}
+	return u
+}
+
+// setTokens copies u into the progress totals.
+func (c *claudeParser) setTokens(u claudeUsage) {
+	c.p.In, c.p.Out, c.p.Cache = u.Input+u.CacheWrite, u.Output, u.CacheRead
+}
+
 func (c *claudeParser) Feed(line []byte) {
 	var ev struct {
 		Type     string  `json:"type"`
@@ -69,6 +106,7 @@ func (c *claudeParser) Feed(line []byte) {
 		Cost     float64 `json:"total_cost_usd"`
 		NumTurns int     `json:"num_turns"`
 		Message  struct {
+			ID      string `json:"id"`
 			Model   string `json:"model"`
 			Content []struct {
 				Type string `json:"type"`
@@ -85,7 +123,16 @@ func (c *claudeParser) Feed(line []byte) {
 	switch ev.Type {
 	case "assistant":
 		m := ev.Message
-		c.p.Turns++
+		if c.msgs == nil {
+			c.msgs = map[string]claudeUsage{}
+		}
+		id := m.ID
+		if id == "" {
+			c.anon++
+			id = fmt.Sprintf("anon-%d", c.anon)
+		}
+		c.msgs[id] = m.Usage
+		c.p.Turns = len(c.msgs)
 		if m.Model != "" {
 			c.p.Model = m.Model
 		}
@@ -101,12 +148,10 @@ func (c *claudeParser) Feed(line []byte) {
 		if t := strings.TrimSpace(text.String()); t != "" {
 			c.p.Text = t
 		}
-		c.p.In += m.Usage.Input + m.Usage.CacheWrite
-		c.p.Out += m.Usage.Output
-		c.p.Cache += m.Usage.CacheRead
+		u := c.sum()
+		c.setTokens(u)
 		if c.spec.Price != nil && !c.reported {
-			c.est += priceUSD(*c.spec.Price, m.Usage.Input, m.Usage.Output, m.Usage.CacheRead, m.Usage.CacheWrite)
-			c.p.CostUSD, c.p.Source = c.est, CostComputed
+			c.p.CostUSD, c.p.Source = priceUSD(*c.spec.Price, u.Input, u.Output, u.CacheRead, u.CacheWrite), CostComputed
 		}
 	case "result":
 		c.p.Done = true
@@ -115,6 +160,11 @@ func (c *claudeParser) Feed(line []byte) {
 		}
 		if ev.NumTurns > 0 {
 			c.p.Turns = ev.NumTurns
+		}
+		// The result's usage is the run's total: it replaces what the
+		// per-message events added up to.
+		if u := ev.Usage; u != (claudeUsage{}) {
+			c.setTokens(u)
 		}
 		if ev.Cost > 0 || !c.reported {
 			c.reported, c.p.CostUSD, c.p.Source = true, ev.Cost, CostReported
@@ -135,6 +185,9 @@ const (
 // codexDriver runs `codex exec --json` (https://developers.openai.com/codex/cli/reference).
 // Codex reports tokens, not cost, so the run needs a price table entry for
 // the model: without one the cap could not be enforced and the run is refused.
+// Even with one, the cost only arrives when a turn completes, and one turn
+// covers everything up to the final answer: a codex run that edits files
+// cannot be stopped at the cap (see Manager.checkUncapped).
 type codexDriver struct{ cmd string }
 
 func (d *codexDriver) Name() string     { return "codex" }
@@ -142,7 +195,11 @@ func (d *codexDriver) Binary() string   { return d.cmd }
 func (d *codexDriver) NeedsPrice() bool { return true }
 
 func (d *codexDriver) Command(s Spec) Cmd {
-	args := []string{"exec", "--json", "--skip-git-repo-check", "-C", s.Dir}
+	// --ephemeral keeps the session's rollout files off the disk. Codex has
+	// no flag that drops the user's MCP servers or hooks. --add-dir is never
+	// passed: it grants write access, and codex already reads outside the
+	// workspace, so the required repos stay readable and unwritable.
+	args := []string{"exec", "--json", "--ephemeral", "--skip-git-repo-check", "-C", s.Dir}
 	if s.Model != "" {
 		args = append(args, "-m", s.Model)
 	}
@@ -150,9 +207,6 @@ func (d *codexDriver) Command(s Spec) Cmd {
 		args = append(args, "-s", "workspace-write")
 	} else {
 		args = append(args, "-s", "read-only")
-	}
-	for _, dir := range s.AddDirs {
-		args = append(args, "--add-dir", dir)
 	}
 	// "-" reads the prompt from stdin.
 	args = append(args, "-")
