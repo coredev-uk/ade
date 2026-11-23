@@ -1,0 +1,30 @@
+ ADE  home · worktrees · Budget                                                           no unread
+
+ ✕ no provider figure for claude-api · r tries again · ▲ stale: cached provider figures as of 11 No…
+
+ Caps ──────────────────────────────────────────────────── day $0.38 of $2.00 · week $7.10 of $8.00
+ ▸ day    ●━◉──────────○  19%  ✓ ok · $1.62 left
+   week   ●━━━━━━━━━━━◉○  89%  ▲ near cap · $0.90 left
+   sprint no sprint known · U syncs to learn it
+
+ Profiles ─────────────────────────────────────────────────────────────── ai on · active claude-sub
+   ◉ claude-sub active  omp           gateway $0.0080 of $0.01 · resets 12 Nov
+   ○ kimi               openai-compat moonshot $0.12 spent · balance $4.80 · ▲ stale · timed out
+   ○ claude-api         anthropic     ✕ no figure · key rejected
+
+ By day ─────────────────────────────────────────────────────────────────────── last 7 days · $2.65
+   Thu 5 Nov                      $0.00  no calls
+   Fri 6 Nov   ━                  $0.05
+   Sat 7 Nov                      $0.00  no calls
+   Sun 8 Nov   ━━━━━━━━━━━━━━     $1.20
+   Mon 9 Nov   ━━━━━━━            $0.62
+   Tue 10 Nov  ━━━━━              $0.40
+   Wed 11 Nov  ━━━━               $0.38  today
+
+ By feature ──────────────────────────────────────────────── last 30 days · 21 calls · 4 cache hits
+   review     ━━━━━━━━━━━━     $1.40  9 calls
+   summarize  ━              $0.0026  12 calls · 4 cached
+
+ By model ──────────────────────────────────────────────────────────────────────────── last 30 days
+   sonnet-x  ━━━━━━━━━━━━     $1.40  21 calls
+ j/k move   r refresh   L log   tab details   b back   ? keys

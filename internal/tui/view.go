@@ -12,14 +12,6 @@ import (
 	"github.com/coredev-uk/ade/internal/events"
 )
 
-const (
-	minW, minH  = 60, 16
-	twoPaneMinW = 100
-	drawerW     = 60
-	wideMinW    = 140 // three regions: list | preview | activity and services
-	railW       = 28
-)
-
 func (m model) View() tea.View {
 	v := tea.NewView(m.render())
 	v.AltScreen = true
@@ -36,11 +28,15 @@ func (m model) render() string {
 	if b := m.homeBanner(w); b != "" { // AI paused for the budget (aibanner.go)
 		top, bodyH = top+b+"\n", bodyH-1
 	}
-	screen := top + "\n" + m.body(w, bodyH) + "\n" + m.footer(w)
+	gap := "\n" // the blank row under the header; a short screen needs it for content
+	if shortScreen(h) {
+		gap, bodyH = "", bodyH+1
+	}
+	screen := top + gap + m.body(w, bodyH) + "\n" + m.footer(w)
 	layers := []*lipgloss.Layer{lipgloss.NewLayer(fit(m.g, screen, w, h))}
 	// On narrow terminals overlays take the full width: a partly covered list
 	// would show cut-off fragments of the rows beneath.
-	narrow := w < twoPaneMinW
+	narrow := narrowW(w)
 	if m.nc.open {
 		dw := min(drawerW, w-4)
 		if narrow {
@@ -50,18 +46,14 @@ func (m model) render() string {
 		layers = append(layers, lipgloss.NewLayer(fit(m.g, d, dw, h-2)).X(w-dw).Y(1).Z(1))
 	}
 	mrDialog := m.mr != nil && (m.mr.modal != nil || m.help)
-	if ts := m.nc.toastStack(m.g, toastWidth(w)); ts != "" && !m.nc.open && !m.help && m.agt == nil && m.ait == nil && m.sw == nil && m.cl == nil && m.nt == nil && m.ne == nil && m.wt == nil && m.sm == nil && m.cm == nil && m.hs.pal == nil && !mrDialog { // a dialog owns the screen: toasts must not cover its keys
+	if ts := m.nc.toastStack(m.g, toastWidth(w), h); ts != "" && !m.nc.open && !m.help && m.agt == nil && m.ait == nil && m.sw == nil && m.cl == nil && m.nt == nil && m.ne == nil && m.wt == nil && m.sm == nil && m.cm == nil && m.hs.pal == nil && !mrDialog { // a dialog owns the screen: toasts must not cover its keys
 		layers = append(layers, lipgloss.NewLayer(ts).X(w-lipgloss.Width(ts)-1).Y(max(1, h-1-lipgloss.Height(ts))).Z(3))
 	}
 	switch {
 	case m.help && m.mr != nil:
-		layers = append(layers, blankFieldLayer(m.g, mrHelpView(min(w, 100), h, m.g, m.aiOn()), w, h))
+		layers = append(layers, blankFieldLayer(m.g, mrHelpView(helpWidth(w, true), h, m.g, m.aiOn(), m.helpTop), w, h))
 	case m.help:
-		hw := min(76, w-4)
-		if narrow {
-			hw = w
-		}
-		d := helpView(hw, h, m.g)
+		d := helpView(helpWidth(w, false), h, m.g, m.helpTop)
 		top := max(0, (h-2-lipgloss.Height(d))/2)
 		layers = append(layers, blankFieldLayer(m.g, strings.Repeat("\n", top)+d, w, h))
 	}
@@ -127,22 +119,40 @@ func (m model) header(w int) string {
 	if m.isAgilePage() && m.mr == nil {
 		left = m.agileHeaderLeft()
 	}
+	scope := ""
 	if len(m.projects) > 0 {
-		left += stFaint.Render(fmt.Sprintf("  %s %d %s %s %d %s", m.g.Sep, len(m.projects), plural(len(m.projects), "project"), m.g.Sep, repos, plural(repos, "repo")))
+		scope = stFaint.Render(fmt.Sprintf("  %s %d %s %s %d %s", m.g.Sep, len(m.projects), plural(len(m.projects), "project"), m.g.Sep, repos, plural(repos, "repo")))
 	}
 	mid := m.activity()
-	right := stFaint.Render("no unread")
+	unread := stFaint.Render("no unread")
 	if m.nc.unread > 0 {
-		right = stBold.Render(fmt.Sprintf("%s %d unread", m.g.Unread, m.nc.unread))
+		unread = stBold.Render(fmt.Sprintf("%s %d unread", m.g.Unread, m.nc.unread))
 	}
-	if chip := m.chip.render(m.g); chip != "" {
-		right = chip + "  " + right
+	chip := m.chip.render(m.g)
+	// A line too narrow for all of it drops segments by priority: the project
+	// and repo count first, then the sync activity, then the AI chip. The page
+	// name and the unread count stay, the page name cut with an ellipsis last.
+	for level := 0; ; level++ {
+		l, md, r := left, mid, unread
+		if level < 1 {
+			l += scope
+		}
+		if level >= 2 {
+			md = ""
+		}
+		if chip != "" && level < 3 {
+			r = chip + "  " + r
+		}
+		gap := w - lipgloss.Width(l) - lipgloss.Width(md) - lipgloss.Width(r) - 2
+		switch {
+		case md != "" && gap >= 4:
+			return " " + l + strings.Repeat(" ", gap/2) + md + strings.Repeat(" ", gap-gap/2) + r
+		case md == "" && gap >= 1:
+			return " " + l + strings.Repeat(" ", gap) + r
+		case level == 3:
+			return " " + ansi.Truncate(l, max(4, w-lipgloss.Width(r)-3), m.g.Ell) + " " + r
+		}
 	}
-	gap := w - lipgloss.Width(left) - lipgloss.Width(mid) - lipgloss.Width(right) - 2
-	if gap < 4 {
-		return " " + left + strings.Repeat(" ", max(1, w-lipgloss.Width(left)-lipgloss.Width(right)-2)) + right
-	}
-	return " " + left + strings.Repeat(" ", gap/2) + mid + strings.Repeat(" ", gap-gap/2) + right
 }
 
 // activity summarises the git update and forge sync loops in one phrase.
@@ -174,7 +184,7 @@ func (m model) activity() string {
 }
 
 func (m model) footer(w int) string {
-	narrow := w < twoPaneMinW
+	narrow := narrowW(w)
 	switch {
 	case m.ne != nil:
 		return m.noteEditFooter(w)
@@ -183,10 +193,13 @@ func (m model) footer(w int) string {
 	case m.agt != nil:
 		return " " + keys("esc", "back/close", "ctrl+c", "quit") + stFaint.Render("   the agent dialog has its own keys")
 	case m.nc.open:
-		return " " + keys("j/k", "move", "enter", "go to", "f", "filter: "+m.nc.filter.String(), "r", "read", "R", "all read", "esc", "close")
+		return fitKeys(w, []string{"esc", "close"}, []string{"j/k", "move", "enter", "go to", "f", "filter: " + m.nc.filter.String(), "r", "read", "R", "all read"})
 	case m.mr != nil:
 		return m.mrFooter(w)
 	case m.help:
+		if m.helpMax() > 0 {
+			return " " + keys("j/k", "scroll", "esc", "close")
+		}
 		return " " + keys("esc", "close")
 	case m.isAgilePage():
 		return m.agileFooter(w)
@@ -197,13 +210,13 @@ func (m model) footer(w int) string {
 	case m.page == pageHome && m.hs.search.typing:
 		return " " + keys("enter", "keep filter", "up/down", "move", "esc", "clear search")
 	case m.page == pageHome && narrow:
-		return fitKeys(w, []string{"?", "keys"}, []string{"j/k", "move", "enter", "open", "/", "search", ":", "palette", "f", m.homeFilterName(), "tab", "details"})
+		return fitKeys(w, []string{"tab", "details", "?", "keys"}, []string{"j/k", "move", "enter", "open", "/", "search", ":", "palette", "f", m.homeFilterName()})
 	case m.page == pageHome:
 		return fitKeys(w, []string{"?", "keys", "q", "quit"}, []string{"j/k", "move", "enter", "open", "/", "search", ":", "palette", "f", "filter: " + m.homeFilterName(), "o", "browser", "w", "workspace", "U", "refresh"})
 	case narrow:
-		return " " + keys("j/k", "move", "tab", "details", "U", "update", "t", "home", "i", "inbox", "?", "keys")
+		return fitKeys(w, []string{"tab", "details", "?", "keys"}, []string{"j/k", "move", "U", "update", "t", "home", "i", "inbox"})
 	}
-	return " " + keys("j/k", "move", "w", "workspace", "U", "update now", "y", "copy path", "t", "home", "i", "notifications", "?", "keys", "q", "quit")
+	return fitKeys(w, []string{"?", "keys", "q", "quit"}, []string{"j/k", "move", "w", "workspace", "U", "update now", "y", "copy path", "t", "home", "i", "notifications"})
 }
 
 // syncedAt is when Home's data last came from the forge: this process's last
@@ -221,7 +234,7 @@ func (m model) syncedAt() time.Time {
 // toastWidth keeps pop-ups readable but out of the way: a third of a wide
 // screen, the full width (minus a margin) on a narrow one.
 func toastWidth(w int) int {
-	if w < twoPaneMinW {
+	if narrowW(w) {
 		return w - 2
 	}
 	return max(44, min(64, w/3))
@@ -625,20 +638,28 @@ func helpGroups(full bool) []helpGroup {
 	}
 }
 
-func helpView(w, h int, g glyphs) string {
+// helpBody is the Home help's rows (the title first): one key per row, or
+// paired keys where that would not fit the screen.
+func helpBody(w, h int, g glyphs) []string {
 	render := func(full bool) []string {
 		inner := w - 4
+		kw := 8 // the key column grows for the paired keys of the tight form, never cutting one
+		for _, grp := range helpGroups(full) {
+			for _, r := range grp.rows {
+				kw = max(kw, lipgloss.Width(r[0])+1)
+			}
+		}
 		l := []string{stBold.Render("Keys")}
 		for _, grp := range helpGroups(full) {
 			l = append(l, section(grp.title, "", inner, g))
 			for _, r := range grp.rows {
-				desc := ansi.Wrap(r[1], max(10, inner-9), " ")
+				desc := ansi.Wrap(r[1], max(10, inner-1-kw), " ")
 				for i, ln := range strings.Split(desc, "\n") {
 					key := ""
 					if i == 0 {
 						key = r[0]
 					}
-					l = append(l, " "+stBold.Render(pad(g, key, 8))+ln)
+					l = append(l, " "+stBold.Render(pad(g, key, kw))+ln)
 				}
 			}
 		}
@@ -648,8 +669,14 @@ func helpView(w, h int, g glyphs) string {
 	if len(l)+2 > h-2 { // the frame is two rows, and the footer and header stay visible
 		l = render(false)
 	}
+	return l
+}
+
+// helpView is the Home help dialog. Where even the paired form is taller than
+// the screen, the keys scroll (j/k) under the title.
+func helpView(w, h int, g glyphs, top int) string {
 	return lipgloss.NewStyle().Border(g.Border).BorderForeground(lipgloss.Color("#666666")).
-		Padding(0, 1).Width(w).Render(strings.Join(l, "\n"))
+		Padding(0, 1).Width(w).Render(strings.Join(scrollBody(g, helpBody(w, h, g), 1, h, top), "\n"))
 }
 
 // --- helpers ---------------------------------------------------------------------

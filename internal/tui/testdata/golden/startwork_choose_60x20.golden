@@ -1,0 +1,19 @@
+ ADE  Home · worktrees                            no unread
+╭──────────────────────────────────────────────────────────╮
+│ Start work · ade-demo-env/tracker#3                      │
+│ Retry failed webhook deliveries                          │
+│  Repos ─────────────────────────── app::api routes here  │
+│ ▸ [x] api       ade-demo-env/api                         │
+│   [ ] web       ade-demo-env/web                         │
+│   [ ] tracker   ade-demo-env/tracker  · work lives in t… │
+│  What to create ──────────────────────────────────────   │
+│   ● Draft MR     child, link, branch, draft MR, worktree │
+│   ○ Branch only  child, link, branch, worktree; M opens… │
+│   ○ Browse       worktree on the default branch; no for… │
+│  Child issue ────────────────── conventions.child_issue  │
+│   ● auto    a child when the repo is not the tracker's   │
+│   ○ always  always a child issue                         │
+│ … 2 more rows a taller terminal shows them               │
+│ space select   b branch   m mode   c child   a main pane │
+│ enter continue   esc cancel                              │
+╰──────────────────────────────────────────────────────────╯
