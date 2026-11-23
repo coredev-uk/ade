@@ -1,0 +1,8 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/octo-sts/app/refs/heads/main/pkg/octosts/octosts.TrustPolicy.json
+# nix-vendor-hash.yml, fix job: pushes the corrected vendorHash to a pull request's branch as bot-cecil, so CI runs on the push.
+issuer: https://token.actions.githubusercontent.com
+subject: repo:coredev-uk@64542347/ade@1453869301:environment:nix-vendor-hash
+claim_pattern:
+  workflow_ref: coredev-uk/ade/\.github/workflows/nix-vendor-hash\.yml@refs/pull/[0-9]+/merge
+permissions:
+  contents: write

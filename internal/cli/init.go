@@ -151,7 +151,7 @@ func runInit(cmd *cobra.Command, f initFlags) error {
 	// sources can authenticate.
 	probe := config.Defaults()
 	probe.Forges = map[string]config.Forge{ans.Kind: ans.Forge()}
-	probeApp := &app.App{Paths: p, Config: &probe}
+	probeApp := &app.App{Paths: p, Config: &probe, RecordsDir: p.DataDir}
 	var named []string
 	manifests := make([]*config.Manifest, len(sources))
 	for i, src := range sources {

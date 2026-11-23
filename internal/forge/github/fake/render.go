@@ -252,6 +252,7 @@ func (s *Server) renderPull(rp *repo, it *item, single bool) map[string]any {
 		"closed_at": isoOrNil(it.Closed), "merged_at": isoOrNil(p.MergedAt),
 		"merge_commit_sha": strOrNil(p.MergeSHA), "author_association": "MEMBER", "auto_merge": nil,
 	}
+	s.forkHead(m, p)
 	if len(it.Assignees) > 0 {
 		m["assignee"] = s.renderUser(it.Assignees[0])
 	}

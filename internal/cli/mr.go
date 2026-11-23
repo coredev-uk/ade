@@ -182,6 +182,13 @@ func printMR(w io.Writer, mr forge.MR, threads []forge.Discussion) {
 	}
 	fmt.Fprintf(w, "%s · %s\n", mr.Ref, mr.Title)
 	fmt.Fprintf(w, "  %s · %s → %s · by %s\n", state, mr.SourceBranch, mr.TargetBranch, mr.Author.Display())
+	if mr.Fork {
+		from := "a fork the forge no longer names"
+		if mr.SourceProject != "" {
+			from = mr.SourceProject
+		}
+		fmt.Fprintf(w, "  fork: from %s (the branch is not in this repo; ade review opens the MR head detached)\n", from)
+	}
 	if mr.DetailedStatus != "" {
 		fmt.Fprintf(w, "  merge status: %s\n", mr.DetailedStatus)
 	}

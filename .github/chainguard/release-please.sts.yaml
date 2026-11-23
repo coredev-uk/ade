@@ -1,0 +1,10 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/octo-sts/app/refs/heads/main/pkg/octosts/octosts.TrustPolicy.json
+# release.yml, release-please job: opens the release PR, labels it and creates the tag and release as bot-cecil, so CI runs on the PR.
+issuer: https://token.actions.githubusercontent.com
+subject: repo:coredev-uk@64542347/ade@1453869301:environment:bot-cecil
+claim_pattern:
+  workflow_ref: coredev-uk/ade/\.github/workflows/release\.yml@refs/heads/main
+permissions:
+  contents: write
+  issues: write
+  pull_requests: write
