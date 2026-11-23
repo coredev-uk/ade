@@ -1,11 +1,9 @@
 package ai
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -50,6 +48,7 @@ func (d *anthropic) Complete(ctx context.Context, c Call) (Response, error) {
 }
 
 func (d *anthropic) attempt(ctx context.Context, c Call) (Response, error) {
+	fail := Response{DestHost: hostOf(d.base)}
 	raw, err := json.Marshal(map[string]any{
 		"model":      c.Model,
 		"max_tokens": c.MaxTokens,
@@ -57,27 +56,20 @@ func (d *anthropic) attempt(ctx context.Context, c Call) (Response, error) {
 		"messages":   []map[string]string{{"role": "user", "content": c.Prompt}},
 	})
 	if err != nil {
-		return Response{}, err
+		return fail, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.base+"/v1/messages", bytes.NewReader(raw))
+	ex, err := post(ctx, d.hc, "anthropic", d.key, "provider", func() (*http.Request, int, error) {
+		return jsonRequest(ctx, d.base+"/v1/messages", raw, d.headers)
+	})
+	fail.Bytes = ex.sent
 	if err != nil {
-		return Response{}, err
+		return fail, err
 	}
-	d.headers(req)
-	resp, err := d.hc.Do(req)
-	if err != nil {
-		return Response{}, fmt.Errorf("anthropic: %w", redactKey(err, d.key))
-	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if err != nil {
-		return Response{}, fmt.Errorf("anthropic: read response: %w", err)
-	}
-	if resp.StatusCode/100 != 2 {
-		if stop := classifyStop("provider", data); stop != nil {
-			return Response{}, stop
+	if ex.status/100 != 2 {
+		if stop := classifyStop("provider", ex.data); stop != nil {
+			return fail, stop
 		}
-		return Response{}, fmt.Errorf("anthropic: HTTP %d: %s", resp.StatusCode, oneLine(string(data)))
+		return fail, fmt.Errorf("anthropic: HTTP %d: %s", ex.status, oneLine(string(ex.data)))
 	}
 	var out struct {
 		Model      string `json:"model"`
@@ -93,8 +85,8 @@ func (d *anthropic) attempt(ctx context.Context, c Call) (Response, error) {
 			CacheWrite int `json:"cache_creation_input_tokens"`
 		} `json:"usage"`
 	}
-	if err := json.Unmarshal(data, &out); err != nil {
-		return Response{}, fmt.Errorf("anthropic: decode response: %w", err)
+	if err := json.Unmarshal(ex.data, &out); err != nil {
+		return fail, fmt.Errorf("anthropic: decode response: %w", err)
 	}
 	var text strings.Builder
 	for _, b := range out.Content {
@@ -106,12 +98,12 @@ func (d *anthropic) attempt(ctx context.Context, c Call) (Response, error) {
 		Text:     text.String(),
 		Model:    firstNonEmpty(out.Model, c.Model),
 		Usage:    Usage{In: out.Usage.In + out.Usage.CacheWrite, Out: out.Usage.Out, Cache: out.Usage.CacheRead},
-		DestHost: hostOf(d.base),
-		Bytes:    len(raw),
+		DestHost: fail.DestHost,
+		Bytes:    ex.sent,
 
 		Truncated: out.StopReason == "max_tokens",
 	}
-	if price, ok := d.p.Prices[c.Model]; ok {
+	if price, ok := c.priceIn(d.p.Prices); ok {
 		r.CostUSD = (float64(out.Usage.In)*price.Input + float64(out.Usage.Out)*price.Output +
 			float64(out.Usage.CacheRead)*price.CacheRead + float64(out.Usage.CacheWrite)*price.CacheWrite) / 1e6
 		r.CostSource = CostComputed
@@ -119,6 +111,16 @@ func (d *anthropic) attempt(ctx context.Context, c Call) (Response, error) {
 		r.CostSource = CostUnknown
 	}
 	return r, nil
+}
+
+// priceIn is the price to book the call at: the one the pre-flight resolved,
+// else the model's entry in the driver's own table (under any of the names
+// lookupPrice knows).
+func (c Call) priceIn(table map[string]config.Price) (config.Price, bool) {
+	if c.Price != nil {
+		return *c.Price, true
+	}
+	return lookupPrice(table, c.Model)
 }
 
 // Prices: the Messages API publishes none; the profile's table is the source.

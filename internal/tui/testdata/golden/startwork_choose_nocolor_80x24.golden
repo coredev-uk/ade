@@ -13,7 +13,6 @@
 [m│[m   ● [1mDraft MR[m     [2mchild, link, branch, draft MR, worktree[m                     [m│[m
 [m│[m   ○ Branch only  [2mchild, link, branch, worktree; M opens the MR later[m         [m│[m
 [m│[m   ○ Browse       [2mworktree on the default branch; no forge write[m              [m│[m
-[m│[m                                                                              [m│[m
 [m│[m  [1mChild issue[m [2m──────────────────────────────────────[m [2mconventions.child_issue[m  [m│[m
 [m│[m   ● [1mauto[m    [2ma child when the repo is not the tracker's[m                       [m│[m
 [m│[m   ○ always  [2malways a child issue[m                                             [m│[m

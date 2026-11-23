@@ -292,7 +292,7 @@ func blankFieldLayer(g glyphs, d string, w, h int) *lipgloss.Layer {
 	}
 	dw := lipgloss.Width(d)
 	left := (w - dw) / 2
-	lines := strings.Split(d, "\n")
+	lines := clipDialog(g, strings.Split(d, "\n"), h-2) // never taller than the room between header and footer
 	rows := max(h-2, len(lines)+1)
 	out := make([]string, rows)
 	for i := range out {
