@@ -355,7 +355,7 @@ func TestRunOrderIsStable(t *testing.T) {
 			groups = append(groups, c.Group)
 		}
 	}
-	if got := strings.Join(groups, ","); got != "config,tools,forge,host,cde" {
+	if got := strings.Join(groups, ","); got != "config,tools,forge,host,cde,ai" {
 		t.Errorf("group order %s", got)
 	}
 	var forge []string
