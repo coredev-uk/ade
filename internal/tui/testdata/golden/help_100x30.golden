@@ -16,7 +16,7 @@
 │  a A       agent runs for the item; all runs                                                     │
 │  w v       open workspace (zellij); VS Code workspace of all repos                               │
 │  y o       copy link or path; browser                                                            │
-│  n N = r   edit notes; dated note; weight; restart services                                      │
+│  n N = m r edit notes; dated note; weight; label move; restart services                          │
 │  Pages ───────────────────────────────────────────────────────────────────────────────────────   │
 │  S V       standup; sprint retro                                                                 │
 │  b L       budget; audit log                                                                     │
