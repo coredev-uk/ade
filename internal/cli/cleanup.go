@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -153,40 +152,24 @@ func keptWhy(rows []gcRow) string {
 	return strings.Join(parts, " | ")
 }
 
-// cleanTrees removes the worktrees, fast-forwards each repo's baseline once,
-// then deletes the branches, which the fast-forward lets git see as merged. A
-// dry run only fills in the baselines' plan. It returns how many removals failed.
+// cleanTrees runs project.CleanTrees on the doomed rows and records the outcome
+// on them and in res.Baselines. It returns how many removals failed.
 func cleanTrees(ctx context.Context, ps *project.Service, res *cleanupOut, doomed []int, dry bool) (failed int) {
-	var removed []int
-	for _, i := range doomed {
-		if dry {
-			continue
-		}
-		if err := ps.RemoveWorktree(ctx, res.Trees[i].Tree); err != nil {
-			res.Trees[i].Error = err.Error()
-			failed++
-			continue
-		}
-		res.Trees[i].Removed = true
-		removed = append(removed, i)
+	trees := make([]project.Tree, len(doomed))
+	for k, i := range doomed {
+		trees[k] = res.Trees[i].Tree
 	}
-	if dry {
-		removed = doomed
-		for _, i := range doomed {
-			res.Trees[i].BranchForced, res.Trees[i].BranchWhy = ps.PlanBranch(ctx, res.Trees[i].Tree)
-		}
-	}
-	var seen []string
-	for _, i := range removed {
-		t := res.Trees[i].Tree
-		if key := t.Project + "/" + t.Repo; !slices.Contains(seen, key) {
-			seen = append(seen, key)
-			res.Baselines = append(res.Baselines, ps.FastForwardBaseline(ctx, t.Project, t.Repo, dry))
-		}
-	}
-	if !dry {
-		for _, i := range removed {
-			res.Trees[i].setBranchFate(ps.DeleteBranch(ctx, res.Trees[i].Tree))
+	cleaned, baselines, failed := ps.CleanTrees(ctx, trees, dry)
+	res.Baselines = append(res.Baselines, baselines...)
+	for k, i := range doomed {
+		c := cleaned[k]
+		switch {
+		case dry:
+			res.Trees[i].BranchForced, res.Trees[i].BranchWhy = c.WouldForce, c.WouldWhy
+		case c.Error != "":
+			res.Trees[i].Error = c.Error
+		default:
+			res.Trees[i].setBranchFate(c.Fate)
 		}
 	}
 	return failed
