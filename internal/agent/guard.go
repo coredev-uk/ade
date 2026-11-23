@@ -14,6 +14,7 @@ import (
 	"github.com/coredev-uk/ade/internal/ai"
 	"github.com/coredev-uk/ade/internal/audit"
 	"github.com/coredev-uk/ade/internal/config"
+	"github.com/coredev-uk/ade/internal/ledger"
 	"github.com/coredev-uk/ade/internal/workspace"
 )
 
@@ -114,9 +115,10 @@ type room struct {
 	Which   string // the cap that binds, e.g. "daily cap budget.daily_usd $2.00"
 }
 
-// periodRoom reads the ledger for what the period caps leave. Without an AI
-// service (no ledger) nothing is known and nothing limits the call.
-func (m *Manager) periodRoom() (room, error) {
+// periodRoom reads the ledger for what the period caps leave, with the calls
+// in flight (held: reserved by this or another process) counted as spent.
+// Without an AI service (no ledger) nothing is known and nothing limits the call.
+func (m *Manager) periodRoom(held ledger.Held) (room, error) {
 	var out room
 	if m.AI == nil || m.AI.Ledger == nil {
 		return out, nil
@@ -139,15 +141,41 @@ func (m *Manager) periodRoom() (room, error) {
 		}
 		left := max(capUSD-spent, 0)
 		if !out.Limited || left < out.USD {
-			out = room{USD: left, Limited: true, Which: fmt.Sprintf("%s cap budget.%s $%.2f ($%.2f spent)", name, key, capUSD, spent)}
+			out = room{USD: left, Limited: true, Which: fmt.Sprintf("%s cap budget.%s $%.2f (%s)", name, key, capUSD, spentNote(spent, held.Total))}
 		}
 	}
-	consider("daily", "daily_usd", b.DailyUSD, sp.Day)
-	consider("weekly", "weekly_usd", b.WeeklyUSD, sp.Week)
+	consider("daily", "daily_usd", b.DailyUSD, sp.Day+held.Total)
+	consider("weekly", "weekly_usd", b.WeeklyUSD, sp.Week+held.Total)
 	if sp.HaveSprint {
-		consider("sprint", "sprint_usd", b.SprintUSD, sp.Sprint)
+		consider("sprint", "sprint_usd", b.SprintUSD, sp.Sprint+held.Total)
 	}
 	return out, nil
+}
+
+// spentNote words what a period cap has used, in-flight reservations apart.
+func spentNote(spentWithHeld, held float64) string {
+	if held <= 0 {
+		return fmt.Sprintf("$%.2f spent", spentWithHeld)
+	}
+	return fmt.Sprintf("$%.2f spent, $%.2f in flight in other calls", spentWithHeld-held, held)
+}
+
+// agentCallTTL bounds an agent call's reservation when its pid is still alive
+// (a reused pid): an agent call has no timeout, so this is far longer than any
+// run, and the process check is what normally ends a dead call's reservation.
+const agentCallTTL = 12 * time.Hour
+
+// reserve reserves one agent call's cost ceiling in the ledger shared with the
+// AI service and every other ade process (see ai.Service.Reserve); check runs
+// under its lock. Without an AI service nothing is shared and check runs alone.
+func (m *Manager) reserve(profile, feature string, check func(ledger.Held) (float64, error)) (release func(), err error) {
+	if m.AI == nil {
+		if _, err := check(ledger.Held{}); err != nil {
+			return nil, err
+		}
+		return func() {}, nil
+	}
+	return m.AI.Reserve(profile, feature, agentCallTTL, check)
 }
 
 // --- one agent per worktree ---------------------------------------------------
@@ -241,7 +269,14 @@ func killVerified(pid int, pstart uint64) error {
 // weekly or sprint cap. It runs before the run changes state, so a plan
 // approved yesterday waits instead of failing.
 func (m *Manager) roomLeft() error {
-	pr, err := m.periodRoom()
+	var held ledger.Held
+	if m.AI != nil {
+		var err error
+		if held, err = m.AI.Held(); err != nil {
+			return err
+		}
+	}
+	pr, err := m.periodRoom(held)
 	if err != nil {
 		return err
 	}
