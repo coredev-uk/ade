@@ -13,7 +13,6 @@ import (
 
 const (
 	barW     = 24 // cells of a progress or burn-down bar
-	narrowW  = 100
 	keyColW  = 13
 	labelPad = "   "
 )
@@ -28,22 +27,26 @@ func (m model) agileHeaderLeft() string {
 }
 
 func (m model) agileFooter(w int) string {
-	narrow := w < narrowW
+	narrow := narrowW(w)
 	var proj []string
 	if len(m.sprintProjects()) > 1 {
 		proj = []string{"p", "project"} // the review opens on one project; this picks another
 	}
+	var narr []string // the AI narrative key: only offered while AI is available
+	if m.aiOn() {
+		narr = []string{"n", "AI narrative"}
+	}
 	switch {
 	case m.ag.kind == agileStandup && narrow:
-		return " " + keys("j/k", "scroll", "r", "reload", "n", "narrative", "y", "copy", "esc", "back", "?", "keys")
+		return fitKeys(w, []string{"esc", "back", "?", "keys"}, append([]string{"j/k", "scroll", "r", "reload"}, append(narr, "y", "copy")...))
 	case m.ag.kind == agileStandup:
-		return " " + keys("j/k", "scroll", "r", "reload", "n", "AI narrative", "y", "copy as Markdown", "esc", "back", "t", "home", "i", "notifications", "?", "keys", "q", "quit")
+		return fitKeys(w, []string{"esc", "back", "?", "keys", "q", "quit"}, append([]string{"j/k", "scroll", "r", "reload"}, append(narr, "y", "copy as Markdown")...), []string{"t", "home", "i", "notifications"})
 	case w < 150: // the review's keys no longer fit whole below this
-		kv := append([]string{"j/k", "scroll", "[ ]", "sprint", "m", reviewToggle(m.ag.team), "J/K", "item", ">", "move", "M", "move mine"}, proj...)
-		return " " + keys(append(kv, "esc", "back", "?", "keys")...)
+		kv := []string{"j/k", "scroll", "[ ]", "sprint", "m", reviewToggle(m.ag.team), "J/K", "item", ">", "move", "M", "move mine"}
+		return fitKeys(w, append(proj, "esc", "back", "?", "keys"), kv) // the project picker outranks the move keys
 	}
-	kv := append([]string{"j/k", "scroll", "[ ]", "sprint", "m", reviewToggle(m.ag.team), "J/K", "unfinished item", ">", "move to next sprint", "M", "move mine"}, proj...)
-	return " " + keys(append(kv, "r", "reload", "n", "AI narrative", "y", "copy", "esc", "back", "?", "keys", "q", "quit")...)
+	kv := []string{"j/k", "scroll", "[ ]", "sprint", "m", reviewToggle(m.ag.team), "J/K", "unfinished item", ">", "move to next sprint", "M", "move mine"}
+	return fitKeys(w, append(proj, "esc", "back", "?", "keys", "q", "quit"), kv, append(append([]string{"r", "reload"}, narr...), "y", "copy"))
 }
 
 // reviewToggle names what `m` switches to.

@@ -47,6 +47,9 @@ type Progress struct {
 	Cache   int
 	Turns   int
 	Model   string
+	// Provider is the model provider omp reported on a turn ("" for the
+	// other drivers, whose host is fixed).
+	Provider string
 	// Text is the last assistant message: the plan, or the run's summary.
 	Text string
 	// Activity is the latest tool or step, for the run list.
@@ -130,4 +133,22 @@ func ftoa(f float64) string { return strconv.FormatFloat(f, 'f', 6, 64) }
 // priceUSD is tokens × a USD-per-million price table.
 func priceUSD(p config.Price, in, out, cacheRead, cacheWrite int) float64 {
 	return (float64(in)*p.Input + float64(out)*p.Output + float64(cacheRead)*p.CacheRead + float64(cacheWrite)*p.CacheWrite) / 1e6
+}
+
+// DestHost is where a driver's CLI sends the prompt, for the audit trail: omp
+// talks to its own provider (the stream names it), claude and codex to their
+// vendors' APIs. A user's proxy base URL is not known to ADE.
+func DestHost(driver, provider string) string {
+	switch driver {
+	case "omp":
+		if provider != "" {
+			return "omp:" + provider
+		}
+		return "omp's provider"
+	case "claude":
+		return "api.anthropic.com"
+	case "codex":
+		return "api.openai.com"
+	}
+	return ""
 }

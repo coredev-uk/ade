@@ -72,6 +72,13 @@ func (c *Cache) Get(hash string) (records.Artifact, bool, error) {
 	return a, true, nil
 }
 
+// Evict drops hash from the index: the answer it pointed at is not served
+// again. The artifact stays in the record as the paid output it is.
+func (c *Cache) Evict(hash string) error {
+	_, err := c.db.Exec(`DELETE FROM ai_cache WHERE input_hash = ?`, hash)
+	return err
+}
+
 // Put records that artifact path answers hash; the newest artifact wins.
 func (c *Cache) Put(hash, path, feature, model string, created time.Time) error {
 	_, err := c.db.Exec(`INSERT INTO ai_cache (input_hash, artifact, feature, model, created) VALUES (?,?,?,?,?)

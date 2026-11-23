@@ -421,3 +421,77 @@ func TestRNeedsAIAndAFailedWorkerCanBeRetried(t *testing.T) {
 	e.press("enter")
 	e.want("Rate limit exports per tenant.")
 }
+
+// E edits the description by hand: seeded with the current one, no model call,
+// audited as a manual write. It works with AI off, which is where B is absent.
+func TestEEditsTheDescriptionByHandWithAIOff(t *testing.T) {
+	e := newMREnv(t, fake.Free) // no AI configured
+	ref := mrRef("api", 1)
+	e.open(ref.String())
+	before, _, _ := e.srv.Description(ref)
+	if strings.TrimSpace(before) == "" {
+		t.Fatal("the fixture MR has no description")
+	}
+
+	e.press("E")
+	if md := e.m.mr.modal; md == nil || md.kind != modalDescribe || !md.manual || strings.TrimSpace(md.ed.String()) != strings.TrimSpace(before) {
+		t.Fatalf("E must open the dialog seeded with the current description: %+v", e.m.mr.modal)
+	}
+	e.want("MR description · "+ref.String(), "Written by hand, no model", "enter write to the MR")
+	e.wantNot("ctrl+r", "new draft", "AI draft")
+
+	// Nothing changed: refused. Nothing is written until enter on a change.
+	e.press("enter")
+	e.want("already has this description")
+	e.typ(" EDITED-BY-HAND")
+	if d, n, _ := e.srv.Description(ref); d != before || n != 0 {
+		t.Fatal("typing writes nothing")
+	}
+	if cmd := e.m.describeModalKey(e.m.mr.modal, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl}); cmd != nil || e.m.mr.modal == nil {
+		t.Fatal("ctrl+r must not close or redraft a hand-written description")
+	}
+	e.press("enter")
+	d, n, _ := e.srv.Description(ref)
+	if n != 1 || !strings.Contains(d, "EDITED-BY-HAND") {
+		t.Fatalf("description %q after %d writes", d, n)
+	}
+	if es := e.audited("forge.mr.description"); len(es) != 1 || es[0].Params["source"] != "manual" || es[0].Outcome != "ok" {
+		t.Fatalf("audit: %+v", es)
+	}
+	if len(e.audited("ai.*")) != 0 {
+		t.Error("no model call")
+	}
+	if e.m.mr.modal != nil {
+		t.Error("the dialog closes on enter")
+	}
+}
+
+func TestEWarnsOnceAboutQuickActionsOnGitLabThenWritesAsTyped(t *testing.T) {
+	e := newMREnv(t, fake.Free)
+	ref := mrRef("api", 1)
+	e.open(ref.String())
+	e.m.app.Config.Forges["f"] = config.Forge{Kind: "gitlab"}
+	e.press("E")
+	e.typ(" /close")
+	e.press("alt+enter")
+	e.typ("/assign @x")
+	e.press("enter")
+	e.want("/assign run as quick actions when GitLab saves this")
+	if _, n, _ := e.srv.Description(ref); n != 0 {
+		t.Fatal("the first enter only warns")
+	}
+	e.press("enter")
+	if d, n, _ := e.srv.Description(ref); n != 1 || !strings.Contains(d, "/assign @x") {
+		t.Fatalf("description %q after %d writes: sent as typed", d, n)
+	}
+}
+
+func TestEOnAMergedMRLeavesTheDescriptionAlone(t *testing.T) {
+	e := newMREnv(t, fake.Free)
+	e.open(mrRef("api", 1).String())
+	e.m.mr.data.mr.State = "merged"
+	e.press("E")
+	if e.m.mr.modal != nil {
+		t.Fatal("a merged MR is not editable")
+	}
+}

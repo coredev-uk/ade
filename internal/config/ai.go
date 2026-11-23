@@ -12,6 +12,59 @@ import (
 	"strings"
 )
 
+// Why AI cannot be used right now, as errors the AI layer and the screens
+// word for a person (ai.Human). ErrNoSecret wraps a missing or empty key.
+var (
+	ErrNoProfile        = errors.New("no AI profile selected: set ai.profile in the config")
+	ErrProfileUndefined = errors.New("AI profile is not defined")
+	ErrNoSecret         = errors.New("no key configured")
+)
+
+// AIState is where the AI settings stand, from "off" to "usable".
+type AIState int
+
+const (
+	AIReady     AIState = iota // mode is not off and ai.profile names a defined profile
+	AIOff                      // ai.mode = off
+	AINone                     // no profile is configured at all: a machine without AI
+	AINoProfile                // profiles exist but ai.profile selects none
+	AIUnknown                  // ai.profile names a profile that is not defined
+)
+
+// State classifies the AI settings. It reads the config only: no key, binary
+// or network is touched, so it is cheap enough to ask on every redraw.
+func (a AI) State() AIState {
+	switch {
+	case a.Mode == "off":
+		return AIOff
+	case len(a.Profiles) == 0:
+		return AINone
+	case a.Profile == "":
+		return AINoProfile
+	}
+	if _, ok := a.Profiles[a.Profile]; !ok {
+		return AIUnknown
+	}
+	return AIReady
+}
+
+// Available is the one answer to "can ADE offer AI here": every screen, key
+// hint and automatic call asks it instead of looking at mode and profiles
+// itself. reason says which setting is in the way when ok is false.
+func (a AI) Available() (ok bool, reason string) {
+	switch a.State() {
+	case AIReady:
+		return true, ""
+	case AIOff:
+		return false, "AI is off (ai.mode = off)"
+	case AINone:
+		return false, "no AI profile is configured (see [ai.profiles] in the config)"
+	case AINoProfile:
+		return false, "no AI profile is selected: set ai.profile in the config"
+	}
+	return false, fmt.Sprintf("the AI profile %q is not defined (have: %v)", a.Profile, slices.Sorted(maps.Keys(a.Profiles)))
+}
+
 // ActiveProfile returns the profile ai.profile names. It errors when AI is off
 // or no profile is selected, with a message saying which key to set.
 func (c *Config) ActiveProfile() (string, AIProfile, error) {
@@ -27,11 +80,11 @@ func (c *Config) Profile(name string) (string, AIProfile, error) {
 		name = c.AI.Profile
 	}
 	if name == "" {
-		return "", AIProfile{}, errors.New("no AI profile selected: set ai.profile in the config")
+		return "", AIProfile{}, ErrNoProfile
 	}
 	p, ok := c.AI.Profiles[name]
 	if !ok {
-		return "", AIProfile{}, fmt.Errorf("AI profile %q is not defined (have: %v)", name, slices.Sorted(maps.Keys(c.AI.Profiles)))
+		return "", AIProfile{}, fmt.Errorf("AI profile %q is not defined (have: %v): %w", name, slices.Sorted(maps.Keys(c.AI.Profiles)), ErrProfileUndefined)
 	}
 	return name, p, nil
 }
@@ -73,17 +126,24 @@ func (b AIBilling) AdminKey(ctx context.Context) (string, error) {
 	return secret(ctx, "admin_key", b.AdminKeyEnv, b.AdminKeyCmd)
 }
 
+// noSecret is an unset or empty secret: its text is the specific cause, and
+// it matches ErrNoSecret.
+type noSecret string
+
+func (e noSecret) Error() string      { return string(e) }
+func (noSecret) Is(target error) bool { return target == ErrNoSecret }
+
 func secret(ctx context.Context, what, env, cmd string) (string, error) {
 	if env != "" {
 		if v := strings.TrimSpace(os.Getenv(env)); v != "" {
 			return v, nil
 		}
 		if cmd == "" {
-			return "", fmt.Errorf("%s_env %s is empty", what, env)
+			return "", noSecret(fmt.Sprintf("%s_env %s is empty", what, env))
 		}
 	}
 	if cmd == "" {
-		return "", fmt.Errorf("no %s_cmd or %s_env configured", what, what)
+		return "", noSecret(fmt.Sprintf("no %s_cmd or %s_env configured", what, what))
 	}
 	c := exec.CommandContext(ctx, "sh", "-c", cmd)
 	var stderr bytes.Buffer
@@ -94,7 +154,7 @@ func secret(ctx context.Context, what, env, cmd string) (string, error) {
 	}
 	v := strings.TrimSpace(string(out))
 	if v == "" {
-		return "", fmt.Errorf("%s_cmd produced no output", what)
+		return "", noSecret(fmt.Sprintf("%s_cmd produced no output", what))
 	}
 	return v, nil
 }

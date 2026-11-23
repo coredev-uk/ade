@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/coredev-uk/ade/internal/ai"
+	"github.com/coredev-uk/ade/internal/aimark"
 	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/domain"
 	"github.com/coredev-uk/ade/internal/forge"
@@ -210,7 +211,26 @@ func TestAIOffHidesEveryAIAffordance(t *testing.T) {
 		}
 		e.open(mrRef("api", 2).String())
 		e.wantNot("Summary", "asking the model", "agent review pass", "A agent review")
-		e.press("d", "s", "A")
+		// The description is the page's text, not an AI summary's.
+		for _, ln := range strings.Split(strings.TrimSpace(e.m.mr.data.mr.Description), "\n") {
+			if ln = strings.TrimSpace(strings.Trim(ln, "#*- ")); ln != "" {
+				e.want(ln)
+				break
+			}
+		}
+		e.press("d", "s", "A", "B")
+		told := 0
+		for _, tst := range e.m.nc.toasts {
+			if strings.HasPrefix(tst.ev.Title, "No AI on this page: ") {
+				told++
+				if mode == "off" && !strings.Contains(tst.ev.Title, "ai.mode") || mode == "noprofile" && !strings.Contains(tst.ev.Title, "ai.profile") {
+					t.Errorf("mode %s: the toast gives no reason: %q", mode, tst.ev.Title)
+				}
+			}
+		}
+		if told != 1 {
+			t.Errorf("mode %s: %d toasts for four AI keys, want one", mode, told)
+		}
 		e.press("2", "d", "s", "A")
 		e.press("4")
 		e.wantNot("agent review running", "A runs", "A agent review")
@@ -308,10 +328,13 @@ func TestThreadSummaryAndDraftReplyLandInTheEditorAndNeverPostBySelf(t *testing.
 	e.press("enter")
 	var posted bool
 	for _, n := range e.discussions(ref)[0].Notes {
-		posted = posted || n.Body == stubReply+" Thanks."
+		posted = posted || n.Body == stubReply+" Thanks.\n\n"+aimark.Marker // an AI draft goes out marked, edits and all
 	}
 	if !posted {
-		t.Fatalf("the edited draft is not on the forge: %+v", e.discussions(ref)[0].Notes)
+		t.Fatalf("the edited draft is not on the forge, marked as AI drafted: %+v", e.discussions(ref)[0].Notes)
+	}
+	if es := e.audited("forge.thread.reply"); len(es) != 1 || es[0].Params["source"] != "ai-draft" {
+		t.Errorf("the post is audited as an AI draft: %+v", es)
 	}
 	if es := e.audited("ai.draft-reply"); len(es) != 2 {
 		t.Errorf("ai.draft-reply audit entries = %d, want 2 (one paid, one cached)", len(es))

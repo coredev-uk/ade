@@ -36,7 +36,7 @@ func TestStoreSurvivesRestart(t *testing.T) {
 	s := review.NewStore(st1)
 	at := time.Date(2026, 11, 11, 12, 0, 0, 123, time.UTC)
 	want := []review.Draft{
-		{ID: "a", Path: "x.go", OldPath: "w.go", Line: 4, Side: review.SideOld, Body: "first, with 'quotes' and\nnewlines", Severity: review.SeverityNit, Source: review.SourceAgent, State: review.StatePending, CreatedAt: at},
+		{ID: "a", Path: "x.go", OldPath: "w.go", Line: 4, Side: review.SideOld, Body: "first, with 'quotes' and\nnewlines", Severity: review.SeverityNit, Source: review.SourceAgent, State: review.StatePending, InReplyTo: "disc-7", CreatedAt: at},
 		{ID: "b", Path: "y.go", Line: 9, Side: review.SideNew, Body: "second", Source: review.SourceYou, State: review.StateAccepted, RemoteID: 77, Published: true, CreatedAt: at},
 	}
 	for _, d := range want {

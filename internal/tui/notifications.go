@@ -228,12 +228,13 @@ func (c *notifCenter) drawer(g glyphs, w, h int) string {
 		Padding(0, 1).Width(w).Height(h).Render(strings.Join(l, "\n"))
 }
 
-// toastStack renders the newest pop-ups, newest at the bottom, as one block.
-func (c *notifCenter) toastStack(g glyphs, w int) string {
+// toastStack renders the newest pop-ups, newest at the bottom, as one block;
+// a short screen (h rows) shows fewer of them (toastLimit).
+func (c *notifCenter) toastStack(g glyphs, w, h int) string {
 	if len(c.toasts) == 0 {
 		return ""
 	}
-	shown := c.toasts[max(0, len(c.toasts)-maxToasts):]
+	shown := c.toasts[max(0, len(c.toasts)-toastLimit(h)):]
 	var boxes []string
 	if hidden := len(c.toasts) - len(shown); hidden > 0 {
 		boxes = append(boxes, stFaint.Render(fmt.Sprintf("+%d earlier %s esc dismisses all", hidden, g.Sep)))

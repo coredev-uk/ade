@@ -132,10 +132,13 @@ type mrPage struct {
 	data     *mrData          // nil while the item has no MR
 	tab      mrTab
 
-	ovTop    int  // overview scroll
-	rawDesc  bool // Overview shows the raw description instead of the AI summary
-	thSel    int  // selected thread (index into threadList)
-	thDetail bool // narrow: the thread's conversation instead of the list
+	ovTop   int  // overview scroll
+	rawDesc bool // Overview shows the raw description instead of the AI summary
+	// aiToldOff is set once an AI key was pressed while AI is unavailable and
+	// the toast said why: later presses stay quiet.
+	aiToldOff bool
+	thSel     int  // selected thread (index into threadList)
+	thDetail  bool // narrow: the thread's conversation instead of the list
 
 	fileSel   int
 	focusDiff bool // the diff pane (not the file list) has the cursor

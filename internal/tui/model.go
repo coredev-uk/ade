@@ -75,6 +75,9 @@ type model struct {
 
 	nc   *notifCenter
 	help bool
+	// helpTop is how many rows of the help dialog are scrolled off when it is
+	// taller than the screen (layout.go).
+	helpTop int
 
 	// MR page (mrpage*.go): mr is the open page, nil on the dashboard;
 	// mrCache keeps each MR's data for the session; reviews stores drafts.
@@ -407,6 +410,14 @@ func (m model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.ag.kind = agileNone
 		}
 		return m, cmd
+	}
+	if !m.help {
+		m.helpTop = 0
+	} else if lim := m.helpMax(); lim > 0 { // taller than the screen: j/k scroll it
+		if top, ok := helpScrollKey(ks, m.helpTop, lim, max(m.h, minH)); ok {
+			m.helpTop = top
+			return m, nil
+		}
 	}
 	if m.mr != nil {
 		if cmd, handled := m.mrKey(k); handled {

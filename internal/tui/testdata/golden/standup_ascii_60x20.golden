@@ -1,0 +1,20 @@
+ ADE  home - worktrees - Standup                  no unread
+ Standup ---------------------- Mon 9 Nov - since Fri 6 Nov
+
+ Yesterday -------------------------- Fri 6 Nov - 3 changes
+   + merged MR api!1: Rate-limit the export ... 09:30 forge
+   * agent.run g/tracker#1                      12:00 audit
+   + api!1 approved by reviewer-rae              13:00 sync
+
+ Today ------------------------------ 2 items in your court
+   *=*=*=*=*=@-o  tracker#1 Rate-limit the export end... 5w
+                  2 unresolved threads
+   o web!9 Dark mode for the export dashboard
+     review requested
+
+ Blockers --------------------------------------- 1 blocker
+   ! tracker#5 Export timestamps ignore tenant timezone
+     label workflow::blocked
+
+
+ j/k scroll   r reload   y copy   esc back   ? keys
