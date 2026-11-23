@@ -26,6 +26,10 @@ type Target struct {
 	Title     string            // tab title: the branch, or the repo for a baseline
 	ItemTrees map[string]string // repo → the work item's worktree there
 	Baseline  bool              // no worktree of the item exists: the repo's baseline tree
+	// Layout and BaseRef ask for a layout other than the default and what its
+	// diff is against: the review tab of a fork MR's detached tree.
+	Layout  string
+	BaseRef string
 }
 
 // repoByPath finds the manifest repo that lives at a forge path.

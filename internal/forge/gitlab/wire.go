@@ -199,29 +199,31 @@ func (p *wirePipeline) pipeline() *forge.Pipeline {
 }
 
 type wireMR struct {
-	ID             int64         `json:"id"`
-	IID            int           `json:"iid"`
-	Title          string        `json:"title"`
-	Description    string        `json:"description"`
-	State          string        `json:"state"`
-	Draft          bool          `json:"draft"`
-	WIP            bool          `json:"work_in_progress"` // pre-19.0 spelling of draft
-	SourceBranch   string        `json:"source_branch"`
-	TargetBranch   string        `json:"target_branch"`
-	SHA            string        `json:"sha"`
-	WebURL         string        `json:"web_url"`
-	Author         wireUser      `json:"author"`
-	Assignees      []wireUser    `json:"assignees"`
-	Reviewers      []wireUser    `json:"reviewers"`
-	HeadPipeline   *wirePipeline `json:"head_pipeline"`
-	Pipeline       *wirePipeline `json:"pipeline"`
-	HasConflicts   bool          `json:"has_conflicts"`
-	DetailedStatus string        `json:"detailed_merge_status"`
-	References     wireRefs      `json:"references"`
-	UpdatedAt      time.Time     `json:"updated_at"`
-	MergedAt       *time.Time    `json:"merged_at"`
-	MergeUser      *wireUser     `json:"merge_user"`
-	MergedBy       *wireUser     `json:"merged_by"` // deprecated spelling of merge_user
+	ID              int64         `json:"id"`
+	IID             int           `json:"iid"`
+	Title           string        `json:"title"`
+	Description     string        `json:"description"`
+	State           string        `json:"state"`
+	Draft           bool          `json:"draft"`
+	WIP             bool          `json:"work_in_progress"` // pre-19.0 spelling of draft
+	SourceBranch    string        `json:"source_branch"`
+	TargetBranch    string        `json:"target_branch"`
+	SourceProjectID int64         `json:"source_project_id"`
+	TargetProjectID int64         `json:"target_project_id"`
+	SHA             string        `json:"sha"`
+	WebURL          string        `json:"web_url"`
+	Author          wireUser      `json:"author"`
+	Assignees       []wireUser    `json:"assignees"`
+	Reviewers       []wireUser    `json:"reviewers"`
+	HeadPipeline    *wirePipeline `json:"head_pipeline"`
+	Pipeline        *wirePipeline `json:"pipeline"`
+	HasConflicts    bool          `json:"has_conflicts"`
+	DetailedStatus  string        `json:"detailed_merge_status"`
+	References      wireRefs      `json:"references"`
+	UpdatedAt       time.Time     `json:"updated_at"`
+	MergedAt        *time.Time    `json:"merged_at"`
+	MergeUser       *wireUser     `json:"merge_user"`
+	MergedBy        *wireUser     `json:"merged_by"` // deprecated spelling of merge_user
 }
 
 // mr converts the list/single payload. Approvals and thread counts come from
@@ -239,6 +241,7 @@ func (w wireMR) mr(project string) forge.MR {
 		State:          w.State,
 		Draft:          w.Draft || w.WIP,
 		SourceBranch:   w.SourceBranch,
+		Fork:           w.forkOf(),
 		TargetBranch:   w.TargetBranch,
 		HeadSHA:        w.SHA,
 		WebURL:         w.WebURL,

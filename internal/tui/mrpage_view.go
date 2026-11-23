@@ -123,6 +123,9 @@ func (m model) mrStrip(w int) string {
 	default:
 		seg = append(seg, "Ready")
 	}
+	if mr.Fork {
+		seg = append(seg, stFaint.Render("fork"))
+	}
 	seg = append(seg, ciText(g, mr.Pipeline), approvalsText(mr))
 	if mr.Unresolved > 0 {
 		seg = append(seg, stWarn.Render(fmt.Sprintf("%d unresolved", mr.Unresolved)))
@@ -293,6 +296,9 @@ func (m model) mrOverview(w, h int) string {
 	kv("state", mr.State+map[bool]string{true: " " + g.Sep + " draft", false: ""}[mr.Draft])
 	kv("author", mr.Author.Display())
 	kv("branch", mr.SourceBranch+m.g.T(" → ")+mr.TargetBranch)
+	if mr.Fork {
+		kv("fork", forkText(mr))
+	}
 	var rev []string
 	for _, u := range mr.Reviewers {
 		rev = append(rev, u.Display())
@@ -692,4 +698,12 @@ func indentBlock(s string) string {
 		lines[i] = " " + lines[i]
 	}
 	return strings.Join(lines, "\n")
+}
+
+// forkText says where a fork MR's branch lives; w opens its head detached.
+func forkText(mr forge.MR) string {
+	if mr.SourceProject == "" {
+		return "from a fork the forge no longer names"
+	}
+	return "from " + mr.SourceProject
 }
