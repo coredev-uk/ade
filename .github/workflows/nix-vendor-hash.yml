@@ -57,7 +57,7 @@ jobs:
         run: |
           if [ -z "$PR" ] ||
             gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename' |
-            grep -qxE 'go\.(mod|sum)|flake\.(nix|lock)'; then
+            grep -xE 'go\.(mod|sum)|flake\.(nix|lock)' >/dev/null; then
             echo "run=true" >>"$GITHUB_OUTPUT"
           else
             echo "run=false" >>"$GITHUB_OUTPUT"
@@ -122,7 +122,7 @@ jobs:
           HASH: ${{ needs.check.outputs.hash }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
-          MESSAGE: "fix(nix): update vendorHash"
+          MESSAGE: "build(nix): update vendorHash"
         run: |
           # The branch must still be where the hash was computed; a newer push has its own run.
           if [ "$(git rev-parse HEAD)" != "$HEAD_SHA" ]; then
