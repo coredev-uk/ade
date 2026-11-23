@@ -205,6 +205,7 @@ func (m *model) aiAsk(d *mrData, k aiKey, refresh, assume bool) tea.Cmd {
 			job = ai.WithNotes(job, notes)
 		}
 		job.Refresh, job.Assume = refresh, assume
+		job.Auto = k.kind == aiSummary && !refresh && !assume // the summary that starts by itself
 		res, err := svc.Run(ctx, job)
 		var nc *ai.ErrNeedsConfirm
 		if errors.As(err, &nc) {
@@ -256,6 +257,14 @@ func (m *model) onAI(d *mrData, msg mrResultMsg) tea.Cmd {
 			m.notice(events.Info, msg.err.Error())
 			return nil
 		}
+		if _, stop := ai.AsStop(msg.err); stop {
+			// The day's first stop already raised budget.stop; the section
+			// says why (the description draft has none: a pop-up only).
+			if k.kind == aiDescribe {
+				m.notice(events.Warn, "No MR description: "+aiCause(msg.err))
+			}
+			return nil
+		}
 		if k.kind != aiSummary { // the summary starts by itself: it reports in its own section
 			m.emit(d, "ai.failed", events.Error, fmt.Sprintf("%s failed on %s", capitalize(k.what()), d.ref), aiCause(msg.err)+"\n"+msg.err.Error())
 		}
@@ -301,6 +310,8 @@ func aiCause(err error) string {
 		return "budget stop: " + stop.Message
 	}
 	switch {
+	case errors.Is(err, ai.ErrAutoPaused):
+		return "AI budget reached today; s asks anyway"
 	case errors.Is(err, ai.ErrDisabled):
 		return "AI is off (ai.mode = off)"
 	case errors.As(err, &nc):

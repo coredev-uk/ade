@@ -2,6 +2,7 @@ package forgesync
 
 import (
 	"context"
+	"maps"
 	"slices"
 	"testing"
 
@@ -39,6 +40,33 @@ func TestSyncShowsTheParentFacetsOnAnAppRepoIssue(t *testing.T) {
 	it, ok := byRef(h.sync()[0])["g/api#8"]
 	if !ok {
 		t.Fatal("g/api#8 is not an item")
+	}
+	assertParentFacets(t, it.Type, it.Apps, it.Weight, it.Triage)
+}
+
+// A manifest that spells the tracker path in another case than the forge
+// ("g/Tracker" for g/tracker) still finds the tracker parent of my issue in a
+// code repo: the child shows under it with its facets, though the parent is
+// not mine and outside the sprint window. GitLab paths are case-insensitive.
+func TestSyncFindsTheParentWhenTheManifestSpellsTheTrackerInAnotherCase(t *testing.T) {
+	h := newHarness(t, manifest("demo", "demo", "Tracker", "milestones"))
+	seed(h.f)
+	h.f.update(func(f *memForge) {
+		parent := issue("g/tracker#7", "Trim exports", nil)
+		parent.Labels = []string{"type::chore", "app::web", "weight::2"}
+		child := issue("g/api#8", "Trim the export worker", nil, "me")
+		child.Labels = nil
+		f.issues = append(f.issues, parent, child)
+		f.links[ref("g/api#8")] = []forge.Link{{Ref: ref("g/tracker#7"), Type: "relates_to"}}
+	})
+
+	items := byRef(h.sync()[0])
+	if _, own := items["g/api#8"]; own {
+		t.Fatalf("g/api#8 is an entry of its own, want it under g/tracker#7: %v", slices.Collect(maps.Keys(items)))
+	}
+	it, ok := items["g/tracker#7"]
+	if !ok || len(it.Children) != 1 || it.Children[0].Ref != ref("g/api#8") {
+		t.Fatalf("g/tracker#7 = %+v (found %v), want it with the child g/api#8", it.Children, ok)
 	}
 	assertParentFacets(t, it.Type, it.Apps, it.Weight, it.Triage)
 }

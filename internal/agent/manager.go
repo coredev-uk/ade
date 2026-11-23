@@ -19,7 +19,6 @@ import (
 	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/events"
 	"github.com/coredev-uk/ade/internal/git"
-	"github.com/coredev-uk/ade/internal/ledger"
 	"github.com/coredev-uk/ade/internal/project"
 	"github.com/coredev-uk/ade/internal/review"
 	"github.com/coredev-uk/ade/internal/workspace"
@@ -939,15 +938,11 @@ func (m *Manager) emit(r Run, what string, sev events.Severity, transient bool, 
 func (m *Manager) audit(e audit.Entry) { _ = m.Audit.Append(e) }
 
 func (m *Manager) recordStop(item, feature, profile, model string, stop *ai.StopError) {
-	m.audit(audit.Entry{
-		Action: ledger.StopAction, Target: item, Item: item, Outcome: "error", Error: stop.Message,
-		Params: map[string]any{"feature": feature, "profile": profile, "model": model, "source": stop.Source},
-	})
-	if m.Bus != nil {
-		e := events.New(ledger.StopAction, events.Error, "AI budget reached: "+stop.Message)
-		e.Subject = item
-		m.Bus.Publish(e)
+	now := time.Now
+	if m.Now != nil {
+		now = m.Now
 	}
+	ai.RecordStop(m.Audit, m.Bus, now(), ai.Location(m.Cfg), ai.Stopped{Item: item, Feature: feature, Profile: profile, Model: model, Stop: stop})
 }
 
 // --- one call -----------------------------------------------------------------

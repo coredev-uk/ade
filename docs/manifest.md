@@ -66,6 +66,8 @@ app      = ["web"]
 requires = ["api"]             # checkout dependency: web work also gets an api tree
 ```
 
+`tracker.project` and `repos.*.path` are matched without regard to case, as GitLab and GitHub treat paths: `acme/Tracker` finds the issues the forge reports under `acme/tracker`. A renamed project is not followed: write its new path.
+
 ## Conventions teams usually set
 
 ### Labels

@@ -174,10 +174,16 @@ func TestBRefusedByACapOrAskingFirst(t *testing.T) {
 	if stub.count("describe") != 0 || e.m.mr.modal != nil {
 		t.Fatal("a refused call sends nothing and opens nothing")
 	}
-	got := e.published("ai.failed")
-	if len(got) != 1 || !strings.Contains(got[0].Title, "MR description failed") || !strings.Contains(got[0].Detail, "budget stop") {
-		t.Fatalf("events: %+v", got)
+	// The day's first stop is the one budget.stop alert; no ai.failed
+	// pop-up joins it, and B, which has no section, says why in a notice.
+	evs := e.drainEvents()
+	if n := countKind(evs, "ai.failed"); n != 0 {
+		t.Fatalf("a budget stop raised ai.failed: %+v", evs)
 	}
+	if n := countKind(evs, "budget.stop"); n != 1 {
+		t.Fatalf("budget.stop events: %+v", evs)
+	}
+	e.want("No MR description")
 	if len(e.audited("budget.stop")) != 1 {
 		t.Error("the refusal is audited")
 	}
@@ -268,8 +274,18 @@ func TestTriageRefusedByACapSendsNothing(t *testing.T) {
 	if stub.count("triage") != 0 {
 		t.Fatal("a refused triage sends nothing")
 	}
-	if got := e.published("ai.failed"); len(got) != 1 || !strings.Contains(got[0].Title, "CI triage failed") {
-		t.Fatalf("events: %+v", got)
+	evs := e.drainEvents()
+	if countKind(evs, "ai.failed") != 0 || countKind(evs, "budget.stop") != 1 {
+		t.Fatalf("want the one budget.stop alert and no ai.failed: %+v", evs)
+	}
+	e.want("no ci triage", "budget stop")
+	// Asking again the same day is audited, and is no second alert.
+	e.press("t")
+	if n := len(e.audited("budget.stop")); n != 2 {
+		t.Fatalf("budget.stop entries = %d, want 2", n)
+	}
+	if evs := e.drainEvents(); countKind(evs, "budget.stop") != 0 || countKind(evs, "ai.failed") != 0 {
+		t.Fatalf("the second refusal of the day raised: %+v", evs)
 	}
 }
 
