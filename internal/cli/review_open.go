@@ -41,10 +41,12 @@ type reviewOpened struct {
 	// (mr-<iid>) because the source branch is not in origin; Fork says the MR
 	// comes from another project (SourceProject, when known). ADE offers no push
 	// from such a tree: it has no branch, and the branch is not this repo's.
-	Detached      bool   `json:"detached,omitempty"`
-	Fork          bool   `json:"fork,omitempty"`
-	SourceProject string `json:"source_project,omitempty"`
-	DryRun        bool   `json:"dry_run,omitempty"`
+	Detached bool `json:"detached,omitempty"`
+	// SkippedHooks are the post_worktree hooks not run in a fork MR's tree.
+	SkippedHooks  []string `json:"skipped_hooks,omitempty"`
+	Fork          bool     `json:"fork,omitempty"`
+	SourceProject string   `json:"source_project,omitempty"`
+	DryRun        bool     `json:"dry_run,omitempty"`
 	// The tab, when one was opened; TabCreated is false when an existing tab was focused.
 	Host       string `json:"host,omitempty"`
 	Session    string `json:"session,omitempty"`
@@ -108,6 +110,8 @@ type reviewTree struct {
 	// Detached is true for the detached tree at the MR's head (mr-<iid>), used
 	// when the source branch is not in origin: a fork MR, or a branch that is gone.
 	Detached bool
+	// SkippedHooks are the post_worktree hooks a fork MR's tree did not run.
+	SkippedHooks []string
 }
 
 // reviewWorktree returns the worktree of the MR's source branch, making it
@@ -127,7 +131,7 @@ func reviewWorktree(ctx context.Context, a *app.App, t reviewTarget, mr forge.MR
 	}
 	detached := func() (reviewTree, error) {
 		res, err := project.CheckoutMR(ctx, a, t.manifest, t.repo, mr, dry)
-		return reviewTree{Path: res.Worktree, Created: res.Action == "create", Detached: true}, err
+		return reviewTree{Path: res.Worktree, Created: res.Action == "create", Detached: true, SkippedHooks: res.SkippedHooks}, err
 	}
 	if mr.Fork {
 		return detached()
@@ -155,6 +159,10 @@ func reviewWorktree(ctx context.Context, a *app.App, t reviewTarget, mr forge.MR
 		return reviewTree{}, fmt.Errorf("%s exists but is not a worktree of %s", dir, branch)
 	}
 	if dry {
+		// Preview the tree a real run makes: the branch's, unless origin lacks it.
+		if out, err := gc.Run(ctx, t.bare, "ls-remote", "--heads", "origin", "refs/heads/"+branch); err == nil && strings.TrimSpace(out) == "" {
+			return detached()
+		}
 		return reviewTree{Path: dir, Created: true}, nil
 	}
 	err = gc.Fetch(ctx, t.bare)
@@ -233,7 +241,7 @@ func runReviewOpen(cmd *cobra.Command, arg string, noZellij bool, session string
 	res := reviewOpened{
 		Ref: c.ref, Project: t.manifest.Name, Repo: t.repo, Branch: mr.SourceBranch,
 		Base: "origin/" + mr.TargetBranch, Worktree: tree, Created: rt.Created, DryRun: c.dry,
-		Detached: rt.Detached, Fork: mr.Fork, SourceProject: mr.SourceProject,
+		Detached: rt.Detached, SkippedHooks: rt.SkippedHooks, Fork: mr.Fork, SourceProject: mr.SourceProject,
 	}
 	w := cmd.OutOrStdout()
 	if c.dry || noZellij {
@@ -277,6 +285,9 @@ func printReviewOpened(w interface{ Write([]byte) (int, error) }, r reviewOpened
 	if r.Detached {
 		fmt.Fprintf(w, "%s %s (%s, detached at the MR head, base %s)\n", r.Ref, made, r.Worktree, r.Base)
 		fmt.Fprintln(w, "  "+detachedWhy(r)+"; there is no branch here to push, so ADE offers no push from this tree")
+		if n := project.SkippedHooksNotice(r.Worktree, r.SkippedHooks); n != "" {
+			fmt.Fprintln(w, "  "+n)
+		}
 	} else {
 		fmt.Fprintf(w, "%s %s (%s, branch %s, base %s)\n", r.Ref, made, r.Worktree, r.Branch, r.Base)
 	}

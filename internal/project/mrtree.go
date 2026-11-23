@@ -26,6 +26,10 @@ type MRTree struct {
 	Action string
 	Reason string
 	DryRun bool
+	// SkippedHooks are the repo's post_worktree hooks that were not run because
+	// the MR is a fork's: they would run the contributor's code (install scripts)
+	// with the user's environment. Run them by hand in Worktree once the change is read.
+	SkippedHooks []string
 }
 
 // MRTreeDir is where an MR's detached tree lives: <root>/<project>/<repo>/mr-<iid>.
@@ -86,6 +90,13 @@ func CheckoutMR(ctx context.Context, a *app.App, m *config.Manifest, repo string
 	logGit(a, "git.worktree.add", res.Worktree, m.Name, mr.Ref, map[string]any{"detached": sha, "repo": repo, "for": "mr checkout"}, err)
 	if err != nil {
 		return res, fmt.Errorf("check out %s: %s", mr.Ref, git.Reason(err))
+	}
+	if mr.Fork {
+		res.SkippedHooks = slices.Clone(m.Repos[repo].Hooks.PostWorktree)
+		if len(res.SkippedHooks) > 0 {
+			logGit(a, "git.hook.skipped", res.Worktree, m.Name, mr.Ref, map[string]any{"reason": "fork MR", "hooks": res.SkippedHooks}, nil)
+		}
+		return res, nil
 	}
 	for _, hook := range m.Repos[repo].Hooks.PostWorktree {
 		_, herr := git.RunHook(ctx, res.Worktree, hook)
@@ -166,4 +177,12 @@ func logGit(a *app.App, action, target, proj string, ref forge.Ref, params map[s
 		e.Outcome, e.Error = "error", err.Error()
 	}
 	_ = a.Audit.Append(e)
+}
+
+// SkippedHooksNotice tells what a fork MR's tree did not run and how to run it.
+func SkippedHooksNotice(tree string, hooks []string) string {
+	if len(hooks) == 0 {
+		return ""
+	}
+	return "post_worktree hooks not run (a fork's code): read the change first, then in " + tree + " run: " + strings.Join(hooks, "; ")
 }

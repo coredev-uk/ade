@@ -327,3 +327,56 @@ func TestMRShowSaysFork(t *testing.T) {
 		t.Fatalf("same-project MR says fork:\n%s", plain)
 	}
 }
+
+// A fork's code must not run on a key press: its tree gets no post_worktree
+// hook (an install script is the contributor's code), and the output says how
+// to run them. A same-project MR's tree still gets them.
+func TestForkMRTreeRunsNoPostWorktreeHook(t *testing.T) {
+	e, root := reviewOpenEnv(t)
+	mpath := e.app.Config.Projects[0].Source
+	f, err := os.OpenFile(mpath, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("\n[repos.api.hooks]\npost_worktree = [\"touch hooked\"]\n"); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	ref, _ := forkMR(t, e, root)
+
+	out := e.mustMR("checkout", ref)
+	tree := filepath.Join(root, "demo-gl", "api", "mr-3")
+	if _, err := os.Stat(filepath.Join(tree, "hooked")); err == nil {
+		t.Fatal("the post_worktree hook ran in a fork MR's tree")
+	}
+	if !strings.Contains(out, "post_worktree hooks not run") || !strings.Contains(out, "touch hooked") {
+		t.Fatalf("no notice:\n%s", out)
+	}
+	if es := e.audited("git.hook"); len(es) != 0 {
+		t.Fatalf("hook audited as run: %+v", es)
+	}
+	if es := e.audited("git.hook.skipped"); len(es) != 1 {
+		t.Fatalf("skip not audited: %+v", es)
+	}
+
+	if _, err := e.review(renameMR, "--no-zellij"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "demo-gl", "api", "rename-bucket-to-token-bucket", "hooked")); err != nil {
+		t.Fatalf("a same-project MR's tree lost its hook: %v", err)
+	}
+}
+
+func TestReviewOpenDryRunPreviewsTheDetachedTreeWhenOriginLacksTheBranch(t *testing.T) {
+	e, root := reviewOpenEnv(t)
+	bare := filepath.Join(root, "demo-gl", "api", ".bare")
+	origin := strings.TrimPrefix(gitOut(t, bare, "remote", "get-url", "origin"), "file://")
+	gitAt(t, origin, "branch", "-D", "rename-bucket-to-token-bucket")
+	out, err := e.review(renameMR, "--no-zellij", "--dry-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, filepath.Join(root, "demo-gl", "api", "mr-2")) || !strings.Contains(out, "detached") {
+		t.Fatalf("dry run:\n%s", out)
+	}
+}

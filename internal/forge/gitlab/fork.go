@@ -36,7 +36,7 @@ func (c *Client) sourcePath(ctx context.Context, id int64) string {
 		Path string `json:"path_with_namespace"`
 	}
 	if err := c.getJSON(ctx, projectPath(strconv.FormatInt(id, 10)), nil, false, &p); err != nil {
-		return ""
+		p.Path = "" // cached too: an unreadable project is not asked again per MR
 	}
 	c.projectPaths.Store(id, p.Path)
 	return p.Path

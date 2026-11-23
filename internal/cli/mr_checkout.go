@@ -27,6 +27,8 @@ type mrCheckedOut struct {
 	Action string `json:"action"`
 	Reason string `json:"reason,omitempty"`
 	DryRun bool   `json:"dry_run,omitempty"`
+	// SkippedHooks are the post_worktree hooks a fork MR's tree did not run.
+	SkippedHooks []string `json:"skipped_hooks,omitempty"`
 }
 
 func newMRCheckoutCmd() *cobra.Command {
@@ -71,6 +73,9 @@ func newMRCheckoutCmd() *cobra.Command {
 			if res.Reason != "" {
 				fmt.Fprintln(cmd.OutOrStdout(), "  "+res.Reason)
 			}
+			if n := project.SkippedHooksNotice(res.Worktree, res.SkippedHooks); n != "" {
+				fmt.Fprintln(cmd.OutOrStdout(), "  "+n)
+			}
 			return nil
 		},
 	}
@@ -81,6 +86,6 @@ func checkoutMR(ctx context.Context, a *app.App, t reviewTarget, mr forge.MR, dr
 	tree, err := project.CheckoutMR(ctx, a, t.manifest, t.repo, mr, dry)
 	return mrCheckedOut{
 		Ref: mr.Ref, Project: t.manifest.Name, Repo: t.repo, Branch: mr.SourceBranch, DryRun: dry,
-		Worktree: tree.Worktree, Commit: tree.Commit, Action: tree.Action, Reason: tree.Reason,
+		SkippedHooks: tree.SkippedHooks, Worktree: tree.Worktree, Commit: tree.Commit, Action: tree.Action, Reason: tree.Reason,
 	}, err
 }
