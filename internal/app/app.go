@@ -48,6 +48,9 @@ func Load(actor string) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("records.dir: %w", err)
 	}
+	if rec, err = filepath.Abs(rec); err != nil {
+		return nil, fmt.Errorf("records.dir: %w", err)
+	}
 	if err := paths.EnsureDir(rec); err != nil {
 		return nil, err
 	}

@@ -1,0 +1,71 @@
+# Dependency updates (Go modules, GitHub Actions) by Renovate, configured in
+# .renovaterc.json5. Renovate acts as the bot-cecil GitHub App, not
+# GITHUB_TOKEN, so its pull requests get CI runs (and the nix-vendor-hash
+# workflow can fix the flake's vendorHash on them). The App's token is minted
+# by octo-sts (octo-sts.hera.ac) under .github/chainguard/renovate.sts.yaml;
+# the `bot-cecil` environment limits the run to main and v* tags.
+name: Renovate
+
+on:
+  push:
+    branches: [main]
+    paths: [.renovaterc.json5]
+  schedule:
+    - cron: "40 */2 * * *"
+  workflow_dispatch:
+    inputs:
+      dryRun:
+        description: Dry run
+        type: boolean
+        default: false
+      logLevel:
+        description: Log level
+        type: choice
+        default: debug
+        options: [debug, info]
+      version:
+        description: Renovate version
+        default: latest
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  main:
+    name: Renovate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: bot-cecil
+    permissions:
+      id-token: write # the OIDC token octo-sts exchanges for bot-cecil's
+    steps:
+      - name: Generate bot-cecil token
+        id: app-token
+        uses: octo-sts/action@f603d3be9d8dd9871a265776e625a27b00effe05 # v1.1.1
+        with:
+          domain: octo-sts.hera.ac
+          scope: ${{ github.repository }}
+          identity: renovate
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Run Renovate
+        uses: renovatebot/github-action@acdd6bda8b035c99ce59d5675816af2aa65a1774 # v46.3.14
+        env:
+          LOG_LEVEL: ${{ inputs.logLevel || 'debug' }}
+          RENOVATE_AUTODISCOVER: true
+          RENOVATE_AUTODISCOVER_FILTER: ${{ github.repository }}
+          RENOVATE_DRY_RUN: ${{ inputs.dryRun }}
+          RENOVATE_INTERNAL_CHECKS_FILTER: strict
+          RENOVATE_PLATFORM: github
+          RENOVATE_PLATFORM_COMMIT: true
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          renovate-version: ${{ inputs.version || 'latest' }}
