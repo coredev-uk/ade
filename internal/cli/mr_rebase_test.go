@@ -96,3 +96,19 @@ func TestMRRebaseConflictPrintsLocalCommands(t *testing.T) {
 		t.Errorf("audit = %+v, want one error entry", es)
 	}
 }
+
+func TestMRRebaseConflictJSONCarriesTheCommands(t *testing.T) {
+	e := newCLIEnv(t)
+	if err := e.srv.SetConflicts(ref(rateMR), true); err != nil {
+		t.Fatal(err)
+	}
+	asJSON(t)
+	out, err := e.mr("rebase", rateMR, "--yes")
+	if err == nil {
+		t.Fatal("a conflicting rebase succeeded")
+	}
+	var r rebaseResult
+	if jerr := json.Unmarshal([]byte(out), &r); jerr != nil || len(r.Local) == 0 || !strings.Contains(strings.Join(r.Local, "\n"), "git rebase origin/main") {
+		t.Errorf("json = %q (%v), want the local commands", out, jerr)
+	}
+}

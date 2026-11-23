@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -11,6 +13,7 @@ import (
 	"github.com/coredev-uk/ade/internal/app"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/git"
+	"github.com/coredev-uk/ade/internal/project"
 	"github.com/coredev-uk/ade/internal/review"
 )
 
@@ -62,6 +65,9 @@ func newMRRebaseCmd() *cobra.Command {
 			res, err := c.w.Rebase(ctx, c.ref, forge.RebaseOpts{SHA: mr.HeadSHA, SkipCI: skipCI})
 			if errors.Is(err, forge.ErrRebaseFailed) {
 				steps := review.LocalRebaseSteps(mr, localTree(ctx, a, mr))
+				if jsonOut {
+					_ = printJSON(cmd.OutOrStdout(), rebaseResult{Ref: c.ref, Action: "rebase", Local: steps})
+				}
 				return fmt.Errorf("%w\n\nrebase it locally, then push:\n%s", err, indent(strings.Join(steps, "\n")))
 			}
 			if err != nil {
@@ -109,17 +115,24 @@ func forgeName(be review.Backend) string {
 // localTree finds the worktree on the MR's source branch of the registered
 // project, from disk alone; "" when there is none, or the repo is not known.
 func localTree(ctx context.Context, a *app.App, mr forge.MR) string {
-	t, err := findReviewRepo(ctx, a, mr.Ref)
-	if err != nil {
-		return ""
-	}
-	trees, err := git.Client{}.Worktrees(ctx, t.bare)
-	if err != nil {
-		return ""
-	}
-	for _, w := range trees {
-		if w.Branch == mr.SourceBranch {
-			return w.Path
+	for _, pr := range a.Config.Projects {
+		m, err := project.SnapshotManifest(a, pr) // disk only: a hint must not wait on the network
+		if err != nil {
+			continue
+		}
+		for _, name := range slices.Sorted(mapKeys(m.Repos)) {
+			if !forge.SameProject(m.Repos[name].Path, mr.Ref.Project) {
+				continue
+			}
+			trees, err := git.Client{}.Worktrees(ctx, filepath.Join(a.Root, m.Name, name, ".bare"))
+			if err != nil {
+				continue
+			}
+			for _, w := range trees {
+				if w.Branch == mr.SourceBranch {
+					return w.Path
+				}
+			}
 		}
 	}
 	return ""

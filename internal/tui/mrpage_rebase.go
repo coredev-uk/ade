@@ -71,9 +71,9 @@ func (m *model) actRebase() tea.Cmd {
 		case res.UpToDate:
 			return mrWrote{done: fmt.Sprintf("%s is already up to date with %s", d.ref, mr.TargetBranch), reload: relMR}, nil
 		case res.Method == "merge":
-			return mrWrote{done: fmt.Sprintf("Merged %s into %s on %s", mr.TargetBranch, mr.SourceBranch, d.ref), reload: relMR | relJobs}, nil
+			return mrWrote{done: fmt.Sprintf("Merged %s into %s on %s", mr.TargetBranch, mr.SourceBranch, d.ref), reload: relMR | relJobs | relDiff}, nil
 		}
-		return mrWrote{done: fmt.Sprintf("Rebased %s onto %s", d.ref, mr.TargetBranch), reload: relMR | relJobs}, nil
+		return mrWrote{done: fmt.Sprintf("Rebased %s onto %s", d.ref, mr.TargetBranch), reload: relMR | relJobs | relDiff}, nil
 	})
 }
 

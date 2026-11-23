@@ -100,3 +100,23 @@ func TestUpdateBranchEscCancels(t *testing.T) {
 		t.Errorf("rebase requests = %d", n)
 	}
 }
+
+// The diff read before the update quotes the old head; a rebase reads it again
+// so a comment lands on the new version.
+func TestUpdateBranchReloadsTheDiff(t *testing.T) {
+	e := newMREnv(t, fake.Free)
+	ref := mrRef("api", 2)
+	if err := e.srv.SetBehind(ref, true); err != nil {
+		t.Fatal(err)
+	}
+	e.open(ref.String())
+	e.press("3")
+	old := e.m.mr.data.diff.HeadSHA
+	if old == "" {
+		t.Fatal("the diff was not read")
+	}
+	e.press("u", "enter")
+	if got := e.m.mr.data.diff.HeadSHA; got == old || got != e.m.mr.data.mr.HeadSHA {
+		t.Errorf("diff head %s after the update, MR head %s, before %s", got, e.m.mr.data.mr.HeadSHA, old)
+	}
+}
