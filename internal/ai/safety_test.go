@@ -626,8 +626,9 @@ func TestCancelResearchStopsAHungWorkerAndFreesTheIssue(t *testing.T) {
 		t.Fatalf("nothing to cancel: %v", err)
 	}
 	id := "01JOBCANCEL"
-	// A stand-in for the worker: its command line carries "--worker <id>".
-	w := exec.Command("sh", "-c", "exec sleep 60", "ade", "--worker", id)
+	// A stand-in for the worker: its command line carries "--worker <id>". The
+	// shell must stay the process (no exec), or its command line becomes sleep's.
+	w := exec.Command("sh", "-c", "sleep 60; exit 0", "ade", "--worker", id)
 	w.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := w.Start(); err != nil {
 		t.Fatal(err)
