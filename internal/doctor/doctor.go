@@ -27,7 +27,7 @@ const (
 
 // Check is one diagnosis.
 type Check struct {
-	Group  string `json:"group"` // config | tools | paths | forge | host
+	Group  string `json:"group"` // config | tools | paths | forge | host | dotfiles | cde | ai
 	Name   string `json:"name"`
 	Status Status `json:"status"`
 	Detail string `json:"detail,omitempty"`
@@ -77,7 +77,7 @@ func (o *Options) defaults() {
 }
 
 // Run executes all checks concurrently and returns them in a stable order:
-// config, tools, paths, forges (by name), host.
+// config, tools, paths, forges (by name), host, dotfiles, cde, ai.
 func Run(ctx context.Context, o Options) []Check {
 	o.defaults()
 	var groups []func(context.Context) []Check
@@ -90,6 +90,7 @@ func Run(ctx context.Context, o Options) []Check {
 	groups = append(groups, func(context.Context) []Check { return hostChecks(o) })
 	groups = append(groups, func(ctx context.Context) []Check { return dotfilesChecks(ctx, o) })
 	groups = append(groups, func(context.Context) []Check { return cdeChecks(o) })
+	groups = append(groups, func(ctx context.Context) []Check { return aiChecks(ctx, o) })
 
 	results := make([][]Check, len(groups))
 	var wg sync.WaitGroup

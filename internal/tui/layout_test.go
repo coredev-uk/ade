@@ -9,6 +9,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/coredev-uk/ade/internal/agile"
 	"github.com/coredev-uk/ade/internal/events"
 	"github.com/coredev-uk/ade/internal/forge/gitlab/fake"
 	"github.com/coredev-uk/ade/internal/notify"
@@ -36,6 +37,23 @@ func layoutScenarios() []layoutScenario {
 			return h.m
 		}
 	}
+	// lastDay is Home with its Last working day block loaded: seven facts and
+	// a note, or a long AI summary, the most rows the block can take.
+	lastDay := func(summary bool) func(t *testing.T) model {
+		return func(t *testing.T) model {
+			m := home()(t)
+			from := time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC)
+			l := &agile.LastDay{Date: "2026-11-04", From: from}
+			for i := range 7 {
+				l.Done = append(l.Done, agile.Entry{At: from.Add(time.Duration(9+i) * time.Hour), Text: "pushed 1-rate-limit with a fairly long commit title to cut"})
+			}
+			if summary {
+				l.Narrative = "**Shipped**\n- api!12 rate limit merged\n- web!4 retry banner\n\n**In progress**\n- tracker#9 export timestamps\n- tracker#11 stale totals\n\n**Reviews and discussion**\n- answered rae on api!12\n- reviewed web!9"
+			}
+			m.ld = lastDayUI{asked: time.Now().Format("2006-01-02"), day: l, note: "AI summary paused: 92% of the day budget is spent"}
+			return m
+		}
+	}
 	mr := func(tab string) func(t *testing.T) model {
 		return func(t *testing.T) model {
 			e := newMREnv(t, fake.Premium)
@@ -61,6 +79,8 @@ func layoutScenarios() []layoutScenario {
 	scs := []layoutScenario{
 		{"home", home()},
 		{"home_tab", home("tab")},
+		{"home_lastday", lastDay(false)},
+		{"home_lastday_ai", lastDay(true)},
 		{"home_search", home("/", "b")},
 		{"home_help", home("?")},
 		{"home_palette", home(":")},
@@ -418,4 +438,36 @@ func buildScenario(t *testing.T, name string) model {
 	}
 	t.Fatalf("no scenario %q", name)
 	return model{}
+}
+
+// Home's Last working day block gives its rows back on a short screen and
+// shrinks on a middling one, so the list keeps room at every size.
+func TestLastDayBlockYieldsOnShortScreens(t *testing.T) {
+	from := time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC)
+	l := &agile.LastDay{Date: "2026-11-04", From: from}
+	for i := range 7 {
+		l.Done = append(l.Done, agile.Entry{At: from.Add(time.Duration(9+i) * time.Hour), Text: "pushed"})
+	}
+	m := model{g: unicodeGlyphs, w: 100, ld: lastDayUI{day: l, note: "paused"}}
+	rows := func(h int) int {
+		m.h = h
+		return len(m.lastDayLines(100))
+	}
+	if n := rows(20); n != 0 {
+		t.Errorf("a 20-row screen shows %d block rows, want none", n)
+	}
+	m.h = shortH - 1
+	m.ld.busy, m.ld.day = true, nil
+	if len(m.lastDayLines(100)) != 0 {
+		t.Error("the reading row shows on a short screen")
+	}
+	m.ld.busy, m.ld.day = false, l
+	mid, tall := rows(tallH-1), rows(tallH)
+	if mid >= tall || mid > 6 || tall > 9 {
+		t.Errorf("block rows: %d at %d, %d at %d", mid, tallH-1, tall, tallH)
+	}
+	m.ld.day = &agile.LastDay{Date: "2026-11-04", From: from, Narrative: strings.Repeat("- a line of the summary\n", 12)}
+	if n := rows(tallH - 1); n > 7 {
+		t.Errorf("a long summary takes %d rows on a %d-row screen", n, tallH-1)
+	}
 }

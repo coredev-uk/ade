@@ -132,7 +132,7 @@ func TestFooterShowsKeysAndNeverCutsAHint(t *testing.T) {
 	e := newMREnv(t, fake.Free)
 	e.open(mrRef("api", 1).String())
 	e.press("2")
-	e.want("r reply", "x resolve/reopen", "m merge", "S submit review")
+	e.want("r reply", "x resolve", "m merge", "S submit")
 	e.m.w = 70
 	foot := e.footerLine()
 	if lipgloss.Width(foot) >= 70 {

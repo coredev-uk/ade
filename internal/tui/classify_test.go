@@ -191,6 +191,9 @@ func TestAIChipStatesCarryAWordAndAGlyph(t *testing.T) {
 	}{
 		{aiChip{}, ""},
 		{aiChip{ok: true, off: true}, "AI off"},
+		{aiChip{ok: true, setup: "no profile selected"}, "! AI no profile selected"},
+		{aiChip{ok: true, period: "day", spent: 0.38, failed: true}, "! AI $0.38 last call failed"},
+		{aiChip{ok: true, period: "day", spent: 0.38, stopped: []string{"gw"}, failed: true}, "x AI $0.38 stopped"},
 		{aiChip{ok: true, period: "day", spent: 0.38}, "AI $0.38"},
 		{aiChip{ok: true, period: "day", spent: 0.38, limit: 2}, "AI $0.38 / $2.00 day"},
 		{aiChip{ok: true, period: "week", spent: 6.4, limit: 8}, "! AI $6.40 / $8.00 week"},
@@ -236,7 +239,7 @@ func TestHeaderShowsTheChipNextToUnread(t *testing.T) {
 	}
 }
 
-func TestClassifyFailureShowsACauseAndARecoveryAndTheRawErrorStaysInTheLog(t *testing.T) {
+func TestClassifyFailureFallsBackToKeywordsAndTheRawErrorStaysInTheLog(t *testing.T) {
 	e := newClassifyEnv(t)
 	e.app.Config.AI.Mode = "auto"
 	stubOMP(t, e, `{}`)
@@ -244,14 +247,78 @@ func TestClassifyFailureShowsACauseAndARecoveryAndTheRawErrorStaysInTheLog(t *te
 	p.Command = "omp-not-installed-" + t.Name()
 	e.app.Config.AI.Profiles["sub"] = p
 	e.press("c")
-	if e.m.cl == nil || e.m.cl.stage != clFailed {
-		t.Fatalf("stage %+v", e.m.cl)
+	if e.m.cl == nil || e.m.cl.stage != clSuggest {
+		t.Fatalf("a failing model must not dead-end the dialog: %+v", e.m.cl)
 	}
-	e.want("omp is not installed", "install it or set ai.mode = off")
+	e.want("omp is not installed", "install it or set ai.mode = off", "keywords", "without a model", "type::bug")
 	e.wantNot("exec:", "$PATH", "executable file not found")
+	e.press("enter")
+	if e.m.cl.stage != clDone {
+		t.Fatalf("the keyword suggestion applies like any other: stage %v err %v", e.m.cl.stage, e.m.cl.err)
+	}
+	if got := strings.Join(e.issueLabels(11), ","); !strings.Contains(got, "type::bug") {
+		t.Fatalf("labels %s", got)
+	}
 	es, _ := e.app.Audit.Query(audit.Filter{Action: "ai.classify"})
 	if len(es) != 1 || es[0].Outcome != "error" || !strings.Contains(es[0].Error, "executable file not found") {
 		t.Fatalf("the raw error belongs in the log: %+v", es)
+	}
+}
+
+func TestClassifyDecliningThePreflightUsesKeywords(t *testing.T) {
+	e := newClassifyEnv(t)
+	e.app.Config.AI.Mode = "ask"
+	e.app.Config.Budget.ConfirmOverUSD = 0.0000001
+	stubOMP(t, e, `{"type":"chore","apps":[]}`)
+	e.press("c")
+	if e.m.cl.stage != clAsk {
+		t.Fatalf("stage %v", e.m.cl.stage)
+	}
+	e.want("use keywords instead")
+	e.press("n")
+	if e.m.cl == nil || e.m.cl.stage != clSuggest {
+		t.Fatalf("declining must leave the keyword suggestion, not close: %+v", e.m.cl)
+	}
+	e.want("without a model", "type::bug")
+	e.wantNot("the model could not answer")
+	if es, _ := e.app.Audit.Query(audit.Filter{Action: "ai.*"}); len(es) != 0 {
+		t.Fatalf("declined: nothing was sent: %+v", es)
+	}
+}
+
+// When no keyword fits, the dialog lists the known labels to pick by hand
+// instead of closing on "no label to add".
+func TestClassifyWithoutASuggestionOffersKnownLabelsToPick(t *testing.T) {
+	e := newClassifyEnv(t)
+	ref, err := e.srv.AddIssue(fake.IssueSpec{Title: "Hmm", Assigned: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.m.results[0].Items = append(e.m.results[0].Items, e.item(ref.IID, "Hmm"))
+	e.m.rebuildHome("")
+	e.selectRow(ref.String())
+	e.press("c")
+	if e.m.cl == nil || e.m.cl.stage != clSuggest || len(e.m.cl.labels) == 0 {
+		t.Fatalf("no known labels offered: %+v", e.m.cl)
+	}
+	for _, l := range e.m.cl.labels {
+		if l.on || !l.manual {
+			t.Fatalf("a pick-by-hand label is never pre-ticked: %+v", l)
+		}
+	}
+	e.want("tick one to add it by hand", "type::bug", "type::chore", "type::story")
+	e.press("enter")
+	e.want("nothing ticked")
+	e.press("j", "x", "enter") // type::chore
+	if e.m.cl.stage != clDone {
+		t.Fatalf("stage %v err %v", e.m.cl.stage, e.m.cl.err)
+	}
+	if got := strings.Join(e.issueLabels(ref.IID), ","); !strings.Contains(got, "type::chore") {
+		t.Fatalf("labels %s", got)
+	}
+	es, _ := e.app.Audit.Query(audit.Filter{Action: "forge.issue.labels"})
+	if len(es) != 1 || !strings.Contains(es[0].Params["reason"].(string), "manual") {
+		t.Fatalf("the label was picked by hand: %+v", es)
 	}
 }
 
@@ -369,5 +436,37 @@ func TestReadFailureFix(t *testing.T) {
 		if got := readFailureFix(tt.err, "="); !strings.Contains(got, tt.want) {
 			t.Errorf("readFailureFix(%v) = %q, want %q", tt.err, got, tt.want)
 		}
+	}
+}
+
+// A suggestion that covers one facet still offers the known labels of the
+// other, unticked; ticking one makes the audit say it was picked by hand too.
+func TestClassifyOffersKnownLabelsForTheFacetNoSuggestionCovers(t *testing.T) {
+	e := newClassifyEnv(t)
+	e.press("c") // "stale totals" -> type::bug, no app keyword
+	if e.m.cl == nil || e.m.cl.stage != clSuggest {
+		t.Fatalf("%+v", e.m.cl)
+	}
+	var suggested, picks []string
+	for _, l := range e.m.cl.labels {
+		if l.manual {
+			picks = append(picks, l.name)
+			if l.on {
+				t.Errorf("a pick is never pre-ticked: %+v", l)
+			}
+		} else {
+			suggested = append(suggested, l.name)
+		}
+	}
+	if strings.Join(suggested, ",") != "type::bug" || len(picks) == 0 || !strings.HasPrefix(picks[0], "app::") {
+		t.Fatalf("suggested %v, picks %v", suggested, picks)
+	}
+	e.press("j", "x", "enter") // tick the first app pick too
+	if e.m.cl.stage != clDone {
+		t.Fatalf("stage %v err %v", e.m.cl.stage, e.m.cl.err)
+	}
+	es, _ := e.app.Audit.Query(audit.Filter{Action: "forge.issue.labels"})
+	if len(es) != 1 || !strings.Contains(es[0].Params["reason"].(string), "keywords+manual") {
+		t.Fatalf("audit: %+v", es)
 	}
 }

@@ -29,14 +29,24 @@ type callResult struct {
 	Exit     int
 	// StoppedBy is StopCostCap when ADE (or omp's own --max-cost) stopped it.
 	StoppedBy string
-	Stderr    string
-	Err       error // start failure, or the context's error
+	// Limit names the cap that stopped it ("run cap", "daily cap …"); set by
+	// the caller that chose the cap.
+	Limit  string
+	Stderr string
+	Err    error // start failure, or the context's error
+	// Dest and Bytes are where the prompt went and how big it was, for the
+	// audit trail; set by the caller.
+	Dest  string
+	Bytes int
 }
 
 // procHooks are what the process runner reports back while a call runs.
 type procHooks struct {
-	// transcript receives every stdout line, verbatim.
+	// transcript receives every stdout line (through redact, when set).
 	transcript *os.File
+	// redact masks known secrets in a line before it is written to the
+	// transcript; the parser still sees the original.
+	redact func([]byte) []byte
 	// capUSD hard-stops the process once total (spent before + this call's
 	// running cost) exceeds it; 0 = no cap.
 	capUSD, spentBefore float64
@@ -90,7 +100,11 @@ func runProcess(ctx context.Context, c Cmd, p Parser, h procHooks, omp3 bool) ca
 	for sc.Scan() {
 		line := sc.Bytes()
 		if h.transcript != nil {
-			_, _ = h.transcript.Write(append(append([]byte(nil), line...), '\n'))
+			out := line
+			if h.redact != nil {
+				out = h.redact(line)
+			}
+			_, _ = h.transcript.Write(append(append([]byte(nil), out...), '\n'))
 		}
 		p.Feed(line)
 		pr := p.Progress()
@@ -172,16 +186,4 @@ func Alive(pid int) bool {
 		return false
 	}
 	return syscall.Kill(pid, 0) == nil
-}
-
-// killGroup kills the process group led by pid.
-func killGroup(pid int) error {
-	if pid <= 0 {
-		return nil
-	}
-	err := syscall.Kill(-pid, syscall.SIGKILL)
-	if errors.Is(err, syscall.ESRCH) {
-		return nil
-	}
-	return err
 }

@@ -30,7 +30,9 @@ const (
 	modalMerge
 	modalLog
 	modalAI
-	modalDescribe // an AI-drafted MR description, editable, applied on enter
+	modalDescribe      // an MR description, editable (an AI draft, or the current one for E), applied on enter
+	modalRebase        // update the source branch from the target on the forge
+	modalRequestReview // ask reviewers (again) and named users to review, applied on enter
 )
 
 // severities are the choices of a comment, in cycling order. The first, none,
@@ -80,6 +82,10 @@ type mrModal struct {
 
 	thread string // reply: the discussion
 	aiNote string // reply: set when the text is an AI draft
+	// manual marks a description written by hand (E): no model, no new draft.
+	// qaSeen is the text whose quick actions the user was already warned of.
+	manual bool
+	qaSeen string
 	aiCut  string // reply: set when the AI draft is cut short, so the user finishes it before posting
 
 	ai aiKey // modalAI: the call waiting for a yes
@@ -89,6 +95,8 @@ type mrModal struct {
 	draftID string     // edit, deny: which draft
 
 	approve bool // submit: also approve
+
+	rr *reviewAsk // request review: the reviewers and the choice
 
 	squash, remove, auto bool   // merge options
 	prefix               string // merge: the commit prefix that applies to the item, "" for none
@@ -292,10 +300,14 @@ func (m *model) modalKey(k tea.KeyPressMsg) tea.Cmd {
 		}
 	case modalMerge:
 		return m.mergeKey(md, ks)
+	case modalRebase:
+		return m.rebaseModalKey(ks)
 	case modalAI:
 		return m.aiConfirmKey(md, ks)
 	case modalDescribe:
 		return m.describeModalKey(md, k)
+	case modalRequestReview:
+		return m.requestReviewModalKey(md, k)
 	case modalLog:
 		md.logKey(k)
 	}
@@ -397,10 +409,14 @@ func (m model) mrOverlay(w, h int) string {
 		title, l = m.submitDialog(md, inner)
 	case modalMerge:
 		title, l = m.mergeDialog(md, inner)
+	case modalRebase:
+		title, l = m.rebaseDialog(inner)
 	case modalAI:
 		title, l = m.aiModal(md, inner)
 	case modalDescribe:
 		title, l = m.describeDialog(md, inner, h)
+	case modalRequestReview:
+		title, l = m.requestReviewDialog(md, inner)
 	}
 	if md.warn != "" {
 		l = append(l, "", stWarn.Render(m.g.Warn+" "+md.warn))
@@ -430,6 +446,9 @@ func (m model) modalHint(md *mrModal) string {
 	case modalAI:
 		return keys("enter", "send", "esc", "cancel")
 	case modalDescribe:
+		if md.manual {
+			return keys("enter", "write to the MR", "alt+enter", "newline", "esc", "discard")
+		}
 		return keys("enter", "write to the MR", "alt+enter", "newline", "ctrl+r", "new draft", "esc", "discard")
 	case modalComment:
 		return keys("enter", "add draft", "tab", "severity", "alt+enter", "newline", "esc", "cancel")
@@ -437,6 +456,10 @@ func (m model) modalHint(md *mrModal) string {
 		return keys("enter", "save", "tab", "severity", "alt+enter", "newline", "esc", "cancel")
 	case modalDeny:
 		return keys("enter", "deny", "esc", "cancel")
+	case modalRequestReview:
+		return requestReviewHint()
+	case modalRebase:
+		return keys("enter", "update the branch", "y", "copy git commands", "esc", "cancel")
 	case modalSubmit:
 		return keys("enter", "submit", "tab", "approve", "alt+enter", "newline", "esc", "cancel")
 	case modalMerge:

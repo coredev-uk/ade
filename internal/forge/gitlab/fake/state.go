@@ -128,6 +128,7 @@ type mr struct {
 	AutoMerge   bool           // merge_when_pipeline_succeeds
 	Retries     int            // pipeline retries requested
 	MergeParams map[string]any // parameters of the last merge request
+	Rebase      rebaseState    // how it relates to its target branch (rebase.go)
 }
 
 // commit is one commit of an MR.

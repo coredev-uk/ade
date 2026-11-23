@@ -38,3 +38,12 @@ func untrusted(source, text string) string {
 	text = closingTag.ReplaceAllString(text, `<\/untrusted`)
 	return "<untrusted source=\"" + source + "\">\n" + text + "\n</untrusted>\n"
 }
+
+// Untrusted is untrusted for the agent prompts, which carry forge text too:
+// one wrapper, one tag.
+func Untrusted(source, text string) string { return untrusted(source, text) }
+
+// UntrustedRule is the standing rule for a prompt that carries <untrusted>
+// blocks, to be placed in the prompt itself (an agent has no separate system
+// prompt here).
+func UntrustedRule() string { return strings.TrimSpace(untrustedRule) + "\n" }

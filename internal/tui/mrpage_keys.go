@@ -73,6 +73,9 @@ func (m *model) mrKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 			return nil, true
 		}
 	}
+	if m.aiKeyUnavailable(ks) {
+		return nil, true
+	}
 	if p.data == nil {
 		return m.overviewKey(ks), true
 	}
@@ -89,6 +92,8 @@ func (m *model) mrKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 		}
 		p.modal = &mrModal{kind: modalMerge, prefix: review.PrefixForMR(m.app, m.cache, d.ref)}
 		return nil, true
+	case "u":
+		return m.rebaseKey(), true
 	case "S":
 		m.beginSubmit()
 		return nil, true
@@ -96,6 +101,10 @@ func (m *model) mrKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 		return m.aiReviewKey(), true
 	case "B":
 		return m.describeKey(), true
+	case "E":
+		return m.editDescriptionKey(), true
+	case "v":
+		return m.requestReviewKey(), true
 	}
 	switch p.tab {
 	case tabThreads:
@@ -164,6 +173,37 @@ func moveKey(ks string) (int, bool) {
 		return -10, true
 	}
 	return 0, false
+}
+
+// aiKeyUnavailable is true for an AI key pressed while AI cannot be used: the
+// page hides these keys, so the press says why once instead of doing nothing.
+func (m *model) aiKeyUnavailable(ks string) bool {
+	p := m.mr
+	if p.data == nil {
+		return false
+	}
+	switch ks {
+	case "A", "B":
+	case "s", "d":
+		if p.tab != tabOverview && p.tab != tabThreads {
+			return false
+		}
+	case "t":
+		if p.tab != tabCI {
+			return false
+		}
+	default:
+		return false
+	}
+	ok, why := m.aiAvail()
+	if ok {
+		return false
+	}
+	if !p.aiToldOff {
+		p.aiToldOff = true
+		m.notice(events.Info, "No AI on this page: "+why)
+	}
+	return true
 }
 
 func (m *model) overviewKey(ks string) tea.Cmd {
@@ -389,13 +429,13 @@ func (m model) mrFooter(w int) string {
 		if m.aiOn() {
 			tabKeys = append(tabKeys, "s", "AI summary", "d", "AI reply")
 		}
-		tabKeys = append(tabKeys, "x", "resolve/reopen")
+		tabKeys = append(tabKeys, "x", "resolve")
 	case p.tab == tabDiff && p.focusDiff:
 		tabKeys = []string{"j/k", "line", "c", "comment", "J/K", "file", "D", "delta", "h", "files"}
 	case p.tab == tabDiff:
 		tabKeys = []string{"j/k", "file", "enter", "open", "D", "delta"}
 	case p.tab == tabReview:
-		tabKeys = []string{"j/k", "move", "y", "accept", "n", "deny", "e", "edit", "s", "severity"}
+		tabKeys = []string{"j/k", "go", "y", "accept", "n", "deny", "e", "edit"} // s severity is in the help
 		if narrow {
 			tabKeys = tabKeys[:6]
 		}
@@ -418,12 +458,20 @@ func (m model) mrFooter(w int) string {
 	if p.tab == tabOverview && p.item != nil {
 		tabKeys = append(tabKeys, "n", "edit notes")
 	}
-	act := []string{"a", "approve", "R", "ready/draft", "m", "merge", "S", "submit review"}
-	if m.aiOn() {
-		act = append(act, "A", "agent review", "B", "AI description")
+	// Whole hints drop from the end when the line is too long, so the order is
+	// the rank: the everyday writes, then the branch, then the agents, then the
+	// rarer ones.
+	ready := "ready" // R flips it: the hint names where it goes
+	if p.data != nil && !p.data.mr.Draft {
+		ready = "draft"
 	}
+	act := []string{"a", "approve", "R", ready, "m", "merge", "S", "submit", "u", "update"}
 	if p.item != nil {
 		act = append(act, "P", "agents")
+	}
+	act = append(act, "v", "re-review", "E", "describe")
+	if m.aiOn() {
+		act = append(act, "A", "agent review", "B", "AI description")
 	}
 	if p.data == nil {
 		act = nil
@@ -479,6 +527,9 @@ func mrHelpRows(ai bool) [][2]string {
 		{"Y s d", "accept all, severity, delete"},
 		{"S", "submit the review as one batch"},
 		{"a R m", "approve, ready/draft, merge"},
+		{"v", "ask for a review again: reviewers, or @users"},
+		{"u", "update the branch from the target (rebase or merge)"},
+		{"E", "edit the MR description by hand (no AI)"},
 		{"w W", "open this MR's worktree (W: other main pane)"},
 		{"P", "agent menu: plan, address comments"},
 		{"l", "CI: job log (full screen, / searches)"},
