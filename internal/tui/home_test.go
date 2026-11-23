@@ -107,7 +107,7 @@ func TestSprintOpenListsOnlyTrackerUnassignedTickets(t *testing.T) {
 // answers: sync runs in the background.
 func TestHomeRendersFromCacheWhileSyncHangs(t *testing.T) {
 	cfg := config.Defaults()
-	a := &app.App{Paths: paths.Paths{CacheDir: t.TempDir()}, Config: &cfg, Bus: nil}
+	a := &app.App{Paths: paths.Paths{CacheDir: t.TempDir()}, Config: &cfg, Bus: nil, RecordsDir: t.TempDir()}
 	t.Cleanup(func() { a.Close() })
 	st, err := a.Cache()
 	if err != nil {
@@ -130,7 +130,7 @@ func TestHomeRendersFromCacheWhileSyncHangs(t *testing.T) {
 // column stays narrow and the titles keep their room.
 func TestHomeAbbreviatesLongRepoNames(t *testing.T) {
 	cfg := config.Defaults()
-	a := &app.App{Paths: paths.Paths{CacheDir: t.TempDir()}, Config: &cfg}
+	a := &app.App{Paths: paths.Paths{CacheDir: t.TempDir()}, Config: &cfg, RecordsDir: t.TempDir()}
 	t.Cleanup(func() { a.Close() })
 	st, err := a.Cache()
 	if err != nil {
