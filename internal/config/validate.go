@@ -640,6 +640,9 @@ func (v *manifestValidator) checkConventions() {
 	if err := commitmsg.Validate(m.Conventions.CommitPrefix); err != nil {
 		v.errorf("conventions.commit_prefix", "%v", err)
 	}
+	if m.Conventions.CommitPrefixHook && m.Conventions.CommitPrefix == "" {
+		v.errorf("conventions.commit_prefix_hook", "needs conventions.commit_prefix: there is no prefix to apply")
+	}
 	if s := m.Conventions.MR.Create; !oneOf(s, "", "ask", "always", "never") {
 		v.errorf("conventions.mr.create", "unknown value %q: want ask, always or never", s)
 	}

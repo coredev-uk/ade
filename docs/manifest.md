@@ -214,6 +214,9 @@ mr          = { create = "ask", template = "Default", draft = true, closes = "ch
   segment (`/acme`, `acme//x`) is an error (`conventions.mr.reviewer_group`).
 - `commit_prefix`: a prefix for the first commit of the MR (and a squash merge message), e.g.
   `"GL-{parent}"`. See [Commit prefix](#commit-prefix).
+- `commit_prefix_hook`: `true` installs ADE's commit-msg hook into each worktree start work makes, so your own
+  first commit of the MR gets the prefix too (needs `commit_prefix`). Default `false`. See
+  [Commit prefix](#commit-prefix).
 
 ### Commit prefix
 
@@ -253,9 +256,33 @@ ade.commitPrefix  = GL-412       # absent when commit_prefix is not set (a stale
 ade.target        = main         # the MR's target branch; absent when not known yet
 ```
 
-A `commit-msg` hook (a global `core.hooksPath` one works for every worktree) can use them to prefix the first
-commit you type; `ade.target` is the MR's target branch (written when ADE knows it), so the hook prefixes only
-while the branch has no commits ahead of it:
+**ADE's hook.** `ade ws hook install [worktree]` writes a `commit-msg` hook for one worktree, and
+`conventions.commit_prefix_hook = true` does it for every worktree start work makes (`ade adopt` and a workspace
+opened for an item's worktree do not: run the command there). The hook reads the keys above, so it prefixes the
+first commit you type (`GL-412 Fix export`):
+
+- It prefixes only while the branch has no commits ahead of `ade.target` (the local branch, else `origin/<target>`;
+  with no target recorded it prefixes), never twice (a message that already starts with the prefix, with or without
+  `:`, is left alone), and not a merge, a squashed merge, a revert or a `fixup!` / `squash!` / `amend!` message. An
+  empty message stays empty.
+- It lives in `<git dir>/ade-hooks/` of the worktree (for a worktree of a bare clone that is
+  `<repo>/.bare/worktrees/<name>/ade-hooks/`, removed with the worktree) and is switched on by that worktree's own
+  `core.hooksPath` (`git config --worktree`, `extensions.worktreeConfig`). No other worktree and no shared git
+  config changes.
+- **Your hooks win.** If the hooks directory git would use (the repo's `hooks/`, or a shared `core.hooksPath`)
+  already has a `commit-msg`, ADE changes nothing and says where it is: add the prefix there (the sample below), or
+  remove it and install again. Since the worktree's own `core.hooksPath` replaces the shared one, the other
+  executable hooks of that directory (not `*.sample`) are kept by small forwarding stubs written next to ADE's hook
+  that `exec` the original; run the install again after adding a hook there. Everything ADE writes starts its second
+  line with `# ade-managed:`; nothing else is touched.
+- Running it again is a no-op (or rewrites an older version of the hook). `ade ws hook remove` unsets the worktree's
+  `core.hooksPath` and deletes only those files. `--dry-run` on both reports without writing; each real change is
+  audited as `git.hook.install` / `git.hook.remove`. `ade doctor`'s `commit-prefix` group warns for a worktree with a
+  prefix and no hook, with the command to run.
+
+To write your own instead, a `commit-msg` hook (a global `core.hooksPath` one works for every worktree) can use the
+keys; `ade.target` is the MR's target branch (written when ADE knows it), so the hook prefixes only while the branch
+has no commits ahead of it:
 
 ```sh
 #!/bin/sh

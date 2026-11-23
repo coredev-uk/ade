@@ -89,6 +89,7 @@ func Run(ctx context.Context, o Options) []Check {
 	groups = append(groups, forgeChecks(o)...)
 	groups = append(groups, func(context.Context) []Check { return hostChecks(o) })
 	groups = append(groups, func(ctx context.Context) []Check { return dotfilesChecks(ctx, o) })
+	groups = append(groups, func(ctx context.Context) []Check { return commitHookChecks(ctx, o) })
 	groups = append(groups, func(context.Context) []Check { return cdeChecks(o) })
 
 	results := make([][]Check, len(groups))
