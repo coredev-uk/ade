@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 
 	"github.com/coredev-uk/ade/internal/audit"
 	"github.com/coredev-uk/ade/internal/git"
@@ -101,4 +102,55 @@ func (s *Service) FastForwardBaseline(ctx context.Context, projectName, repo str
 	}
 	s.audit(e)
 	return b
+}
+
+// Cleaned is what CleanTrees did to one tree.
+type Cleaned struct {
+	Removed bool   `json:"removed,omitempty"`
+	Error   string `json:"error,omitempty"`
+	// Fate says what became of the branch after a real removal.
+	Fate BranchFate `json:"-"`
+	// WouldForce and WouldWhy are the dry-run plan for the branch: whether it
+	// would need `git branch -D`, and the proof or the reason it would stay.
+	WouldForce bool   `json:"-"`
+	WouldWhy   string `json:"-"`
+}
+
+// CleanTrees is the work of `ade cleanup` on trees Trees judged removable: it
+// removes the worktrees, fast-forwards each repo's baseline once, then deletes
+// the branches, which the fast-forward lets git see as merged (a squash merge
+// is proven from the merged MR's head instead). With dry set it only plans: the
+// baselines are fetched and reported, the branches judged, nothing is touched.
+// cleaned is parallel to trees; failed counts the removals that failed.
+func (s *Service) CleanTrees(ctx context.Context, trees []Tree, dry bool) (cleaned []Cleaned, baselines []Baseline, failed int) {
+	cleaned = make([]Cleaned, len(trees))
+	var removed []int
+	for i, t := range trees {
+		if dry {
+			cleaned[i].WouldForce, cleaned[i].WouldWhy = s.PlanBranch(ctx, t)
+			removed = append(removed, i)
+			continue
+		}
+		if err := s.RemoveWorktree(ctx, t); err != nil {
+			cleaned[i].Error = err.Error()
+			failed++
+			continue
+		}
+		cleaned[i].Removed = true
+		removed = append(removed, i)
+	}
+	var seen []string
+	for _, i := range removed {
+		t := trees[i]
+		if key := t.Project + "/" + t.Repo; !slices.Contains(seen, key) {
+			seen = append(seen, key)
+			baselines = append(baselines, s.FastForwardBaseline(ctx, t.Project, t.Repo, dry))
+		}
+	}
+	if !dry {
+		for _, i := range removed {
+			cleaned[i].Fate = s.DeleteBranch(ctx, trees[i])
+		}
+	}
+	return cleaned, baselines, failed
 }

@@ -558,6 +558,9 @@ func (m model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "u":
 		next, cmd := m.openPush()
 		return next, cmd
+	case "x":
+		next, cmd := m.openCleanup()
+		return next, cmd
 	case "o":
 		next, cmd := m.openBrowser()
 		return next, cmd

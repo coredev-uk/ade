@@ -601,7 +601,7 @@ func helpGroupsAll(full bool) []helpGroup {
 				{"R", "research the issue in the background (AI)"},
 				{"a A", "agent runs for the item; all runs"},
 				{"w v", "open workspace (zellij); VS Code workspace of all repos"},
-				{"y o u", "copy link or path; browser; push branches"},
+				{"y o u x", "copy link or path; browser; push; clean up merged work"},
 				{"n N = m r", "edit notes; dated note; weight; label move; restart services"},
 			}},
 			{"Pages", [][2]string{
@@ -644,6 +644,7 @@ func helpGroupsAll(full bool) []helpGroup {
 			{"N", "add a dated note: what blocks the item or what you did last (a leading ! or tab marks it blocked; local only)"},
 			{"=", "set weight (shown before it is written; audited)"},
 			{">", "move to the next sprint, child issues following (shown before it is written; audited)"},
+			{"x", "clean up the item's finished work: remove its merged worktrees, update the default branch, delete the local branches (everything is listed first; what `ade cleanup` does; `:` has `ade gc` for every project)"},
 			{"u", "push the item's branches to origin: the commits ahead are listed first, nothing is forced (audited as git.push; what `ade push` does)"},
 			{"m", "move the workflow label to match the stage, when the preview says it is behind (shown before it is written; audited; what `ade issue stage` does)"},
 			{"r", "restart blocked services of the item; otherwise refresh"},
