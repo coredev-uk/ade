@@ -45,14 +45,14 @@ func runTextJob(ctx context.Context, svc *ai.Service, a *app.App, be review.Back
 	case aiDescribe:
 		in, err := ai.GatherDescribe(ctx, a, be, t.mr.Ref, "")
 		if err != nil {
-			return nil, err
+			return nil, forgeRead(err)
 		}
 		job = ai.DescribeJob(t.forgeName, in)
 		draftOf = func(r ai.Result) string { return ai.PrepareDescription(r.Text, in.MR.Description) }
 	case aiCITriage:
 		in, err := ai.GatherCITriage(ctx, be, t.mr, t.jobs)
 		if err != nil {
-			return nil, err
+			return nil, forgeRead(err)
 		}
 		job = ai.CITriageJob(t.forgeName, in)
 	}
@@ -97,6 +97,33 @@ func (m *model) describeKey() tea.Cmd {
 	return m.aiAsk(d, k, false, false)
 }
 
+// editDescriptionKey is E: edit the MR's description by hand, seeded with the
+// current one. No model is involved, so it is there with AI off or unset.
+func (m *model) editDescriptionKey() tea.Cmd {
+	d := m.mr.data
+	if d == nil {
+		return nil
+	}
+	switch {
+	case d.mr.State != "opened":
+		m.notice(events.Info, d.ref.String()+" is "+d.mr.State+": its description is left alone")
+	case d.mrL.st != loadOK:
+		m.notice(events.Info, "The merge request is still being read: try again in a moment")
+	default:
+		m.mr.modal = &mrModal{kind: modalDescribe, ed: newEditor(d.mr.Description), manual: true}
+	}
+	return nil
+}
+
+// quickActionsRun reports whether the forge of the open MR runs quick actions
+// in a description it stores: GitLab does, GitHub has none.
+func (m model) quickActionsRun() bool {
+	if m.app == nil || m.app.Config == nil || m.mr == nil {
+		return false
+	}
+	return m.app.Config.Forges[m.mr.forgeKey].Kind == "gitlab"
+}
+
 // deliverDescription opens a finished draft when the page still shows that MR.
 func (m *model) deliverDescription(d *mrData, st *aiText, draft string) {
 	st.text = draft
@@ -130,11 +157,22 @@ func (m *model) describeModalKey(md *mrModal, k tea.KeyPressMsg) tea.Cmd {
 			md.warn = "the description is empty"
 		case text == strings.TrimSpace(d.mr.Description):
 			md.warn = "the merge request already has this description"
+		case md.manual && m.quickActionsRun() && md.qaSeen != text && len(forge.QuickActions(text)) > 0:
+			// Typed by hand, so sent as written; but GitLab runs these lines.
+			md.qaSeen = text
+			md.warn = strings.Join(forge.QuickActions(text), ", ") + " run as quick actions when GitLab saves this: enter again writes it as it is"
 		default:
 			m.mr.modal = nil
-			return m.actDescribe(text)
+			source := "ai-describe"
+			if md.manual {
+				source = "manual"
+			}
+			return m.actDescribe(text, source)
 		}
 	case "ctrl+r":
+		if md.manual {
+			return nil // there is no draft to ask for again
+		}
 		m.mr.modal = nil
 		return m.aiAsk(d, aiKey{kind: aiDescribe}, true, false)
 	default:
@@ -144,14 +182,14 @@ func (m *model) describeModalKey(md *mrModal, k tea.KeyPressMsg) tea.Cmd {
 }
 
 // actDescribe writes the description to the MR (forge.mr.description).
-func (m *model) actDescribe(text string) tea.Cmd {
+func (m *model) actDescribe(text, source string) tea.Cmd {
 	d := m.mr.data
 	return m.mrWrite(d, "describe", "updating the description", func(ctx context.Context, w forge.MRWriter) (mrWrote, error) {
 		aw, ok := w.(*review.AuditedWriter)
 		if !ok {
 			return mrWrote{}, errors.New("the writer does not audit: not writing")
 		}
-		if err := aw.SetDescription(ctx, d.ref, text, "ai-describe"); err != nil {
+		if err := aw.SetDescription(ctx, d.ref, text, source); err != nil {
 			return mrWrote{}, err
 		}
 		return mrWrote{done: "Description updated on " + d.ref.String(), reload: relMR}, nil
@@ -161,6 +199,9 @@ func (m *model) actDescribe(text string) tea.Cmd {
 // describeDialog draws the draft's editor.
 func (m model) describeDialog(md *mrModal, inner, h int) (string, []string) {
 	var l []string
+	if md.manual {
+		l = append(l, stFaint.Render(ansi.Wrap(m.g.T("Written by hand, no model: enter writes it to the merge request, esc throws the change away"), inner, "")))
+	}
 	if md.aiNote != "" {
 		l = append(l, stFaint.Render(ansi.Wrap(md.aiNote, inner, "")))
 	}

@@ -14,6 +14,7 @@ import (
 	"github.com/coredev-uk/ade/internal/ai"
 	"github.com/coredev-uk/ade/internal/app"
 	"github.com/coredev-uk/ade/internal/budget"
+	"github.com/coredev-uk/ade/internal/config"
 )
 
 // criticalBudget is the share of a budget cap from which the budget counts as
@@ -22,8 +23,9 @@ import (
 const criticalBudget = 0.9
 
 // lastDayUI is Home's "Last working day" block: what you did on the last day
-// you pushed commits or opened or merged an MR, summarised by AI. It is asked
-// for once a day when Home first loads; the AI cache makes a repeat free.
+// you pushed commits or opened or merged an MR: the facts, with an AI summary
+// on top when AI is available. It is asked for once a day when Home first
+// loads; the AI cache makes a repeat free.
 type lastDayUI struct {
 	asked string // today's date when it was asked for
 	busy  bool
@@ -40,11 +42,16 @@ type lastDayMsg struct {
 // autoAI says whether an AI call nobody asked for may go out: AI set up and
 // on, no budget stop recorded today for the active profile (ai/daystop.go),
 // and no budget cap at criticalBudget or beyond. note is why not, empty when
-// AI is simply not set up.
+// AI is simply off or not set up; a profile that is missing or unselected is
+// named, since the user meant to have AI.
 func autoAI(a *app.App) (ok bool, note string) {
 	cfg := a.Config
-	if cfg.AI.Mode == "off" || len(cfg.AI.Profiles) == 0 {
+	switch cfg.AI.State() {
+	case config.AIOff, config.AINone:
 		return false, ""
+	case config.AINoProfile, config.AIUnknown:
+		_, why := cfg.AI.Available()
+		return false, "no AI summary: " + why
 	}
 	if a.Audit != nil {
 		if stops, err := ai.StopsToday(a.Audit, time.Now(), ai.Location(cfg)); err == nil {
@@ -67,15 +74,13 @@ func autoAI(a *app.App) (ok bool, note string) {
 	return true, ""
 }
 
-// loadLastDay asks for the block once a day, when AI is set up.
+// loadLastDay asks for the block once a day. The facts need no AI: only the
+// summary on top of them does (lastDaySummary).
 func (m *model) loadLastDay() tea.Cmd {
 	a := m.app
 	today := time.Now().Format("2006-01-02")
 	if a == nil || m.ld.busy || m.ld.asked == today {
 		return nil
-	}
-	if cfg := a.Config; cfg.AI.Mode == "off" || len(cfg.AI.Profiles) == 0 {
-		return nil // AI not set up: no block at all
 	}
 	m.ld.asked, m.ld.busy = today, true
 	ctx, c := m.ctx, m.collector()
@@ -99,7 +104,7 @@ func lastDaySummary(ctx context.Context, a *app.App, today string, l agile.LastD
 	}
 	svc, err := ai.NewService(a)
 	if err != nil {
-		return lastDayMsg{today: today, day: &l, note: "no AI summary: " + shortErr(err)}
+		return lastDayMsg{today: today, day: &l, note: "no AI summary: " + ai.Human(err)}
 	}
 	svc.SprintStart = budget.SprintStart(a)
 	text, err := (&agile.AINarrator{Svc: svc}).NarrateLastDay(ctx, l)
@@ -107,7 +112,7 @@ func lastDaySummary(ctx context.Context, a *app.App, today string, l agile.LastD
 	case errors.As(err, new(*ai.ErrNeedsConfirm)):
 		return lastDayMsg{today: today, day: &l, note: "AI summary needs confirmation under your budget settings"}
 	case err != nil:
-		return lastDayMsg{today: today, day: &l, note: "no AI summary: " + shortErr(err)}
+		return lastDayMsg{today: today, day: &l, note: "no AI summary: " + ai.Human(err)}
 	}
 	l.Narrative = strings.TrimSpace(text)
 	return lastDayMsg{today: today, day: &l}
@@ -120,12 +125,27 @@ func (m *model) onLastDay(msg lastDayMsg) {
 	}
 }
 
-// lastDayMaxEntries caps the plain list shown when there is no AI summary.
-const lastDayMaxEntries = 5
+// lastDayMaxEntries caps the plain list shown when there is no AI summary;
+// lastDayMidEntries and lastDayMidNarrative cap the list and the summary on a
+// screen shorter than tallH rows. Below shortH the block does not show at all:
+// it yields its rows to the list, and S (standup) has the same facts.
+const (
+	lastDayMaxEntries   = 5
+	lastDayMidEntries   = 2
+	lastDayMidNarrative = 3
+)
 
-// lastDayLines is the block at the top of Home: the AI summary, or the day's
-// facts when there is none, with the reason faint underneath.
+// lastDayLines is the block at the top of Home: the day's facts, or the AI
+// summary of them when there is one, with the reason faint underneath.
 func (m model) lastDayLines(w int) []string {
+	_, h := m.dims()
+	if shortScreen(h) {
+		return nil
+	}
+	entries, narrative := lastDayMaxEntries, 1<<30
+	if h < tallH {
+		entries, narrative = lastDayMidEntries, lastDayMidNarrative
+	}
 	l := m.ld.day
 	if l == nil || l.Date == "" {
 		if m.ld.busy {
@@ -139,12 +159,17 @@ func (m model) lastDayLines(w int) []string {
 	}
 	out := []string{section("Last working day", guide, w, m.g)}
 	if l.Narrative != "" {
-		for _, ln := range m.mdLines(l.Narrative, w-4) {
+		lines := m.mdLines(l.Narrative, w-4)
+		for i, ln := range lines {
+			if i == narrative {
+				out = append(out, "   "+stFaint.Render(fmt.Sprintf("… %d more lines · S shows the day", len(lines)-i)))
+				break
+			}
 			out = append(out, "   "+ln)
 		}
 	} else {
 		for i, e := range l.Done {
-			if i == lastDayMaxEntries {
+			if i == entries {
 				out = append(out, "   "+stFaint.Render(fmt.Sprintf("+ %d more", len(l.Done)-i)))
 				break
 			}

@@ -12,7 +12,6 @@
 |  enter     open: the item's MR page                                                              |
 |  s M       start work; create the MR for started work                                            |
 |  c C       classify: suggest missing type/app labels; the issue's comments                       |
-|  R         research the issue in the background (AI)                                             |
 |  a A       agent runs for the item; all runs                                                     |
 |  w v       open workspace (zellij); VS Code workspace of all repos                               |
 |  y o u x   copy link or path; browser; push; clean up merged work                                |
@@ -24,6 +23,7 @@
 |  Leave ---------------------------------------------------------------------------------------   |
 |  esc ? q   dismiss; close this; quit                                                             |
 +--------------------------------------------------------------------------------------------------+
+
 
 
 

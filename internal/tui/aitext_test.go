@@ -2,12 +2,16 @@ package tui
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/coredev-uk/ade/internal/ai"
 	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/forge/gitlab/fake"
@@ -138,8 +142,9 @@ func TestDigestDialogListsCommentsWithAIOffAndNeverCallsTheModel(t *testing.T) {
 	e := newMREnv(t, fake.Free)
 	_, asked := e.aiTextStub("off")
 	e.selectItem("ade-demo-env/tracker#1")
-	e.palette("AI digest of new comments")
-	e.want("Is a burst of 50 too high", "listed as they are: no model was asked")
+	e.palette("New comments since you last looked (listed as they are)")
+	e.want("New comments", "Is a burst of 50 too high", "listed as they are: no model was asked")
+	e.wantNot("AI digest")
 	if asked("digest") != 0 {
 		t.Fatal("AI is off: no call")
 	}
@@ -176,9 +181,16 @@ func TestStandInDialogIsMarkedLocalCachedAndWritesNothingToTheForge(t *testing.T
 	}
 	e.press("esc")
 
-	// With AI off the dialog says so and sends nothing.
+	// With AI off the palette does not offer it, and the dialog, reached
+	// another way, says so and sends nothing.
 	e.m.app.Config.AI.Mode = "off"
-	e.palette("AI stand-in description for an empty issue")
+	for _, en := range e.m.paletteEntries() {
+		if strings.Contains(en.name, "stand-in") {
+			t.Fatalf("the palette offers %q with AI off", en.name)
+		}
+	}
+	next, _ := e.m.openAIText(aiTextStandIn)
+	e.m = next
 	e.want("AI is off", "Nothing was sent")
 	if asked("standin") != 1 {
 		t.Fatal("AI off: no call")
@@ -219,6 +231,71 @@ func TestAITextDialogFitsNarrowAndAsciiTerminals(t *testing.T) {
 		}
 		if w := len([]rune(ln)); w > 60 {
 			t.Fatalf("line %d is %d wide at 60 columns: %q", i+1, w, ln)
+		}
+	}
+}
+
+// A failing model never hides the new comments: the digest lists them as they
+// are and the marker moves, as `ade ai digest --no-ai` does.
+func TestDigestDialogListsTheCommentsWhenTheModelFails(t *testing.T) {
+	e := newMREnv(t, fake.Free)
+	e.aiTextStub("auto")
+	e.m.app.Config.AI.Profiles["sub"] = config.AIProfile{
+		Driver: "omp", Command: "omp-not-installed-" + t.Name(),
+		Models: map[string]string{"explain": "claude-haiku-4-5"},
+	}
+	e.selectItem("ade-demo-env/tracker#1")
+	e.palette("AI digest of new comments")
+	e.want("Is a burst of 50 too high", "listed as they are: the model could not answer", "is not installed")
+	e.wantNot("raw", "exec:")
+	seen, err := records.New(e.m.app.RecordsDir).CommentsSeen("f", mrRef("api", 1))
+	if err != nil || seen.IsZero() {
+		t.Fatalf("the comments were listed, so the marker moves: %v %v", seen, err)
+	}
+	if es := e.audited("ai.digest"); len(es) == 0 {
+		t.Error("the failed call must stay in the audit log")
+	}
+}
+
+// Declining the pre-flight lists the comments without a model, instead of
+// closing the dialog with nothing.
+func TestDigestDialogListsTheCommentsWhenThePreflightIsDeclined(t *testing.T) {
+	e := newMREnv(t, fake.Free)
+	_, asked := e.aiTextStub("ask")
+	e.m.app.Config.Budget.ConfirmOverUSD = 0.0000001
+	e.selectItem("ade-demo-env/tracker#1")
+	e.palette("AI digest of new comments")
+	if e.m.ait == nil || e.m.ait.pf == nil {
+		t.Fatalf("expected the pre-flight prompt: %+v", e.m.ait)
+	}
+	e.press("n")
+	e.want("Is a burst of 50 too high", "listed as they are: no model was asked")
+	if asked("digest") != 0 {
+		t.Fatal("declined: no call")
+	}
+}
+
+// A forge failure while preparing an AI call is worded as the forge's problem,
+// and an error ADE has no AI words for keeps its own words instead of the
+// generic "the AI call failed · the Log page" line (nothing was logged).
+func TestAICauseNamesTheRealCause(t *testing.T) {
+	refused := &net.OpError{Op: "dial", Err: errors.New("connection refused")}
+	for _, tc := range []struct {
+		name string
+		err  error
+		want string
+		not  string
+	}{
+		{"forge read", forgeRead(fmt.Errorf("read the diff of g/a!1: %w", refused)), "the forge is unreachable", "AI service"},
+		{"forge 404", forgeRead(fmt.Errorf("x: %w", forge.ErrNotFound)), "not found on the forge", "AI call failed"},
+		{"model unreachable", fmt.Errorf("openai-compat: %w", refused), "the AI service could not be reached", ""},
+		{"own words", errors.New("the thread is not there any more: U reloads the page"), "the thread is not there any more", "Log page"},
+		{"cut short", ai.ErrCutShortRecently, "was cut short", "Log page"},
+		{"known", ai.ErrDisabled, "AI is off", ""},
+	} {
+		got := aiCause(tc.err)
+		if !strings.Contains(got, tc.want) || (tc.not != "" && strings.Contains(got, tc.not)) {
+			t.Errorf("%s: aiCause = %q, want %q without %q", tc.name, got, tc.want, tc.not)
 		}
 	}
 }
