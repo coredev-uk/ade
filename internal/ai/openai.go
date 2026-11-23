@@ -1,7 +1,6 @@
 package ai
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -68,8 +67,11 @@ func (d *openAI) attempt(ctx context.Context, c Call) (Response, error) {
 	structured := c.Schema != nil && !d.noSchema.Load()
 	var r Response
 	var err error
+	sent := 0
 	for range 3 {
 		r, err = d.complete(ctx, c, structured)
+		sent += r.Bytes // every re-send left the machine
+		r.Bytes = sent
 		switch {
 		case structured && errors.Is(err, errSchemaRejected):
 			d.noSchema.Store(true)
@@ -84,6 +86,7 @@ func (d *openAI) attempt(ctx context.Context, c Call) (Response, error) {
 }
 
 func (d *openAI) complete(ctx context.Context, c Call, structured bool) (Response, error) {
+	fail := Response{DestHost: d.host()}
 	body := map[string]any{
 		"model": c.Model,
 		"messages": []map[string]string{
@@ -102,34 +105,29 @@ func (d *openAI) complete(ctx context.Context, c Call, structured bool) (Respons
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
-		return Response{}, err
+		return fail, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.base+"/chat/completions", bytes.NewReader(raw))
+	ex, err := post(ctx, d.hc, "openai-compat", d.key, "gateway", func() (*http.Request, int, error) {
+		return jsonRequest(ctx, d.base+"/chat/completions", raw, func(req *http.Request) {
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+d.key)
+		})
+	})
+	fail.Bytes = ex.sent
 	if err != nil {
-		return Response{}, err
+		return fail, err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+d.key)
-	resp, err := d.hc.Do(req)
-	if err != nil {
-		return Response{}, fmt.Errorf("openai-compat: %w", redactKey(err, d.key))
-	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if err != nil {
-		return Response{}, fmt.Errorf("openai-compat: read response: %w", err)
-	}
-	if resp.StatusCode/100 != 2 {
-		if stop := classifyStop("gateway", data); stop != nil {
-			return Response{}, stop
+	if ex.status/100 != 2 {
+		if stop := classifyStop("gateway", ex.data); stop != nil {
+			return fail, stop
 		}
-		if structured && rejectsSchema(resp.StatusCode, data) {
-			return Response{}, errSchemaRejected
+		if structured && rejectsSchema(ex.status, ex.data) {
+			return fail, errSchemaRejected
 		}
-		if c.MaxTokens > 0 && !d.completionTokens.Load() && rejectsMaxTokens(resp.StatusCode, data) {
-			return Response{}, errTokenParamRejected
+		if c.MaxTokens > 0 && !d.completionTokens.Load() && rejectsMaxTokens(ex.status, ex.data) {
+			return fail, errTokenParamRejected
 		}
-		return Response{}, fmt.Errorf("openai-compat: HTTP %d: %s", resp.StatusCode, oneLine(string(data)))
+		return fail, fmt.Errorf("openai-compat: HTTP %d: %s", ex.status, oneLine(string(ex.data)))
 	}
 	var out struct {
 		Model   string `json:"model"`
@@ -147,30 +145,30 @@ func (d *openAI) complete(ctx context.Context, c Call, structured bool) (Respons
 			} `json:"prompt_tokens_details"`
 		} `json:"usage"`
 	}
-	if err := json.Unmarshal(data, &out); err != nil {
-		return Response{}, fmt.Errorf("openai-compat: decode response: %w", err)
+	if err := json.Unmarshal(ex.data, &out); err != nil {
+		return fail, fmt.Errorf("openai-compat: decode response: %w", err)
 	}
 	if len(out.Choices) == 0 {
-		return Response{}, fmt.Errorf("openai-compat: response has no choices")
+		return fail, fmt.Errorf("openai-compat: response has no choices")
 	}
 	r := Response{
 		Text:     out.Choices[0].Message.Content,
 		Model:    firstNonEmpty(out.Model, c.Model),
 		Usage:    Usage{In: out.Usage.Prompt, Out: out.Usage.Compl, Cache: out.Usage.Details.Cached},
-		DestHost: d.host(),
-		Bytes:    len(raw),
+		DestHost: fail.DestHost,
+		Bytes:    ex.sent,
 
 		Structured: structured,
 		Truncated:  out.Choices[0].FinishReason == "length",
 	}
-	if g := gatewayInfo(resp.Header); g != nil {
+	if g := gatewayInfo(ex.header); g != nil {
 		r.Gateway = g
 	}
-	if cost, ok := headerFloat(resp.Header, "x-litellm-response-cost"); ok {
+	if cost, ok := headerFloat(ex.header, "x-litellm-response-cost"); ok {
 		r.CostUSD, r.CostSource = cost, CostGateway
 		return r, nil
 	}
-	if price, ok := d.p.Prices[c.Model]; ok {
+	if price, ok := c.priceIn(d.p.Prices); ok {
 		r.CostUSD, r.CostSource = computeCost(price, r.Usage), CostComputed
 		return r, nil
 	}

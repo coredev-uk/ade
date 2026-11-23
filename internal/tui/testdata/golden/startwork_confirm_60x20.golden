@@ -1,0 +1,19 @@
+ ADE  Home · worktrees                            no unread
+╭──────────────────────────────────────────────────────────╮
+│ Start work · ade-demo-env/tracker#3                      │
+│                                                          │
+│  Confirm ─────────────── 5 forge writes · 2 local steps  │
+│ ●━ api ade-demo-env/api                                  │
+│ ┗━ + forge child issue, link, branch, draft MR · + loca… │
+│ ┃ + forge set workflow::in progress on ade-demo-env/tra… │
+│  MR · api ──────────────────────────── template Default  │
+│ ┃ Closes <child issue, created first>                    │
+│ ┃ Part of ade-demo-env/tracker#3                         │
+│ ┃ ## What                                                │
+│ ┃ … 2 more lines                                         │
+│  Quick actions ─ the forge runs these when the MR is     │
+│ created                                                  │
+│ ▸ keep  add labels ~type::story /label ~"type::story"    │
+│   keep  request review from @reviewer-rae /assign_revie… │
+│ enter confirm   x keep/strip   e/E edit body   esc back  │
+╰──────────────────────────────────────────────────────────╯

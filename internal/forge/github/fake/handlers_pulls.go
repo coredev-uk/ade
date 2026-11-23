@@ -17,6 +17,7 @@ func (s *Server) pullRoutes(mux *http.ServeMux) {
 	s.handle(mux, "GET "+r+"/pulls/{n}", s.getPull)
 	s.handle(mux, "PATCH "+r+"/pulls/{n}", s.patchPull)
 	s.handle(mux, "GET "+r+"/pulls/{n}/files", s.listPullFiles)
+	s.pullTextRoutes(mux)
 	s.handle(mux, "PUT "+r+"/pulls/{n}/merge", s.mergePull)
 	s.handle(mux, "POST "+r+"/pulls/{n}/requested_reviewers", s.requestReviewers)
 }
@@ -267,18 +268,25 @@ func (s *Server) requestReviewers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, s.renderPull(rp, it, true))
 }
 
-// patchPull answers PATCH /pulls/{n} for the one field ADE writes: state. A
-// merged pull request cannot be reopened, and neither can one whose head and
-// base another open pull request already has (422).
+// patchPull answers PATCH /pulls/{n} for the fields ADE writes: state, title
+// and body. A merged pull request cannot be reopened, and neither can one whose
+// head and base another open pull request already has (422). An empty title is
+// refused before anything changes.
 func (s *Server) patchPull(w http.ResponseWriter, r *http.Request) {
 	rp, it := s.pullOf(w, r)
 	if it == nil {
 		return
 	}
 	var in struct {
-		State string `json:"state"`
+		State string  `json:"state"`
+		Title *string `json:"title"`
+		Body  *string `json:"body"`
 	}
 	if !decode(w, r, &in) {
+		return
+	}
+	if in.Title != nil && *in.Title == "" {
+		validation(w, fieldError{Resource: "PullRequest", Field: "title", Code: "missing_field"})
 		return
 	}
 	p := it.PR
@@ -310,6 +318,13 @@ func (s *Server) patchPull(w http.ResponseWriter, r *http.Request) {
 	default:
 		validation(w, fieldError{Resource: "PullRequest", Field: "state", Code: "invalid"})
 		return
+	}
+	if in.Title != nil {
+		it.Title, it.Updated = *in.Title, at
+	}
+	if in.Body != nil {
+		it.Body, it.Updated = *in.Body, at
+		p.DescWrites++
 	}
 	writeJSON(w, http.StatusOK, s.renderPull(rp, it, true))
 }

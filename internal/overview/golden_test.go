@@ -13,7 +13,7 @@ import (
 )
 
 // Golden files (testdata/golden/*.golden): the pane runs in a real tea.Program
-// through teatest at 80x24 and 160x45; the default files are the screen as
+// through teatest at 60x20, 80x24 and 160x45; the default files are the screen as
 // text, the nocolor ones the frame after NO_COLOR downsampling with its escape
 // sequences, the ascii ones the ascii glyph set. `go test ./internal/overview
 // -run TestGolden -update` rewrites them.
@@ -42,7 +42,7 @@ func paneModel(glyphs string) model {
 
 func TestGoldenPane(t *testing.T) {
 	t.Setenv("NO_COLOR", "") // the colour frames are compared as text
-	for _, s := range []struct{ w, h int }{{80, 24}, {160, 45}} {
+	for _, s := range []struct{ w, h int }{{60, 20}, {80, 24}, {160, 45}} {
 		size := fmt.Sprintf("%dx%d", s.w, s.h)
 		run := func(glyphs string, drive goldentest.Drive) string {
 			return goldentest.Run(t, paneModel(glyphs), s.w, s.h, nil, drive)
