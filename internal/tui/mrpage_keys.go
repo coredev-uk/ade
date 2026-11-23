@@ -80,6 +80,9 @@ func (m *model) mrKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 	if m.aiKeyUnavailable(ks) {
 		return nil, true
 	}
+	if ks == "N" {
+		return m.aiNotesKey(), true
+	}
 	if p.data == nil {
 		return m.overviewKey(ks), true
 	}
@@ -188,7 +191,7 @@ func (m *model) aiKeyUnavailable(ks string) bool {
 		return false
 	}
 	switch ks {
-	case "A", "B":
+	case "A", "B", "N":
 	case "s", "d":
 		if p.tab != tabOverview && p.tab != tabThreads {
 			return false
@@ -545,6 +548,7 @@ func mrHelpRows(ai bool) [][2]string {
 		rows = slices.Insert(rows, 8,
 			[2]string{"A", "agent review pass, drafts in Review"},
 			[2]string{"B", "AI draft of the MR description, then apply"},
+			[2]string{"N", "AI: leave your notes out of its prompts, or put them back"},
 			[2]string{"t", "CI: AI triage of the failed jobs"},
 			[2]string{"d s", "Overview: raw/summary, new summary"},
 			[2]string{"d s", "Threads: AI draft reply, summary"})

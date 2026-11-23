@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/coredev-uk/ade/internal/ai"
@@ -48,6 +49,12 @@ type aiKey struct {
 	id   string
 }
 
+// usesNotes is true for the answers whose prompt carries the user's notes
+// unless N left them out.
+func (k aiKey) usesNotes() bool {
+	return k.kind == aiSummary || k.kind == aiReply || k.kind == aiReview
+}
+
 func (k aiKey) what() string {
 	return [...]string{"summary", "thread summary", "draft reply", "agent review", "MR description", "CI triage"}[k.kind]
 }
@@ -64,6 +71,9 @@ type aiText struct {
 	refresh bool          // asked again, past the cache
 	pf      *ai.Preflight // the call waits for a yes
 	notes   bool          // the answer used the user's notes
+	noNotes bool          // asked with the user's notes left out (N), so the guide says so
+	lead    string        // the guide's first word: "AI", or "AI suggestion" for advice a log can steer
+	from    string        // where advice the input text can steer came from: shown as "check it"
 	shown   bool          // a draft reply that has been put in the editor once
 	cut     string        // set when the model did not finish: what to say beside the text
 
@@ -148,6 +158,14 @@ func (m *model) aiAsk(d *mrData, k aiKey, refresh, assume bool) tea.Cmd {
 		return nil
 	}
 	st.l, st.pf, st.head, st.refresh, st.shown = load{st: loadBusy}, nil, d.mr.HeadSHA, refresh, false
+	noNotes := m.aiNoNotes && k.usesNotes()
+	st.noNotes = noNotes
+	switch k.kind {
+	case aiSummary:
+		st.lead, st.from = ai.Advice("summarize")
+	case aiCITriage:
+		st.lead, st.from = ai.Advice("ci-triage")
+	}
 
 	app, reviews := m.app, m.reviews
 	mr, diff, haveDiff, ref, forgeName := d.mr, d.diff, d.diffL.st == loadOK, d.ref, d.forgeKey
@@ -194,7 +212,7 @@ func (m *model) aiAsk(d *mrData, k aiKey, refresh, assume bool) tea.Cmd {
 			// `ade ai review` reads it.
 			job = ai.ReviewJob(forgeName, mr, diff, issue, threads, ai.RepoGuides(ctx, be, mr))
 		}
-		if k.kind != aiThreadSum { // the user's own notes on the MR, its issue and the tracker parent
+		if k.usesNotes() && !noNotes { // the user's own notes on the MR, its issue and the tracker parent
 			notes, err := svc.NotesFor(forgeName, ai.NoteRefs(mr, issue)...)
 			if err != nil {
 				return nil, err
@@ -278,6 +296,11 @@ func (m *model) onAI(d *mrData, msg mrResultMsg) tea.Cmd {
 	st.l = load{st: loadOK}
 	st.text, st.profile, st.model, st.cost, st.cached, st.notes = strings.TrimSpace(ans.res.Text), ans.res.Profile, ans.res.Model, ans.res.CostUSD, ans.res.CacheHit, ans.notes
 	st.cut = ans.res.CutShort()
+	if k.kind == aiSummary && st.noNotes != m.aiNoNotes {
+		// N was pressed while it ran: this answer is not the one now asked for.
+		delete(d.ai, k)
+		return m.maybeSummary()
+	}
 	if k.kind == aiReply { // the thread steered the model: no line of the draft may run as a quick action
 		st.text = ai.ReplyDraft(st.text)
 	}
@@ -355,7 +378,11 @@ func (m *model) openReply(d *mrData, id string, st *aiText) {
 	if st != nil && st.l.st == loadOK && st.text != "" && !st.shown {
 		st.shown = true
 		md.ed = newEditor(st.text)
-		md.aiNote = fmt.Sprintf(m.g.T("AI draft · %s · %s · edit it: enter posts it marked as AI-drafted, esc throws it away"), st.model, costWord(st))
+		md.aiNote = fmt.Sprintf(m.g.T("AI draft · %s · %s"), st.model, costWord(st))
+		if n := notesWord(st); n != "" {
+			md.aiNote += m.g.T(" · ") + n
+		}
+		md.aiNote += m.g.T(" · edit it: enter posts it marked as AI-drafted, esc throws it away")
 		if st.cut != "" {
 			md.aiCut = m.g.Warn + " " + st.cut + m.g.T(": finish it before posting")
 		}
@@ -390,6 +417,32 @@ func (m *model) aiReviewKey() tea.Cmd {
 	// short): a retry asks past the cache.
 	st := d.ai[aiKey{kind: aiReview}]
 	return m.aiAsk(d, aiKey{kind: aiReview}, st != nil && st.l.st == loadFailed, false)
+}
+
+// aiNotesKey is N: leave the user's notes out of the MR page's AI calls (the
+// summary, a draft reply, the agent review), or include them again. It is kept
+// for the session, not written to the config. The summary on screen is asked
+// again for the new setting (the result cache makes that free when the notes
+// made no difference); a reply or a review simply uses it the next time.
+func (m *model) aiNotesKey() tea.Cmd {
+	if m.aiKeyUnavailable("N") || !m.aiOn() {
+		return nil
+	}
+	m.aiNoNotes = !m.aiNoNotes
+	if m.aiNoNotes {
+		m.notice(events.Info, "AI on this page leaves your notes out · N includes them again")
+	} else {
+		m.notice(events.Info, "AI on this page includes your notes · N leaves them out")
+	}
+	d := m.mr.data
+	if d == nil {
+		return nil
+	}
+	k := aiKey{kind: aiSummary}
+	if st := d.ai[k]; st != nil && !st.l.busy() {
+		delete(d.ai, k)
+	}
+	return m.maybeSummary()
 }
 
 // aiConfirmKey answers the pre-flight dialog.
@@ -480,18 +533,70 @@ func (m model) aiBlock(title string, st *aiText, w int) []string {
 	case st.l.st != loadOK:
 		return nil
 	}
-	guide := "AI " + g.Sep + " " + st.model + " " + g.Sep + " " + costWord(st)
-	if st.notes {
-		guide += " " + g.Sep + " includes your notes"
-	}
-	if st.cut != "" {
-		guide += " " + g.Sep + " " + st.cut
-	}
-	l := []string{subRule(title, guide, w, g)}
+	l := []string{subRule(title, m.aiGuide(title, st, w), w, g)}
 	for _, ln := range m.mdLines(st.text, max(10, w-6)) {
 		l = append(l, "   "+ln)
 	}
 	return l
+}
+
+// notesWord says what the user's notes did to an answer: "includes your notes",
+// "notes left out" (N), or "" when there were none to say anything about.
+func notesWord(st *aiText) string {
+	switch {
+	case st.notes:
+		return "includes your notes"
+	case st.noNotes:
+		return "notes left out"
+	}
+	return ""
+}
+
+// aiGuide is the guide words of a finished answer: `AI · model · cost`, then
+// whether notes went in, where advice a text can steer came from, and a cut-short
+// note. Where they do not fit, the cost, the model and the notes word go first
+// (in that order); the source and the cut-short note stay.
+func (m model) aiGuide(title string, st *aiText, w int) string {
+	g := m.g
+	lead := st.lead
+	if lead == "" {
+		lead = "AI"
+	}
+	type word struct {
+		s    string
+		drop int // 0: never dropped; the higher, the earlier it goes
+	}
+	ws := []word{{lead, 0}, {st.model, 2}, {costWord(st), 3}}
+	if n := notesWord(st); n != "" {
+		ws = append(ws, word{n, 1})
+	}
+	if st.from != "" {
+		ws = append(ws, word{st.from, 0})
+	}
+	if st.cut != "" {
+		ws = append(ws, word{st.cut, 0})
+	}
+	room := w - lipgloss.Width("   "+title+" ") - 5 // a space each side of the guide, a few cells of rule
+	join := func() string {
+		parts := make([]string, len(ws))
+		for i, x := range ws {
+			parts[i] = x.s
+		}
+		return strings.Join(parts, " "+g.Sep+" ")
+	}
+	for lipgloss.Width(join()) > room {
+		at := -1
+		for i, x := range ws {
+			if x.drop > 0 && (at < 0 || x.drop > ws[at].drop) {
+				at = i
+			}
+		}
+		if at < 0 {
+			break
+		}
+		ws = slices.Delete(ws, at, at+1)
+	}
+	return join()
 }
 
 // agentLine is the Review tab's line about the agent pass: running, done, or
@@ -507,6 +612,9 @@ func (m model) agentLine(w int) string {
 	switch {
 	case st == nil || st.l.st == loadIdle && st.pf == nil:
 		s = stFaint.Render("A runs an agent review pass: its comments arrive here as pending drafts")
+		if m.aiNoNotes {
+			s += stFaint.Render(m.g.T(" · notes left out"))
+		}
 	case st.l.busy():
 		s = stBold.Render(spinnerFrame(g, m.mr.spin)+" agent review running") + stFaint.Render(" (the review model reads the diff, the threads and the linked issue)")
 	case st.pf != nil:
@@ -518,7 +626,11 @@ func (m model) agentLine(w int) string {
 		if st.rejected > 0 {
 			more = fmt.Sprintf(" %s %d dropped", g.Sep, st.rejected) // comments on lines the diff does not show
 		}
-		s = stOK.Render(g.OK+" agent review done") + stFaint.Render(fmt.Sprintf(" %s %s pending%s %s %s %s %s", g.Sep, countWord(st.added, "comment"), more, g.Sep, costWord(st), g.Sep, st.model))
+		tail := ""
+		if n := notesWord(st); n != "" {
+			tail = " " + g.Sep + " " + n
+		}
+		s = stOK.Render(g.OK+" agent review done") + stFaint.Render(fmt.Sprintf(" %s %s pending%s %s %s %s %s%s", g.Sep, countWord(st.added, "comment"), more, g.Sep, costWord(st), g.Sep, st.model, tail))
 	}
 	return " " + ansi.Truncate(s, w-2, m.g.Ell)
 }

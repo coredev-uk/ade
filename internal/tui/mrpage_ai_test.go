@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/lipgloss/v2"
+
 	"github.com/coredev-uk/ade/internal/ai"
 	"github.com/coredev-uk/ade/internal/aimark"
 	"github.com/coredev-uk/ade/internal/config"
@@ -567,5 +569,138 @@ func TestSummaryCarriesTheUsersNotes(t *testing.T) {
 	e.want("Summary", "includes your notes")
 	if p := stub.prompt("sum"); !strings.Contains(p, "Rae prefers lazy refill over a timer.") {
 		t.Errorf("the notes are not in the prompt:\n%s", p)
+	}
+}
+
+// writeNotes leaves the user's notes on the MR, as sync's record and `n` do.
+func (e *mrEnv) writeNotes(ref forge.Ref, text string) {
+	e.t.Helper()
+	rec := records.New(e.m.app.RecordsDir)
+	wi := domain.WorkItem{Project: "demo", Ref: ref, Issue: forge.Issue{Ref: ref, Title: "Rename bucket"}}
+	if _, _, err := rec.WriteSnapshot("f", wi, nil, 0); err != nil {
+		e.t.Fatal(err)
+	}
+	if err := rec.WriteNotes("f", ref, text); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+// N leaves the notes out of the summary, a draft reply and an agent review, says
+// so in their guide words, and puts them back when pressed again.
+func TestNLeavesYourNotesOutOfTheSummaryReplyAndReview(t *testing.T) {
+	const note = "Rae prefers lazy refill over a timer."
+	e := newMREnv(t, fake.Free)
+	stub := e.enableAI("auto")
+	ref := mrRef("api", 2)
+	e.writeNotes(ref, note)
+	e.m.w = 200 // the guide keeps all its words
+	e.open(ref.String())
+	e.want("includes your notes")
+	if !strings.Contains(stub.prompt("sum"), note) {
+		t.Fatal("the notes are not in the first summary prompt")
+	}
+
+	e.press("N")
+	e.want("notes left out")
+	e.wantNot("includes your notes")
+	if strings.Contains(stub.prompt("sum"), note) || stub.count("sum") != 2 {
+		t.Fatalf("the summary was not asked again without the notes (calls %v)", stub.asked())
+	}
+	if !e.m.aiNoNotes || e.m.app.Config.AI.Mode != "auto" {
+		t.Fatal("the choice is the session's, not config")
+	}
+
+	e.press("2", "d") // draft reply
+	e.want("Reply · ", "AI draft · claude-haiku-4-5", "notes left out", "enter posts")
+	if strings.Contains(stub.prompt("reply"), note) {
+		t.Errorf("a draft reply sent the notes:\n%s", stub.prompt("reply"))
+	}
+	e.press("esc", "4", "A") // agent review
+	e.want("agent review done", "notes left out")
+	if strings.Contains(stub.prompt("review"), note) {
+		t.Errorf("the agent review sent the notes:\n%s", stub.prompt("review"))
+	}
+
+	e.press("N", "1") // back on: the summary with the notes is the cached first answer
+	e.want("includes your notes", "cached, $0")
+	if stub.count("sum") != 2 {
+		t.Errorf("putting the notes back bought another summary: %v", stub.asked())
+	}
+	e.press("2", "d")
+	e.want("includes your notes")
+	if !strings.Contains(stub.prompt("reply"), note) || stub.count("reply") != 2 {
+		t.Errorf("the notes did not go back into the reply prompt (calls %v)", stub.asked())
+	}
+}
+
+// The choice outlives the page: it is the session's.
+func TestNIsKeptWhenThePageIsReopened(t *testing.T) {
+	e := newMREnv(t, fake.Free)
+	stub := e.enableAI("auto")
+	ref := mrRef("api", 2)
+	e.writeNotes(ref, "private note about the bucket")
+	e.open(ref.String())
+	e.press("N", "esc")
+	e.open(ref.String())
+	if !e.m.aiNoNotes || strings.Contains(stub.prompt("sum"), "private note") {
+		t.Fatal("the notes came back with a new page")
+	}
+}
+
+// With AI off N says why, once, and changes nothing; the palette lists it.
+func TestNWithAIOffDoesNothingAndIsInTheHelpAndPalette(t *testing.T) {
+	off := newMREnv(t, fake.Free)
+	off.open(mrRef("api", 2).String())
+	off.press("N")
+	if off.m.aiNoNotes {
+		t.Fatal("N toggled with AI off")
+	}
+	hasKey := func(ai bool) bool {
+		for _, r := range mrHelpRows(ai) {
+			if r[0] == "N" {
+				return true
+			}
+		}
+		return false
+	}
+	if hasKey(false) || !hasKey(true) {
+		t.Error("N is in the help only while AI is on")
+	}
+
+	on := newMREnv(t, fake.Free)
+	on.enableAI("auto")
+	on.open(mrRef("api", 2).String())
+	on.palette("AI: leave your notes out of its prompts, or put them back")
+	if !on.m.aiNoNotes {
+		t.Fatal("the palette entry did not press N")
+	}
+}
+
+// What the summary and the CI triage say is advice the MR text or the job log can
+// steer: their guide words say where it came from, and keep saying so on a narrow
+// pane when the cost and the model have gone.
+func TestAIAdviceIsLabelledWithWhereItCameFrom(t *testing.T) {
+	e := newMREnv(t, fake.Free)
+	e.enableAI("auto")
+	e.open(mrRef("api", 2).String())
+	e.want("AI · claude-haiku-4-5 · $0.0012 · from MR text, check it", "Risk: low")
+
+	m := model{g: unicodeGlyphs, mr: &mrPage{}}
+	st := &aiText{l: load{st: loadOK}, model: "claude-haiku-4-5", cost: 0.0012, notes: true, lead: "AI suggestion", from: "from the job log, check it"}
+	if got := m.aiGuide("CI triage", st, 120); got != "AI suggestion · claude-haiku-4-5 · $0.0012 · includes your notes · from the job log, check it" {
+		t.Errorf("guide = %q", got)
+	}
+	for _, w := range []int{60, 50, 40} {
+		got := m.aiGuide("CI triage", st, w)
+		if !strings.HasPrefix(got, "AI suggestion") || !strings.HasSuffix(got, "from the job log, check it") {
+			t.Errorf("at %d columns the source is lost: %q", w, got)
+		}
+		if lipgloss.Width("   CI triage "+got) > w-4 && strings.Contains(got, "claude") {
+			t.Errorf("at %d columns the guide still holds the model: %q", w, got)
+		}
+	}
+	plain := &aiText{l: load{st: loadOK}, model: "m"}
+	if got := m.aiGuide("Draft reply", plain, 80); got != "AI · m · $0.0000" || strings.Contains(got, "check it") {
+		t.Errorf("a reply is not advice from untrusted text: %q", got)
 	}
 }

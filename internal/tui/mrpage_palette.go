@@ -77,6 +77,7 @@ func (m model) mrEntries() []palEntry {
 		es = append(es,
 			any("Agent review pass: drafts in Review", "A", "ade ai review"),
 			any("AI draft of the MR description, then apply", "B", "ade ai describe"),
+			any("AI: leave your notes out of its prompts, or put them back", "N", "--no-notes"),
 			at("CI: AI triage of the failed jobs", "ade ai ci-triage", tabCI, "t"),
 			at("Overview: raw description or summary", "", tabOverview, "d"),
 			at("Overview: new summary", "ade ai summarize", tabOverview, "s"),

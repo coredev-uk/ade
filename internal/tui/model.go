@@ -84,8 +84,11 @@ type model struct {
 	mr      *mrPage
 	mrCache map[string]*mrData
 	reviews *review.Store
-	be      *mrBackends
-	dial    func(ctx context.Context, ref forge.Ref, forgeKey string) (review.Backend, error) // nil: the configured forge
+	// aiNoNotes (N on the MR page) leaves the user's notes out of its AI calls
+	// for the rest of the session; it is not config.
+	aiNoNotes bool
+	be        *mrBackends
+	dial      func(ctx context.Context, ref forge.Ref, forgeKey string) (review.Backend, error) // nil: the configured forge
 
 	// ag is the Standup / Sprint review pages' state (agile.go).
 	ag agileUI
