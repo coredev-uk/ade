@@ -2,12 +2,16 @@ package tui
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/coredev-uk/ade/internal/ai"
 	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/forge/gitlab/fake"
@@ -268,5 +272,30 @@ func TestDigestDialogListsTheCommentsWhenThePreflightIsDeclined(t *testing.T) {
 	e.want("Is a burst of 50 too high", "listed as they are: no model was asked")
 	if asked("digest") != 0 {
 		t.Fatal("declined: no call")
+	}
+}
+
+// A forge failure while preparing an AI call is worded as the forge's problem,
+// and an error ADE has no AI words for keeps its own words instead of the
+// generic "the AI call failed · the Log page" line (nothing was logged).
+func TestAICauseNamesTheRealCause(t *testing.T) {
+	refused := &net.OpError{Op: "dial", Err: errors.New("connection refused")}
+	for _, tc := range []struct {
+		name string
+		err  error
+		want string
+		not  string
+	}{
+		{"forge read", forgeRead(fmt.Errorf("read the diff of g/a!1: %w", refused)), "the forge is unreachable", "AI service"},
+		{"forge 404", forgeRead(fmt.Errorf("x: %w", forge.ErrNotFound)), "not found on the forge", "AI call failed"},
+		{"model unreachable", fmt.Errorf("openai-compat: %w", refused), "the AI service could not be reached", ""},
+		{"own words", errors.New("the thread is not there any more: U reloads the page"), "the thread is not there any more", "Log page"},
+		{"cut short", ai.ErrCutShortRecently, "was cut short", "Log page"},
+		{"known", ai.ErrDisabled, "AI is off", ""},
+	} {
+		got := aiCause(tc.err)
+		if !strings.Contains(got, tc.want) || (tc.not != "" && strings.Contains(got, tc.not)) {
+			t.Errorf("%s: aiCause = %q, want %q without %q", tc.name, got, tc.want, tc.not)
+		}
 	}
 }

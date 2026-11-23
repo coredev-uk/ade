@@ -50,7 +50,7 @@ func (m model) render() string {
 		layers = append(layers, lipgloss.NewLayer(fit(m.g, d, dw, h-2)).X(w-dw).Y(1).Z(1))
 	}
 	mrDialog := m.mr != nil && (m.mr.modal != nil || m.help)
-	if ts := m.nc.toastStack(m.g, toastWidth(w)); ts != "" && !m.nc.open && !m.help && m.agt == nil && m.ait == nil && m.sw == nil && m.cl == nil && m.nt == nil && m.ne == nil && m.wt == nil && m.sm == nil && m.cm == nil && m.hs.pal == nil && m.ag.pf == nil && !mrDialog { // a dialog owns the screen: toasts must not cover its keys
+	if ts := m.nc.toastStack(m.g, toastWidth(w)); ts != "" && !m.nc.open && !m.help && m.agt == nil && m.ait == nil && m.sw == nil && m.cl == nil && m.nt == nil && m.ne == nil && m.wt == nil && m.sm == nil && m.cm == nil && m.hs.pal == nil && !m.agileAsking() && !mrDialog { // a dialog owns the screen: toasts must not cover its keys
 		layers = append(layers, lipgloss.NewLayer(ts).X(w-lipgloss.Width(ts)-1).Y(max(1, h-1-lipgloss.Height(ts))).Z(3))
 	}
 	switch {
@@ -181,7 +181,7 @@ func (m model) footer(w int) string {
 	switch {
 	case m.ne != nil:
 		return m.noteEditFooter(w)
-	case m.hs.pal != nil, m.sm != nil, m.nt != nil, m.wt != nil, m.cl != nil, m.ait != nil, m.cm != nil, m.ag.pf != nil:
+	case m.hs.pal != nil, m.sm != nil, m.nt != nil, m.wt != nil, m.cl != nil, m.ait != nil, m.cm != nil, m.agileAsking():
 		return "" // the dialog carries its own key row
 	case m.agt != nil:
 		return " " + keys("esc", "back/close", "ctrl+c", "quit") + stFaint.Render("   the agent dialog has its own keys")

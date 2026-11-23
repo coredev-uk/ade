@@ -298,11 +298,11 @@ func TestClassifyWithoutASuggestionOffersKnownLabelsToPick(t *testing.T) {
 	e.m.rebuildHome("")
 	e.selectRow(ref.String())
 	e.press("c")
-	if e.m.cl == nil || e.m.cl.stage != clSuggest || !e.m.cl.manual || len(e.m.cl.labels) == 0 {
+	if e.m.cl == nil || e.m.cl.stage != clSuggest || len(e.m.cl.labels) == 0 {
 		t.Fatalf("no known labels offered: %+v", e.m.cl)
 	}
 	for _, l := range e.m.cl.labels {
-		if l.on {
+		if l.on || !l.manual {
 			t.Fatalf("a pick-by-hand label is never pre-ticked: %+v", l)
 		}
 	}
@@ -436,5 +436,37 @@ func TestReadFailureFix(t *testing.T) {
 		if got := readFailureFix(tt.err, "="); !strings.Contains(got, tt.want) {
 			t.Errorf("readFailureFix(%v) = %q, want %q", tt.err, got, tt.want)
 		}
+	}
+}
+
+// A suggestion that covers one facet still offers the known labels of the
+// other, unticked; ticking one makes the audit say it was picked by hand too.
+func TestClassifyOffersKnownLabelsForTheFacetNoSuggestionCovers(t *testing.T) {
+	e := newClassifyEnv(t)
+	e.press("c") // "stale totals" -> type::bug, no app keyword
+	if e.m.cl == nil || e.m.cl.stage != clSuggest {
+		t.Fatalf("%+v", e.m.cl)
+	}
+	var suggested, picks []string
+	for _, l := range e.m.cl.labels {
+		if l.manual {
+			picks = append(picks, l.name)
+			if l.on {
+				t.Errorf("a pick is never pre-ticked: %+v", l)
+			}
+		} else {
+			suggested = append(suggested, l.name)
+		}
+	}
+	if strings.Join(suggested, ",") != "type::bug" || len(picks) == 0 || !strings.HasPrefix(picks[0], "app::") {
+		t.Fatalf("suggested %v, picks %v", suggested, picks)
+	}
+	e.press("j", "x", "enter") // tick the first app pick too
+	if e.m.cl.stage != clDone {
+		t.Fatalf("stage %v err %v", e.m.cl.stage, e.m.cl.err)
+	}
+	es, _ := e.app.Audit.Query(audit.Filter{Action: "forge.issue.labels"})
+	if len(es) != 1 || !strings.Contains(es[0].Params["reason"].(string), "keywords+manual") {
+		t.Fatalf("audit: %+v", es)
 	}
 }

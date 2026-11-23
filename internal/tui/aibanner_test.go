@@ -260,4 +260,14 @@ func TestChipNamesTheAIStateWithoutACall(t *testing.T) {
 	if got := ansi.Strip(h.m.chip.render(h.m.g)); got != "AI $0.00 / $2.00 day" {
 		t.Errorf("after a call that worked: %q", got)
 	}
+
+	// A failure on another profile, or a declined pre-flight, says nothing
+	// about the selected one.
+	log.Append(ai("error"))
+	log.Append(audit.Entry{Action: "ai.summarize", Item: "x", Outcome: "ok", AI: &audit.AIInfo{Profile: "other", Model: "m", CostSource: "reported"}})
+	log.Append(audit.Entry{Action: "ai.classify", Item: "x", Outcome: "cancelled"})
+	h.reloadChip()
+	if got := ansi.Strip(h.m.chip.render(h.m.g)); !strings.Contains(got, "last call failed") {
+		t.Errorf("another profile's success or a declined prompt cleared the failure: %q", got)
+	}
 }

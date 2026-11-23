@@ -169,7 +169,7 @@ func (m *model) aiAsk(d *mrData, k aiKey, refresh, assume bool) tea.Cmd {
 		}
 		if !haveDiff {
 			if diff, err = be.MRDiff(ctx, ref); err != nil {
-				return nil, fmt.Errorf("read the diff of %s: %w", ref, err)
+				return nil, forgeRead(fmt.Errorf("read the diff of %s: %w", ref, err))
 			}
 		}
 		var job ai.Job
@@ -187,7 +187,7 @@ func (m *model) aiAsk(d *mrData, k aiKey, refresh, assume bool) tea.Cmd {
 		case aiReview:
 			threads, err := be.Discussions(ctx, ref)
 			if err != nil {
-				return nil, fmt.Errorf("read the threads of %s: %w", ref, err)
+				return nil, forgeRead(fmt.Errorf("read the threads of %s: %w", ref, err))
 			}
 			job = ai.ReviewJob(forgeName, mr, diff, issue, threads, nil)
 		}
@@ -305,8 +305,26 @@ func aiCause(err error) string {
 	if errors.Is(err, ai.ErrAutoPaused) {
 		return "AI budget reached today; s asks anyway"
 	}
-	return ai.Human(err)
+	var fr *forgeReadError
+	if errors.As(err, &fr) {
+		return shortCause(fr.err) // the forge failed, not the model
+	}
+	if s, ok := ai.HumanKnown(err); ok {
+		return s
+	}
+	// Not a failure of the model call ADE knows: a refusal or a local error
+	// with its own words, which were never written to the log.
+	return oneLine(err.Error())
 }
+
+// forgeReadError marks a failure to read from the forge while preparing an AI
+// call: it is worded as a forge problem, not an AI one.
+type forgeReadError struct{ err error }
+
+func (e *forgeReadError) Error() string { return e.err.Error() }
+func (e *forgeReadError) Unwrap() error { return e.err }
+
+func forgeRead(err error) error { return &forgeReadError{err} }
 
 // deliverReply puts a finished draft reply in the editor when the page still
 // shows that thread; otherwise it waits for r. It is never posted by itself.

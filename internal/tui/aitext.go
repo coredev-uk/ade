@@ -166,7 +166,7 @@ func (m model) aiTextCmd(d *aiTextDialog, assume bool) tea.Cmd {
 			ref := refs[i]
 			be, err := mm.backend(ctx, ref, key)
 			if err != nil {
-				out = append(out, aiTextSection{ref: ref, warn: oneLine(err.Error())})
+				out = append(out, aiTextSection{ref: ref, warn: shortCause(err)})
 				continue
 			}
 			var sec aiTextSection
@@ -194,7 +194,7 @@ func digestSection(ctx context.Context, svc *ai.Service, be forge.Forge, key str
 	in, err := ai.LoadDigestInput(ctx, be, ref)
 	sec.title = in.Title
 	if err != nil {
-		sec.warn = aiCause(err)
+		sec.warn = shortCause(err)
 		return sec, nil
 	}
 	res, err := svc.Digest(ctx, key, in, ai.DigestOpts{Assume: assume, NoAI: noAI})
@@ -245,7 +245,7 @@ func standInSection(ctx context.Context, svc *ai.Service, be forge.Forge, key st
 	in, err := ai.LoadStandInInput(ctx, be, ref)
 	sec.title = in.Issue.Title
 	if err != nil {
-		sec.warn = aiCause(err)
+		sec.warn = shortCause(err)
 		return sec, nil
 	}
 	job, err := ai.StandInJob(key, in)

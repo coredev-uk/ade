@@ -575,3 +575,41 @@ func TestNarrativeAsksInlineBeforeASpendingCall(t *testing.T) {
 		t.Fatalf("y starts the call: %+v", y.ag)
 	}
 }
+
+// A pre-flight that arrives after the user left the page, or for the other
+// report, has nobody to answer it: it is dropped, never shown over Home or
+// confirmed against the wrong call.
+func TestNarrativePreflightIsOnlyAskedOnThePageItWasFor(t *testing.T) {
+	pf := ai.Preflight{Profile: "sub", Driver: "omp", Model: "m", Priced: true, Confirm: []string{"over the budget you set"}}
+	needs := func(k agileKind) narrativeMsg {
+		return narrativeMsg{kind: k, err: &ai.ErrNeedsConfirm{Preflight: pf}}
+	}
+	// Left the agile page: no overlay on Home, keys and footer are Home's.
+	m := aiAgileModel(unicodeGlyphs)
+	m.ag = agileUI{kind: agileNone, standup: standupFixture(), narrating: true}
+	next, _ := m.narrativeDone(needs(agileStandup))
+	m = next.(model)
+	if m.ag.pf != nil || m.agileAsking() || m.agileAskOverlay(120) != "" {
+		t.Fatalf("a pre-flight was kept after the page was left: %+v", m.ag)
+	}
+	// Switched to the review while the standup's call was waiting.
+	m = aiAgileModel(unicodeGlyphs)
+	m.ag = agileUI{kind: agileReview, review: reviewFixture(), narrating: true}
+	next, _ = m.narrativeDone(needs(agileStandup))
+	if next.(model).ag.pf != nil {
+		t.Fatal("the standup's pre-flight was shown on the review page, where y would confirm the wrong call")
+	}
+	// A stale one left behind by other means is not drawn or answered off the page.
+	m = aiAgileModel(unicodeGlyphs)
+	m.ag = agileUI{kind: agileNone, pf: &pf}
+	if m.agileAskOverlay(120) != "" || m.agileAsking() {
+		t.Fatal("a stale pre-flight showed over Home")
+	}
+	// The page it is for still gets it.
+	m = aiAgileModel(unicodeGlyphs)
+	m.ag = agileUI{kind: agileStandup, standup: standupFixture(), narrating: true}
+	next, _ = m.narrativeDone(needs(agileStandup))
+	if next.(model).ag.pf == nil {
+		t.Fatal("the pre-flight is lost on its own page")
+	}
+}

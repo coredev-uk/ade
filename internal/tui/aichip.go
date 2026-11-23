@@ -92,15 +92,16 @@ func (m model) loadAIChip() tea.Cmd {
 			}
 			slices.Sort(c.stopped)
 		}
-		c.failed = lastCallFailed(a.Audit, r.Now, d.Loc)
+		c.failed = lastCallFailed(a.Audit, cfg.AI.Profile, r.Now, d.Loc)
 		return aiChipMsg(c)
 	}
 }
 
-// lastCallFailed reports whether the newest model call of the local day
-// failed. Budget stops are their own state (stopped, cap) and are audited
+// lastCallFailed reports whether the newest model call of the local day on
+// profile failed (a call on another profile says nothing about this one; a
+// declined pre-flight carries no call and changes nothing). Budget stops are their own state (stopped, cap) and are audited
 // under another action, so only driver and gateway failures count here.
-func lastCallFailed(log *audit.Log, now time.Time, loc *time.Location) bool {
+func lastCallFailed(log *audit.Log, profile string, now time.Time, loc *time.Location) bool {
 	if log == nil {
 		return false
 	}
@@ -109,7 +110,7 @@ func lastCallFailed(log *audit.Log, now time.Time, loc *time.Location) bool {
 		return false
 	}
 	for i := len(es) - 1; i >= 0; i-- {
-		if es[i].AI != nil {
+		if es[i].AI != nil && es[i].AI.Profile == profile {
 			return es[i].Outcome == "error"
 		}
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -38,8 +39,9 @@ const (
 )
 
 type clLabel struct {
-	name string
-	on   bool
+	name   string
+	on     bool
+	manual bool // a known label offered to pick by hand, not a suggestion
 }
 
 type classifyDialog struct {
@@ -53,9 +55,6 @@ type classifyDialog struct {
 	pf  *ai.Preflight // what the AI call would cost, for clAsk
 
 	labels []clLabel
-	// manual marks labels that are known values to pick from by hand, none
-	// suggested (and so none ticked).
-	manual bool
 	cur    int
 	added  []string
 	warn   string
@@ -191,12 +190,21 @@ func (m model) classifyUpdate(msg tea.Msg) (model, tea.Cmd, bool) {
 			for _, l := range msg.cr.Suggestion.Labels {
 				d.labels = append(d.labels, clLabel{name: l, on: true})
 			}
-			if len(d.labels) == 0 {
-				// Nothing fits: the team's known labels, unticked, to pick by hand.
-				for _, l := range ai.PickableLabels(d.in) {
-					d.labels = append(d.labels, clLabel{name: l})
+			// A facet no suggestion covers: the team's known labels for it,
+			// unticked, to pick by hand.
+			var open []string
+			sug := msg.cr.Suggestion
+			for _, f := range d.in.Missing() {
+				if (f == "type" && sug.Type == "") || (f == "app" && len(sug.Apps) == 0) {
+					open = append(open, f)
 				}
-				d.manual = len(d.labels) > 0
+			}
+			if len(open) > 0 {
+				for _, l := range ai.PickableLabels(d.in, open...) {
+					if !slices.ContainsFunc(d.labels, func(x clLabel) bool { return x.name == l }) {
+						d.labels = append(d.labels, clLabel{name: l, manual: true})
+					}
+				}
 			}
 		}
 		return m, nil, true
@@ -289,8 +297,19 @@ func (m model) classifyKey(ks string) (model, tea.Cmd) {
 func (m model) classifyApply(d *classifyDialog, add []string) tea.Cmd {
 	ctx, a := m.ctx, m.app
 	w, ref, source := d.res.Forge, d.ref, d.cr.Suggestion.Source
-	if d.manual {
-		source = "manual" // picked by hand from the known labels: no suggestion made them
+	hand, sug := 0, 0
+	for _, l := range d.labels {
+		if l.on && l.manual {
+			hand++
+		} else if l.on {
+			sug++
+		}
+	}
+	switch { // picked by hand from the known labels: no suggestion made them
+	case hand > 0 && sug == 0:
+		source = "manual"
+	case hand > 0:
+		source += "+manual"
 	}
 	return func() tea.Msg {
 		return clAppliedMsg{d: d, err: ai.ApplyLabels(ctx, w, a.Audit, ref, add, source)}
@@ -473,8 +492,14 @@ func (m model) classifySuggestView(d *classifyDialog, inner int) []string {
 	}
 	if len(miss) > 0 {
 		l = append(l, section("Suggested labels", how, inner, g))
+		suggested := 0
+		for _, lb := range d.labels {
+			if !lb.manual {
+				suggested++
+			}
+		}
 		switch {
-		case d.manual:
+		case suggested == 0 && len(d.labels) > 0:
 			l = append(l, stFaint.Render("no label fits "+strings.Join(miss, " and ")+" confidently; tick one to add it by hand"))
 		case len(d.labels) == 0:
 			l = append(l, stFaint.Render("no label fits "+strings.Join(miss, " and ")+" confidently; add one by hand"))

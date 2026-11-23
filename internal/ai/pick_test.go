@@ -25,4 +25,9 @@ func TestPickableLabelsListsOnlyTheMissingFacetsKnownValues(t *testing.T) {
 	if got := PickableLabels(classifyIn("Hmm", "?", "app::api", "type::bug")); len(got) != 0 {
 		t.Errorf("complete issue: %v", got)
 	}
+	// Only the facets named: the suggestion covered the type, the app is open.
+	in = classifyIn("Hmm", "?")
+	if got := strings.Join(PickableLabels(in, "app"), ","); got != "app::api,app::web" {
+		t.Errorf("app only: %s", got)
+	}
 }

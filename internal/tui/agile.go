@@ -119,7 +119,7 @@ func (m *model) enterAgile(k agileKind) {
 	if !m.isAgilePage() {
 		m.ag.back = m.page
 	}
-	m.ag.kind, m.ag.scroll, m.help = k, 0, false
+	m.ag.kind, m.ag.scroll, m.help, m.ag.pf = k, 0, false, nil
 }
 
 // reload asks for the open page's data again. The generation is bumped on
@@ -192,7 +192,7 @@ func (m model) agileUpdate(msg agileMsg) (tea.Model, tea.Cmd) {
 // agileKey handles a key while an agile page is open. ok is false for keys
 // the global handler should take (quit, help, notifications, refresh).
 func (m model) agileKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
-	if m.ag.pf != nil && k.String() != "ctrl+c" {
+	if m.agileAsking() && k.String() != "ctrl+c" {
 		next, cmd := m.agileAskKey(k.String())
 		return next, cmd, true
 	}
@@ -487,7 +487,11 @@ func (m model) narrativeDone(msg narrativeMsg) (tea.Model, tea.Cmd) {
 		return m, nil // nobody asked: say nothing
 	}
 	if nc := new(*ai.ErrNeedsConfirm); errors.As(msg.err, nc) {
-		m.ag.pf = &(*nc).Preflight // asked inline: agileAskKey answers it
+		// Asked inline (agileAskKey answers it), but only on the page the call
+		// was for: one the user has left or switched has nobody to answer.
+		if m.isAgilePage() && msg.kind == m.ag.kind {
+			m.ag.pf = &(*nc).Preflight
+		}
 		return m, nil
 	}
 	if msg.err != nil {
@@ -533,9 +537,12 @@ func (m model) agileAskKey(ks string) (model, tea.Cmd) {
 	return m, nil
 }
 
+// agileAsking reports whether the narrative's pre-flight dialog is showing.
+func (m model) agileAsking() bool { return m.isAgilePage() && m.ag.pf != nil }
+
 // agileAskOverlay is the narrative's pre-flight dialog.
 func (m model) agileAskOverlay(w int) string {
-	if m.ag.pf == nil {
+	if !m.agileAsking() {
 		return ""
 	}
 	dw := min(w, 100)

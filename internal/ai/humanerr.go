@@ -39,45 +39,56 @@ func (e *badAnswer) Is(target error) bool { return target == ErrBadAnswer }
 // the raw error: that stays in the audit log, which every failed call is
 // written to.
 func Human(err error) string {
+	if s, ok := HumanKnown(err); ok {
+		return s
+	}
+	return "the AI call failed · the Log page has the details"
+}
+
+// HumanKnown is Human for the failures ADE can name: ok is false when err is
+// none of them, so a caller that has better words of its own (a refusal with
+// its own message, an error that was never logged) can use those instead of
+// the generic line.
+func HumanKnown(err error) (string, bool) {
 	var ni *NotInstalledError
 	var ne net.Error
 	switch stop, isStop := AsStop(err); {
 	case errors.Is(err, ErrDisabled):
-		return "AI is off · set ai.mode to ask or auto to use it"
+		return "AI is off · set ai.mode to ask or auto to use it", true
 	case errors.Is(err, config.ErrNoProfile):
-		return "no AI profile is selected · set ai.profile in the config"
+		return "no AI profile is selected · set ai.profile in the config", true
 	case errors.Is(err, config.ErrProfileUndefined):
-		return "the selected AI profile is not defined · check ai.profile in the config"
+		return "the selected AI profile is not defined · check ai.profile in the config", true
 	case errors.Is(err, config.ErrNoSecret):
-		return "the AI profile has no API key · set key_env or key_cmd on it"
+		return "the AI profile has no API key · set key_env or key_cmd on it", true
 	case errors.Is(err, ErrAutoPaused):
-		return "automatic AI calls are paused until tomorrow (the budget was reached) · ask by hand to go on"
+		return "automatic AI calls are paused until tomorrow (the budget was reached) · ask by hand to go on", true
 	case errors.As(err, &ni), errors.Is(err, exec.ErrNotFound):
 		name := "the AI command"
 		if ni != nil {
 			name = ni.Driver
 		}
-		return name + " is not installed · install it or set ai.mode = off"
+		return name + " is not installed · install it or set ai.mode = off", true
 	case isStop && stop.Source == "local":
-		return "a spending cap in ADE stopped the call · the Budget page shows the caps"
+		return "a spending cap in ADE stopped the call · the Budget page shows the caps", true
 	case isStop:
-		return "the provider's own budget is used up · the Budget page shows its figures"
+		return "the provider's own budget is used up · the Budget page shows its figures", true
 	case errors.Is(err, ErrBadAnswer):
-		return "the model's answer was not usable · try again"
+		return "the model's answer was not usable · try again", true
 	case errors.Is(err, context.DeadlineExceeded):
-		return "the model took too long to answer · try again"
+		return "the model took too long to answer · try again", true
 	case errors.Is(err, context.Canceled):
-		return "cancelled · nothing was sent"
+		return "cancelled · nothing was sent", true
 	case errors.Is(err, ErrCancelled):
-		return "cancelled at the pre-flight prompt · nothing was sent"
+		return "cancelled at the pre-flight prompt · nothing was sent", true
 	case httpStatus(err) == 401 || httpStatus(err) == 403:
-		return "the AI service refused the key · check key_env or key_cmd on the profile"
+		return "the AI service refused the key · check key_env or key_cmd on the profile", true
 	case httpStatus(err) == 429:
-		return "the AI service is rate limiting · wait a moment and try again"
+		return "the AI service is rate limiting · wait a moment and try again", true
 	case errors.As(err, &ne):
-		return "the AI service could not be reached · check the network and try again"
+		return "the AI service could not be reached · check the network and try again", true
 	}
-	return "the AI call failed · the Log page has the details"
+	return "", false
 }
 
 var httpStatusRe = regexp.MustCompile(`HTTP (\d{3})\b`)
