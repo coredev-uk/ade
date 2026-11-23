@@ -457,7 +457,7 @@ func newMRMergeCmd() *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), "warning: conventions.commit_prefix %q is set but this is not a squash merge: the prefix only goes on the squash commit (add --squash)\n", pol.Prefix)
 				}
 			}
-			v := review.Verdict(mr)
+			v := review.Verdict(mr, "ade mr ready "+c.ref.String()+" marks it ready")
 			blocked := !v.OK && (!o.AutoMerge || !v.AutoOK)
 			if blocked && !force {
 				if !c.dry {

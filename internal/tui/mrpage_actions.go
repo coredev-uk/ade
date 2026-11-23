@@ -212,3 +212,6 @@ func approvalsText(mr forge.MR) string {
 	}
 	return fmt.Sprintf("%d %s", n, plural(n, "approval"))
 }
+
+// tuiReadyHint is how the merge verdict says to mark a draft ready on the page.
+const tuiReadyHint = "R marks it ready"

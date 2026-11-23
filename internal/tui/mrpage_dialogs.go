@@ -316,7 +316,7 @@ func (m *model) commitSubmit(md *mrModal) tea.Cmd {
 }
 
 func (m *model) mergeKey(md *mrModal, ks string) tea.Cmd {
-	v := review.Verdict(m.mr.data.mr)
+	v := review.Verdict(m.mr.data.mr, tuiReadyHint)
 	switch ks {
 	case "s":
 		md.squash = !md.squash
@@ -440,7 +440,7 @@ func (m model) modalHint(md *mrModal) string {
 	case modalSubmit:
 		return keys("enter", "submit", "tab", "approve", "alt+enter", "newline", "esc", "cancel")
 	case modalMerge:
-		if v := review.Verdict(m.mr.data.mr); !v.OK && !v.AutoOK {
+		if v := review.Verdict(m.mr.data.mr, tuiReadyHint); !v.OK && !v.AutoOK {
 			return keys("esc", "close")
 		}
 		return keys("enter", "merge", "s", "squash", "d", "delete branch", "w", "when CI passes", "esc", "cancel")
@@ -511,7 +511,7 @@ func shortHead(sha string) string {
 func (m model) mergeDialog(md *mrModal, inner int) (string, []string) {
 	d := m.mr.data
 	mr := d.mr
-	v := review.Verdict(mr)
+	v := review.Verdict(mr, tuiReadyHint)
 	vl := stFaint.Render(m.g.Vertical) + " "
 	l := []string{vl + stBold.Render(mr.SourceBranch) + stFaint.Render(m.g.T(" → ")) + stBold.Render(mr.TargetBranch)}
 	switch {

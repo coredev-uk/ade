@@ -27,12 +27,28 @@ func TestMergeVerdict(t *testing.T) {
 		{"failed pipeline cannot", forge.MR{State: "opened", DetailedStatus: "ci_must_pass", Pipeline: failed}, false, false, "must pass"},
 		{"needs approval", forge.MR{State: "opened", DetailedStatus: "not_approved"}, false, false, "approval"},
 		{"threads", forge.MR{State: "opened", DetailedStatus: "discussions_not_resolved", Unresolved: 2}, false, false, "2 unresolved threads"},
+		{"github clean", forge.MR{State: "opened", DetailedStatus: "clean"}, true, false, ""},
+		{"github unstable", forge.MR{State: "opened", DetailedStatus: "unstable"}, true, false, ""},
+		{"github has_hooks", forge.MR{State: "opened", DetailedStatus: "has_hooks"}, true, false, ""},
+		{"github behind", forge.MR{State: "opened", DetailedStatus: "behind", TargetBranch: "main"}, false, false, "behind main: update the branch"},
+		{"github blocked", forge.MR{State: "opened", DetailedStatus: "blocked"}, false, false, "required review or check"},
+		{"github unknown", forge.MR{State: "opened", DetailedStatus: "unknown"}, false, false, "still checking"},
 		{"unknown status is quoted", forge.MR{State: "opened", DetailedStatus: "jira_association_missing"}, false, false, "jira association missing"},
 	}
 	for _, c := range cases {
-		v := Verdict(c.mr)
+		v := Verdict(c.mr, "")
 		if v.OK != c.ok || v.AutoOK != c.auto || !strings.Contains(v.Why, c.why) {
 			t.Errorf("%s: %+v, want ok=%v auto=%v why~%q", c.name, v, c.ok, c.auto, c.why)
 		}
+	}
+}
+
+func TestVerdictDraftHint(t *testing.T) {
+	mr := forge.MR{State: "opened", Draft: true}
+	if v := Verdict(mr, ""); v.Why != "it is still a draft" {
+		t.Errorf("no hint: %q", v.Why)
+	}
+	if v := Verdict(mr, "R marks it ready"); v.Why != "it is still a draft (R marks it ready)" {
+		t.Errorf("hint: %q", v.Why)
 	}
 }

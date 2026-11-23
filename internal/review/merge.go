@@ -22,20 +22,30 @@ type MergeVerdict struct {
 }
 
 // Verdict judges mr from what the forge reports: state, draft, conflicts and
-// the detailed merge status (unresolved threads, approvals, pipeline).
-func Verdict(mr forge.MR) MergeVerdict {
+// the detailed merge status (GitLab's detailed_merge_status: unresolved
+// threads, approvals, pipeline; GitHub's mergeable_state). readyHint, when not
+// empty, is how the caller's surface marks a draft ready ("R marks it ready",
+// "ade mr ready <ref> marks it ready"); the wording is otherwise the same for
+// the dialog and the command line.
+func Verdict(mr forge.MR, readyHint string) MergeVerdict {
 	switch {
 	case mr.State == "merged":
 		return MergeVerdict{Why: "already merged"}
 	case mr.State != "opened":
 		return MergeVerdict{Why: "the merge request is " + mr.State}
 	case mr.Draft:
-		return MergeVerdict{Why: "it is still a draft (R marks it ready)"}
+		why := "it is still a draft"
+		if readyHint != "" {
+			why += " (" + readyHint + ")"
+		}
+		return MergeVerdict{Why: why}
 	case mr.HasConflicts:
 		return MergeVerdict{Why: "it conflicts with " + mr.TargetBranch + ": rebase first"}
 	}
 	switch mr.DetailedStatus {
-	case "", "mergeable":
+	case "", "mergeable", "clean", "unstable", "has_hooks":
+		// GitLab "mergeable"; GitHub "clean", "has_hooks" and "unstable" (only
+		// checks that are not required fail) all merge.
 		return MergeVerdict{OK: true}
 	case "ci_still_running":
 		return MergeVerdict{AutoOK: true, Why: "the pipeline is still running"}
@@ -51,12 +61,16 @@ func Verdict(mr forge.MR) MergeVerdict {
 		return MergeVerdict{Why: fmt.Sprintf("%d unresolved %s", mr.Unresolved, word)}
 	case "need_rebase":
 		return MergeVerdict{Why: "it needs a rebase"}
-	case "checking", "unchecked":
-		return MergeVerdict{Why: "GitLab is still checking whether it can merge: try again in a moment"}
+	case "checking", "unchecked", "unknown":
+		return MergeVerdict{Why: "the forge is still checking whether it can merge: try again in a moment"}
 	case "blocked_status":
 		return MergeVerdict{Why: "another merge request blocks it"}
+	case "behind":
+		return MergeVerdict{Why: "it is behind " + mr.TargetBranch + ": update the branch first"}
+	case "blocked":
+		return MergeVerdict{Why: "a required review or check is missing"}
 	}
-	return MergeVerdict{Why: "GitLab reports " + strings.ReplaceAll(mr.DetailedStatus, "_", " ")}
+	return MergeVerdict{Why: "the forge reports " + strings.ReplaceAll(mr.DetailedStatus, "_", " ")}
 }
 
 // MergePolicy is what the owning project's manifest says about merging an MR.
@@ -81,6 +95,7 @@ func MergePolicyFor(a *app.App, st *store.Store, ref forge.Ref) MergePolicy {
 	if err != nil {
 		return MergePolicy{}
 	}
+	var first *MergePolicy
 	for _, it := range items {
 		if !commitprefix.Owns(it.Item, ref) {
 			continue
@@ -90,11 +105,22 @@ func MergePolicyFor(a *app.App, st *store.Store, ref forge.Ref) MergePolicy {
 			continue
 		}
 		c := m.Conventions.MR
-		return MergePolicy{
+		pol := MergePolicy{
 			Prefix:             commitprefix.ForMR(m, it.Item, ref),
 			Squash:             c.Squash != nil && *c.Squash,
 			RemoveSourceBranch: c.RemoveSourceBranch != nil && *c.RemoveSourceBranch,
 		}
+		// An owner without a prefix does not end the search: another item
+		// owning the MR may carry one. Its defaults stand when none does.
+		if pol.Prefix != "" {
+			return pol
+		}
+		if first == nil {
+			first = &pol
+		}
+	}
+	if first != nil {
+		return *first
 	}
 	return MergePolicy{}
 }

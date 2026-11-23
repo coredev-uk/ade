@@ -134,7 +134,7 @@ func (m model) mrStrip(w int) string {
 		seg = append(seg, stFaint.Render("no unresolved threads"))
 	}
 	if mr.State == "opened" {
-		v := review.Verdict(mr)
+		v := review.Verdict(mr, tuiReadyHint)
 		switch {
 		case v.OK:
 			seg = append(seg, stOK.Render(g.OK+" mergeable"))
@@ -309,7 +309,7 @@ func (m model) mrOverview(w, h int) string {
 	kv("pipeline", ciText(g, mr.Pipeline))
 	kv("threads", fmt.Sprintf("%d unresolved %s %d resolved", mr.Unresolved, g.Sep, mr.Resolved))
 	if mr.State == "opened" {
-		if v := review.Verdict(mr); v.OK {
+		if v := review.Verdict(mr, tuiReadyHint); v.OK {
 			kv("merge", stOK.Render(g.OK+" mergeable"))
 		} else {
 			kv("merge", stWarn.Render(g.Warn+" "+v.Why))
