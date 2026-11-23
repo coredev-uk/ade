@@ -228,7 +228,7 @@ func TestTOnTheCITabTriagesTheFailedJobsAndIsCached(t *testing.T) {
 	e.press("5")
 	e.want("lint", "1 failed job", "t asks the AI for cause and fix")
 	e.press("t")
-	e.want("CI triage", "AI · claude-haiku-4-5", "Cause: `eslint: 2 errors`", "Fix: remove the unused variable.")
+	e.want("CI triage", "AI suggestion · claude-haiku-4-5", "from the job log, check it", "Cause: `eslint: 2 errors`", "Fix: remove the unused variable.")
 	prompt := stub.prompt("triage")
 	if !strings.Contains(prompt, "### Job lint") || !strings.Contains(prompt, "no-unused-vars") || strings.Contains(prompt, "### Job build") {
 		t.Errorf("only the failed job's log goes to the model:\n%s", prompt)
