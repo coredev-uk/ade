@@ -172,7 +172,7 @@ child_title = "{parent_title}"
 child_body  = "templates/child.md"       # relative to the manifest
 link        = ["relates_to", "description"]
 child_issue = "auto"                      # auto | always | never
-mr          = { create = "ask", template = "Default", draft = true, closes = "child", mention = "parent", reviewer_group = "acme/reviewers" }
+mr          = { create = "ask", template = "Default", draft = true, closes = "child", mention = "parent", reviewer_group = "acme/reviewers", squash = true, remove_source_branch = true }
 ```
 
 - `child_issue`: `auto` creates a child issue in the code repo when the tracker is a different project, and none
@@ -213,6 +213,11 @@ mr          = { create = "ask", template = "Default", draft = true, closes = "ch
   opened without that request. A template's `/assign_reviewer` keeps working; both apply. An MR that already
   exists is not touched. Without the key nothing changes. A value with whitespace, a leading `@` or an empty path
   segment (`/acme`, `acme//x`) is an error (`conventions.mr.reviewer_group`).
+- `mr.squash`, `mr.remove_source_branch`: the team's merge defaults (booleans; unset is `false`, as today). They
+  tick `s` squash and `d` delete the source branch when the MR page's merge dialog (`m`) opens, and are the defaults
+  of `ade mr merge --squash` and `--remove-source-branch`; the dialog's keys and a flag you pass (`--squash=false`)
+  still win. They apply to an MR ADE has synced (the sync cache finds the owning item and its project). Merge
+  when the pipeline succeeds is never a team default.
 - `commit_prefix`: a prefix for the first commit of the MR (and a squash merge message), e.g.
   `"GL-{parent}"`. See [Commit prefix](#commit-prefix).
 - `commit_prefix_hook`: `true` installs ADE's commit-msg hook into each worktree start work makes, so your own
@@ -243,7 +248,9 @@ Only the **first commit of the MR** carries the prefix, as the ticket reference 
   with it is never prefixed twice.
 - **Merges** (`ade mr merge`, the MR page `m`): a merge commit is not prefixed, ADE sends GitLab's/GitHub's own
   message. A **squash** message keeps the prefix (`squash_commit_message` = the prefixed MR title): the squash
-  commit replaces the MR's commits, so it is the first commit. `--dry-run` and the merge dialog show it. The
+  commit replaces the MR's commits, so it is the first commit. `--dry-run` and the merge dialog show it. With a
+  prefix set and squash off the prefix is not sent: `ade mr merge` warns on stderr and the dialog says so
+  (`mr.squash = true` makes squash the default). The
   owning work item is found in the sync cache, so an MR ADE has not synced gets the forge's defaults.
 - **GitHub** start work's empty commit is the branch's first commit: `GL-412 Start work: <title>`.
 
@@ -254,7 +261,7 @@ into the bare repository's own `config.worktree`, which git requires):
 ```
 ade.parent        = 412          # the tracker issue's iid
 ade.commitPrefix  = GL-412       # absent when commit_prefix is not set (a stale value is removed)
-ade.target        = main         # the MR's target branch; absent when not known yet
+ade.target        = main         # the MR's target branch (the default branch, or the --base chosen at start); absent when not known yet
 ```
 
 **ADE's hook.** `ade ws hook install [worktree]` writes a `commit-msg` hook for one worktree, and

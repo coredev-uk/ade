@@ -289,8 +289,12 @@ func TestMRMerge(t *testing.T) {
 	if _, err := e.mr("merge", rateMR, "--yes"); err == nil || !strings.Contains(err.Error(), "merged, not open") {
 		t.Errorf("second merge err = %v", err)
 	}
-	// A draft cannot merge: the forge's refusal surfaces.
-	if _, err := e.mr("merge", webPath+"!1", "--yes"); err == nil {
+	// A draft is refused before anything is sent; --force leaves it to the
+	// forge, whose refusal surfaces and is audited.
+	if _, err := e.mr("merge", webPath+"!1", "--yes"); err == nil || !strings.Contains(err.Error(), "still a draft") {
+		t.Errorf("draft MR err = %v, want the readiness refusal", err)
+	}
+	if _, err := e.mr("merge", webPath+"!1", "--yes", "--force"); err == nil {
 		t.Error("draft MR merged")
 	}
 	es := e.audited("forge.mr.merge")
@@ -464,6 +468,13 @@ func (e *cliEnv) seedPrefixedItem(t *testing.T, tmpl string) {
 // set; the item has no child issue in the code repo.
 func (e *cliEnv) seedPrefixedItemOnBranch(t *testing.T, tmpl, sourceBranch string) {
 	t.Helper()
+	e.seedConventions(t, "commit_prefix = \""+tmpl+"\"\n", sourceBranch)
+}
+
+// seedConventions is seedPrefixedItemOnBranch with the manifest's
+// [conventions] body given as is.
+func (e *cliEnv) seedConventions(t *testing.T, conv, sourceBranch string) {
+	t.Helper()
 	root := t.TempDir()
 	e.app.Root = root
 	dir := filepath.Join(root, "acme")
@@ -471,7 +482,7 @@ func (e *cliEnv) seedPrefixedItemOnBranch(t *testing.T, tmpl, sourceBranch strin
 		t.Fatal(err)
 	}
 	man := "name = \"acme\"\nforge = \"sandbox\"\n[tracker]\nproject = \"" + fake.GroupPath + "/tracker\"\n" +
-		"[repos.api]\npath = \"" + apiPath + "\"\n[conventions]\ncommit_prefix = \"" + tmpl + "\"\n"
+		"[repos.api]\npath = \"" + apiPath + "\"\n[conventions]\n" + conv
 	snap := "source = \"test\"\nmanifest = '''\n" + man + "'''\n"
 	if err := os.WriteFile(filepath.Join(dir, ".project.toml"), []byte(snap), 0o644); err != nil {
 		t.Fatal(err)
@@ -545,5 +556,71 @@ func TestMRMergeWithoutPrefixSendsNoMessages(t *testing.T) {
 		if _, ok := params[k]; ok {
 			t.Errorf("%s sent without a commit prefix: %v", k, params)
 		}
+	}
+}
+
+func TestMRMergeRefusesWhenNotReady(t *testing.T) {
+	e := newCLIEnv(t)
+	web := webPath + "!1" // a draft
+	_, err := e.mr("merge", web, "--yes")
+	if err == nil || !strings.Contains(err.Error(), "cannot merge "+web) || !strings.Contains(err.Error(), "still a draft") || !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("err = %v", err)
+	}
+	if n := len(e.audited("forge.mr.merge")); n != 0 {
+		t.Errorf("a refused merge was audited as a forge write: %d entries", n)
+	}
+
+	// The dry run shows the verdict and exits cleanly; it sends and audits nothing.
+	out := e.mustMR("merge", web, "--dry-run")
+	if !strings.Contains(out, "would refuse to merge "+web) || !strings.Contains(out, "still a draft") {
+		t.Errorf("dry-run output = %q", out)
+	}
+	if n := len(e.audited("forge.mr.merge")); n != 0 {
+		t.Errorf("dry-run refusal audited: %d entries", n)
+	}
+	out = e.mustMR("merge", web, "--dry-run", "--force")
+	if !strings.Contains(out, "dry-run: would merge "+web) || !strings.Contains(out, "not ready (--force): it is still a draft") {
+		t.Errorf("forced dry-run output = %q", out)
+	}
+	out = e.mustMR("merge", rateMR, "--dry-run")
+	if !strings.Contains(out, "ready: mergeable") {
+		t.Errorf("dry-run output = %q", out)
+	}
+}
+
+func TestMRMergeDefaultsFromTheManifest(t *testing.T) {
+	e := newCLIEnv(t)
+	e.seedConventions(t, "[conventions.mr]\nsquash = true\nremove_source_branch = true\n", "")
+	out := e.mustMR("merge", rateMR, "--yes", "--squash=false")
+	if !strings.Contains(out, "merged "+rateMR) {
+		t.Errorf("output = %q", out)
+	}
+	_, _, params, _ := e.srv.MergeState(ref(rateMR))
+	if params["squash"] == true {
+		t.Errorf("--squash=false did not win over the manifest: %v", params)
+	}
+	if params["should_remove_source_branch"] != true {
+		t.Errorf("remove_source_branch default not applied: %v", params)
+	}
+
+	e2 := newCLIEnv(t)
+	e2.seedConventions(t, "[conventions.mr]\nsquash = true\nremove_source_branch = true\n", "")
+	e2.mustMR("merge", rateMR, "--yes")
+	_, _, params, _ = e2.srv.MergeState(ref(rateMR))
+	if params["squash"] != true || params["should_remove_source_branch"] != true {
+		t.Errorf("manifest defaults not applied: %v", params)
+	}
+}
+
+func TestMRMergeWarnsThePrefixNeedsSquash(t *testing.T) {
+	e := newCLIEnv(t)
+	e.seedPrefixedItem(t, "GL-{parent}")
+	out := e.mustMR("merge", rateMR, "--dry-run")
+	if !strings.Contains(out, "warning: conventions.commit_prefix") || !strings.Contains(out, "--squash") {
+		t.Errorf("no prefix warning without squash:\n%s", out)
+	}
+	out = e.mustMR("merge", rateMR, "--dry-run", "--squash")
+	if strings.Contains(out, "warning:") {
+		t.Errorf("warned although the merge squashes:\n%s", out)
 	}
 }
