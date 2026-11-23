@@ -76,3 +76,16 @@ func TestLocalRebaseSteps(t *testing.T) {
 		t.Errorf("steps without a worktree:\n%s", anon)
 	}
 }
+
+func TestLocalRebaseStepsForAForkNeverPushToOrigin(t *testing.T) {
+	mr := forge.MR{Ref: forge.Ref{Project: "g/api", IID: 7, Kind: forge.KindMR}, SourceBranch: "feat", TargetBranch: "main", Fork: true, SourceProject: "alice/api"}
+	got := strings.Join(LocalRebaseSteps(mr, "/work/api/mr-7"), "\n")
+	if strings.Contains(got, "push --force-with-lease origin") {
+		t.Errorf("a fork MR's steps push to origin:\n%s", got)
+	}
+	for _, want := range []string{"cd /work/api/mr-7", "git rebase origin/main", "alice/api", "HEAD:feat"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("steps lack %q:\n%s", want, got)
+		}
+	}
+}

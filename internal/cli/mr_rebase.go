@@ -112,8 +112,9 @@ func forgeName(be review.Backend) string {
 	return "the forge"
 }
 
-// localTree finds the worktree on the MR's source branch of the registered
-// project, from disk alone; "" when there is none, or the repo is not known.
+// localTree finds the worktree of the MR, from disk alone: the one on its
+// source branch, or for a fork MR the detached mr-<iid> tree (its branch is not
+// in origin). "" when there is none, or the repo is not known.
 func localTree(ctx context.Context, a *app.App, mr forge.MR) string {
 	for _, pr := range a.Config.Projects {
 		m, err := project.SnapshotManifest(a, pr) // disk only: a hint must not wait on the network
@@ -128,8 +129,9 @@ func localTree(ctx context.Context, a *app.App, mr forge.MR) string {
 			if err != nil {
 				continue
 			}
+			detached := project.MRTreeDir(a.Root, m.Name, name, mr.Ref.IID)
 			for _, w := range trees {
-				if w.Branch == mr.SourceBranch {
+				if mr.Fork && w.Path == detached || !mr.Fork && w.Branch == mr.SourceBranch {
 					return w.Path
 				}
 			}
