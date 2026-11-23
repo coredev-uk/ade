@@ -251,3 +251,29 @@ func TestCleanupKeepsABranchWithCommitsOutsideTheMergedMR(t *testing.T) {
 		t.Errorf("audit = %+v", got)
 	}
 }
+
+func TestGCDryRunSaysWhichBranchesNeedDashD(t *testing.T) {
+	e, web, bare, mrHead := squashedEnv(t)
+	out, err := e.gc("--dry-run")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if want := "would delete branch " + cleanupWebBranch + " (git branch -D unless git sees it merged by then: its tip is web!2's head)"; !strings.Contains(out, want) {
+		t.Errorf("output lacks %q:\n%s", want, out)
+	}
+	if _, err := os.Stat(web); err != nil {
+		t.Error("--dry-run removed the worktree")
+	}
+	if gitOut(t, bare, "branch", "--list", cleanupWebBranch) == "" {
+		t.Error("--dry-run deleted the branch")
+	}
+
+	*mrHead = gitOut(t, bare, "rev-parse", cleanupWebBranch+"~1")
+	out, err = e.gc("--dry-run")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if want := "would delete branch " + cleanupWebBranch + " only if git sees it merged (local commits not in the merged MR web!2)"; !strings.Contains(out, want) {
+		t.Errorf("output lacks %q:\n%s", want, out)
+	}
+}

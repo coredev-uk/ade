@@ -173,7 +173,7 @@ func cleanTrees(ctx context.Context, ps *project.Service, res *cleanupOut, doome
 	if dry {
 		removed = doomed
 		for _, i := range doomed {
-			res.Trees[i].BranchForced, res.Trees[i].BranchWhy = ps.PlanBranch(ctx, res.Trees[i].Tree)
+			res.Trees[i].planBranch(ctx, ps)
 		}
 	}
 	var seen []string
@@ -196,10 +196,8 @@ func printCleanup(w io.Writer, res cleanupOut, doomed []int) {
 	for _, i := range doomed {
 		r := res.Trees[i]
 		switch {
-		case res.DryRun && r.BranchForced:
-			fmt.Fprintf(w, "would delete branch %s (git branch -D unless git sees it merged by then: %s)\n", r.Branch, r.BranchWhy)
 		case res.DryRun:
-			fmt.Fprintf(w, "would delete branch %s only if git sees it merged (%s)\n", r.Branch, r.BranchWhy)
+			fmt.Fprintln(w, r.planLine())
 		case r.Error != "":
 			fmt.Fprintf(w, "failed  %s  %s\n", r.Label(), r.Error)
 		default:
