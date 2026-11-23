@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.4.0](https://github.com/coredev-uk/ade/compare/v0.3.0...v0.4.0) (2026-11-23)
+
+
+### Features
+
+* **doctor:** an ai group that tells AI off from AI misconfigured ([#46](https://github.com/coredev-uk/ade/issues/46)) ([619babd](https://github.com/coredev-uk/ade/commit/619babd7170bd9db67519a748e47c75483fe71fe))
+* **issue:** apply a pending workflow label move ([#35](https://github.com/coredev-uk/ade/issues/35)) ([cfeb79e](https://github.com/coredev-uk/ade/commit/cfeb79e82d20373a31c7ce54835dea9ab7b21020))
+* **mr:** close and reopen an MR, and ade start stops at a closed MR of the same branch ([#28](https://github.com/coredev-uk/ade/issues/28)) ([53ee7a2](https://github.com/coredev-uk/ade/commit/53ee7a2cc686fe4f1fe50d407ea54bb224c0cc75))
+* **mr:** edit an MR description without AI ([#42](https://github.com/coredev-uk/ade/issues/42)) ([bdf5078](https://github.com/coredev-uk/ade/commit/bdf507848d70b6d11541b1cd90e7330914bfcf73))
+* **mr:** rebase or update an MR's branch from ADE ([#34](https://github.com/coredev-uk/ade/issues/34)) ([6cdb73b](https://github.com/coredev-uk/ade/commit/6cdb73bd8df2459eb33806700c4bc8ee8b9996df))
+* **mr:** request review again ([#31](https://github.com/coredev-uk/ade/issues/31)) ([d0ff0bf](https://github.com/coredev-uk/ade/commit/d0ff0bf297b3a61fb1f6c4c6ebfc0ea31944323d))
+* **mr:** team merge defaults, and ade mr merge checks readiness first ([#29](https://github.com/coredev-uk/ade/issues/29)) ([3870abe](https://github.com/coredev-uk/ade/commit/3870abe8f08c7cfbd74eaf9046abe60b5683f287))
+* **start:** start work from another base branch ([#33](https://github.com/coredev-uk/ade/issues/33)) ([a8bddef](https://github.com/coredev-uk/ade/commit/a8bddef79bc526ceeb6ce4636133032cb122b8f0))
+* **tui:** abbreviate long repo names in Home refs ([#14](https://github.com/coredev-uk/ade/issues/14)) ([f9a0937](https://github.com/coredev-uk/ade/commit/f9a0937c9e9d26a603fee2afa3ea667dd8bd5e32))
+* **tui:** clean up merged work from Home ([#43](https://github.com/coredev-uk/ade/issues/43)) ([1b04ccd](https://github.com/coredev-uk/ade/commit/1b04ccdd75bd712d49062dd4102840e1a196927d))
+* **tui:** edit notes in place and show them as written ([#19](https://github.com/coredev-uk/ade/issues/19)) ([81f70a6](https://github.com/coredev-uk/ade/commit/81f70a6bcf00df5fd4c1efcb5bc449b29469730d))
+* **tui:** label AI advice from untrusted text, and leave your notes out of MR-page AI with one key ([#49](https://github.com/coredev-uk/ade/issues/49)) ([9eb68de](https://github.com/coredev-uk/ade/commit/9eb68de9fe422ff478fcf83a10881ba1b51b365b))
+* **tui:** last working day, classify and digest keep working without AI ([#36](https://github.com/coredev-uk/ade/issues/36)) ([340e01a](https://github.com/coredev-uk/ade/commit/340e01a845fb72a5a2648fb351ed7272f9c4b7ce))
+* **tui:** show comments on the tracker issue ([#18](https://github.com/coredev-uk/ade/issues/18)) ([aee1ecc](https://github.com/coredev-uk/ade/commit/aee1ecc3fda7a36427017fce19fb751a00ac2a23))
+* **tui:** show fewer regions on small screens instead of squeezing them ([#41](https://github.com/coredev-uk/ade/issues/41)) ([67b9630](https://github.com/coredev-uk/ade/commit/67b9630dbdb6da2b1161e6210bc8e2d144f556af))
+* **ws:** install the commit-prefix hook ([#30](https://github.com/coredev-uk/ade/issues/30)) ([b780e74](https://github.com/coredev-uk/ade/commit/b780e745f81cd63c649177cc507a841bd8d5fb96))
+* **ws:** push your branch from ADE ([#40](https://github.com/coredev-uk/ade/issues/40)) ([cd6ffe6](https://github.com/coredev-uk/ade/commit/cd6ffe61917fc7c7b5191f1f5ec763b5ab1440b2))
+
+
+### Fixes
+
+* **agent:** runs stop at AI off and every budget cap, never commit your files, and reply in their threads ([#39](https://github.com/coredev-uk/ade/issues/39)) ([f78f11f](https://github.com/coredev-uk/ade/commit/f78f11f47258042dcabda3b43ecbfb4e8b253395))
+* **ai:** mark AI text on the forge, block quick actions in it, and fix caching and cost booking ([#37](https://github.com/coredev-uk/ade/issues/37)) ([8c90177](https://github.com/coredev-uk/ade/commit/8c901771416a861834fafb9c52152d17d19f2014))
+* **ai:** raise a budget stop once a day and show a banner on Home ([#17](https://github.com/coredev-uk/ade/issues/17)) ([04fb8d7](https://github.com/coredev-uk/ade/commit/04fb8d75b8d846d1865fb28fce533ee3018ee347))
+* **bootstrap:** a tracker that is also the code repo becomes a repo ([#32](https://github.com/coredev-uk/ade/issues/32)) ([9a33b56](https://github.com/coredev-uk/ade/commit/9a33b5699ef08b857189ed3e72cbde481745046e))
+* **budget:** calls in flight count against the caps, and an empty Anthropic balance is a budget stop ([#50](https://github.com/coredev-uk/ade/issues/50)) ([f09cb3c](https://github.com/coredev-uk/ade/commit/f09cb3cbcb3c74046db35d1f390dcbc404b92bb5))
+* **cleanup:** delete squash-merged branches ([#25](https://github.com/coredev-uk/ade/issues/25)) ([994f47c](https://github.com/coredev-uk/ade/commit/994f47cff8f8d351d5226b40e37892ee67df5d9a))
+* **forgesync:** match tracker and repo paths case-insensitively ([#16](https://github.com/coredev-uk/ade/issues/16)) ([7468e19](https://github.com/coredev-uk/ade/commit/7468e19e1c26c9fdf76f5d8fe5d53926d8976841))
+* **overview:** never miss a cache write that commits during a reload ([#15](https://github.com/coredev-uk/ade/issues/15)) ([9e0fd9c](https://github.com/coredev-uk/ade/commit/9e0fd9c75c9690c60b962e84d1920125eb67100f))
+* **review:** review and open workspaces on fork MRs ([#27](https://github.com/coredev-uk/ade/issues/27)) ([2aac540](https://github.com/coredev-uk/ade/commit/2aac540bc2c69a4bd98918f8539ca4c9ff6648e3))
+* **tui:** agent actions and layouts follow the same AI availability as the rest of ADE ([#47](https://github.com/coredev-uk/ade/issues/47)) ([3b57ddb](https://github.com/coredev-uk/ade/commit/3b57ddb57557a7e8d4fafb280d72a51f7e84b186))
+
 ## v0.3.0
 
 Editors and CDEs: workspaces open in a running code-server from any terminal, `ade doctor` checks the editor `host.editor` names (and `auto` honours `$EDITOR`), the config and manifests point editors at ADE's TOML schema, and releases are cut from this changelog. Also: your own sprint retro, start work that opens started work and runs install hooks, and work items with several child issues.
