@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -43,16 +44,53 @@ func TestLastDayBlockShowsTheSummaryOrTheFacts(t *testing.T) {
 	}
 }
 
-func TestLastDayIsNotAskedForWithoutAI(t *testing.T) {
+// The facts are not an AI feature: Home asks for the block with AI off, with
+// no profile and with a profile that is not selected. Only the summary on top
+// of them needs a model.
+func TestLastDayFactsAreAskedForWithoutAI(t *testing.T) {
 	cfg := config.Defaults() // no AI profile
 	m := model{app: &app.App{Config: &cfg}}
-	if cmd := m.loadLastDay(); cmd != nil || m.ld.asked != "" {
-		t.Fatal("asked for a last-day summary with AI not set up")
+	if cmd := m.loadLastDay(); cmd == nil || !m.ld.busy || m.ld.asked == "" {
+		t.Fatal("did not ask for the last working day with AI not set up")
 	}
 	cfg.AI.Profiles = map[string]config.AIProfile{"sub": {}}
 	cfg.AI.Mode = "off"
 	m = model{app: &app.App{Config: &cfg}}
-	if cmd := m.loadLastDay(); cmd != nil {
-		t.Fatal("asked for a last-day summary with ai.mode = off")
+	if cmd := m.loadLastDay(); cmd == nil {
+		t.Fatal("did not ask for the last working day with ai.mode = off")
+	}
+}
+
+func TestLastDaySummaryLeavesTheFactsAloneWithoutAI(t *testing.T) {
+	from := time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC)
+	l := agile.LastDay{Date: "2026-11-04", From: from, Done: []agile.Entry{{At: from.Add(9 * time.Hour), Text: "pushed 1-rate-limit"}}}
+	for _, tc := range []struct {
+		name string
+		mode string
+		prof map[string]config.AIProfile
+		sel  string
+		note string
+	}{
+		{"off", "off", map[string]config.AIProfile{"sub": {Driver: "omp"}}, "sub", ""},
+		{"no profile configured", "ask", nil, "", ""},
+		{"profiles but none selected", "ask", map[string]config.AIProfile{"sub": {Driver: "omp"}}, "", "no AI profile is selected"},
+		{"selected profile missing", "ask", map[string]config.AIProfile{"sub": {Driver: "omp"}}, "gone", "is not defined"},
+	} {
+		cfg := config.Defaults()
+		cfg.AI.Mode, cfg.AI.Profiles, cfg.AI.Profile = tc.mode, tc.prof, tc.sel
+		msg := lastDaySummary(context.Background(), &app.App{Config: &cfg}, "2026-11-04", l)
+		if msg.day == nil || len(msg.day.Done) != 1 || msg.day.Narrative != "" {
+			t.Errorf("%s: the facts must survive without a summary: %+v", tc.name, msg.day)
+		}
+		if tc.note == "" && msg.note != "" || !strings.Contains(msg.note, tc.note) {
+			t.Errorf("%s: note = %q, want %q", tc.name, msg.note, tc.note)
+		}
+	}
+	m := model{g: unicodeGlyphs, w: 100, h: 40}
+	m.onLastDay(lastDayMsg{today: "2026-11-04", day: &l})
+	m.ld.asked = "2026-11-04"
+	m.onLastDay(lastDayMsg{today: "2026-11-04", day: &l})
+	if got := ansi.Strip(strings.Join(m.lastDayLines(100), "\n")); !strings.Contains(got, "09:00  pushed 1-rate-limit") {
+		t.Errorf("the block lacks the day's facts:\n%s", got)
 	}
 }

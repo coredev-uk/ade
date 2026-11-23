@@ -45,14 +45,14 @@ func runTextJob(ctx context.Context, svc *ai.Service, a *app.App, be review.Back
 	case aiDescribe:
 		in, err := ai.GatherDescribe(ctx, a, be, t.mr.Ref, "")
 		if err != nil {
-			return nil, err
+			return nil, forgeRead(err)
 		}
 		job = ai.DescribeJob(t.forgeName, in)
 		draftOf = func(r ai.Result) string { return ai.PrepareDescription(r.Text, in.MR.Description) }
 	case aiCITriage:
 		in, err := ai.GatherCITriage(ctx, be, t.mr, t.jobs)
 		if err != nil {
-			return nil, err
+			return nil, forgeRead(err)
 		}
 		job = ai.CITriageJob(t.forgeName, in)
 	}
