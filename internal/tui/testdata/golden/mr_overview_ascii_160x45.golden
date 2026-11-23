@@ -42,4 +42,4 @@
    pipeline  + CI passed
    threads   2 unresolved - 1 resolved
    merge     ! it needs approval
- j/k scroll   n edit notes   tab tabs   a approve   R ready/draft   m merge   S submit review   P agents   esc back   ? keys
+ j/k scroll   n edit notes   tab tabs   a approve   R ready/draft   m merge   S submit review   u update branch   P agents   esc back   ? keys

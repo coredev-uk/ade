@@ -119,6 +119,10 @@ type pull struct {
 	AutoMerge   *autoMerge
 	MergeParams map[string]any
 	Publishes   int
+
+	BaseMoved bool           // MoveBase ran: the base branch is checked for lag (update_branch.go)
+	Updates   int            // update-branch requests accepted
+	Update    *pendingUpdate // accepted, not landed yet
 }
 
 type autoMerge struct {
@@ -483,6 +487,12 @@ func (rp *repo) mergeable(it *item) (bool, string) {
 		return false, "unknown"
 	case p.Draft:
 		return true, "draft"
+	case p.BaseMoved && !rp.contains(p.HeadSHA, rp.resolveRef(p.Base).SHA):
+		tip := rp.resolveRef(p.Base)
+		if _, conflicts := threeWay(rp.Commits[p.BaseSHA].Files, rp.Commits[p.HeadSHA].Files, tip.Files); len(conflicts) > 0 {
+			return false, "dirty"
+		}
+		return true, "behind"
 	case rp.checksFailing(p.HeadSHA):
 		return true, "unstable"
 	}

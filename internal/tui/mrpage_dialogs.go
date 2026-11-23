@@ -31,6 +31,7 @@ const (
 	modalLog
 	modalAI
 	modalDescribe // an AI-drafted MR description, editable, applied on enter
+	modalRebase   // update the source branch from the target on the forge
 )
 
 // severities are the choices of a comment, in cycling order. The first, none,
@@ -292,6 +293,8 @@ func (m *model) modalKey(k tea.KeyPressMsg) tea.Cmd {
 		}
 	case modalMerge:
 		return m.mergeKey(md, ks)
+	case modalRebase:
+		return m.rebaseModalKey(ks)
 	case modalAI:
 		return m.aiConfirmKey(md, ks)
 	case modalDescribe:
@@ -397,6 +400,8 @@ func (m model) mrOverlay(w, h int) string {
 		title, l = m.submitDialog(md, inner)
 	case modalMerge:
 		title, l = m.mergeDialog(md, inner)
+	case modalRebase:
+		title, l = m.rebaseDialog(inner)
 	case modalAI:
 		title, l = m.aiModal(md, inner)
 	case modalDescribe:
@@ -437,6 +442,8 @@ func (m model) modalHint(md *mrModal) string {
 		return keys("enter", "save", "tab", "severity", "alt+enter", "newline", "esc", "cancel")
 	case modalDeny:
 		return keys("enter", "deny", "esc", "cancel")
+	case modalRebase:
+		return keys("enter", "update the branch", "y", "copy git commands", "esc", "cancel")
 	case modalSubmit:
 		return keys("enter", "submit", "tab", "approve", "alt+enter", "newline", "esc", "cancel")
 	case modalMerge:
