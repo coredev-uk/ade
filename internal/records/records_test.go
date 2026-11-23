@@ -256,3 +256,16 @@ func mustRead(t *testing.T, p string) []byte {
 	}
 	return b
 }
+
+func TestNewRefusesAnEmptyOrRelativeRoot(t *testing.T) {
+	for _, dir := range []string{"", ".", "records", "../records"} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("New(%q) did not panic: records would land in the working directory", dir)
+				}
+			}()
+			New(dir)
+		}()
+	}
+}

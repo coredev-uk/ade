@@ -22,5 +22,8 @@ demo.gif
 # bun runtime cache that appears when the cli tests run
 **/bun/@t@/
 
-# per-item lock files written next to item records (tests write records under internal/tui/items)
+# per-item lock files written next to item records
 .item.lock
+
+# test records must never land in the source tree (records.New refuses relative roots)
+internal/**/items/

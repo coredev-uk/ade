@@ -67,6 +67,8 @@ type Client struct {
 	// noHierarchy is set once the instance could not answer a work item
 	// hierarchy query: Parenter then reports forge.ErrUnavailable.
 	noHierarchy atomic.Bool
+	// projectPaths caches project id -> full path (see sourcePath).
+	projectPaths sync.Map
 }
 
 var _ forge.Forge = (*Client)(nil)
