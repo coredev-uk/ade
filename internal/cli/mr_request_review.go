@@ -72,11 +72,23 @@ func newMRRequestReviewCmd() *cobra.Command {
 				})
 				return out(cmd, v, "%s has no reviewers to ask again: name one with @user", c.ref)
 			}
-			if err := c.w.RequestReview(ctx, c.ref, review.Usernames(targets), again); err != nil {
-				return err
+			// The plan comes first, so it is on screen before anything is
+			// written (and, with --json, in the one document at the end).
+			plan := fmt.Sprintf("%s %s:\n%s", verb(c.dry, "asking for a review on", "ask for a review on"), c.ref, reviewPlanText(targets))
+			if !jsonOut {
+				fmt.Fprintln(cmd.OutOrStdout(), plan)
 			}
-			head := verb(c.dry, "asked for a review on", "ask for a review on")
-			return out(cmd, v, "%s %s:\n%s", head, c.ref, reviewPlanText(targets))
+			if err := c.w.RequestReview(ctx, c.ref, review.Usernames(targets), again); err != nil {
+				return requestReviewError(c.ref, err)
+			}
+			switch {
+			case jsonOut:
+				return printJSON(cmd.OutOrStdout(), v)
+			case c.dry:
+				return nil
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "asked for a review on %s\n", c.ref)
+			return err
 		},
 	}
 	cmd.Flags().BoolVar(&again, "again", false, "also ask every current reviewer to review again")
@@ -97,4 +109,14 @@ func reviewTargetLine(t review.ReviewTarget) string {
 		return "@" + t.Username + "  not a reviewer yet: added"
 	}
 	return "@" + t.Username + "  " + strings.ReplaceAll(t.Was, "_", " ") + ": asked again"
+}
+
+// requestReviewError names the MR when only part of a request landed; the
+// error itself says which users were asked and which were not.
+func requestReviewError(ref forge.Ref, err error) error {
+	var pe *forge.PartialReviewError
+	if errors.As(err, &pe) {
+		return fmt.Errorf("%s: %w", ref, err)
+	}
+	return err
 }

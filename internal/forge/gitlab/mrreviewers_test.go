@@ -129,3 +129,23 @@ func TestRequestReviewRefusals(t *testing.T) {
 		}
 	})
 }
+
+// A refused re-request does not hide the others, and the error says which
+// users landed and which did not.
+func TestRequestReviewPartial(t *testing.T) {
+	forEachTier(t, func(t *testing.T, _ fake.Tier, c *gitlab.Client, srv *fake.Server) {
+		ref := mrRef(apiProj, 1)
+		srv.AddUser("reviewer-sam", "Sam Second")
+		srv.FailRereview("refused", "reviewer-rae")
+		err := c.RequestReview(context.Background(), ref, []string{"reviewer-sam", "reviewer-rae"})
+		var pe *forge.PartialReviewError
+		if !errors.As(err, &pe) || !slices.Equal(pe.Asked, []string{"reviewer-sam"}) || !slices.Equal(pe.Failed, []string{"reviewer-rae"}) {
+			t.Fatalf("err = %v, want a partial error: asked sam, failed rae", err)
+		}
+		// Nothing landed at all: a plain error, not a partial one.
+		err = c.RequestReview(context.Background(), ref, []string{"reviewer-rae"})
+		if err == nil || errors.As(err, &pe) && len(pe.Asked) > 0 {
+			t.Errorf("err = %v, want a plain failure", err)
+		}
+	})
+}

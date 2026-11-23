@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -98,5 +99,30 @@ func TestRequestReviewOnADriverWithoutReviewersIsAnError(t *testing.T) {
 	}
 	if _, err := a.Reviewers(context.Background(), mr); err == nil {
 		t.Fatal("Reviewers on a driver without them was not an error")
+	}
+}
+
+type partialWriter struct{ forge.MRWriter }
+
+func (partialWriter) Reviewers(context.Context, forge.Ref) ([]forge.Reviewer, error) { return nil, nil }
+
+func (partialWriter) RequestReview(context.Context, forge.Ref, []string) error {
+	return &forge.PartialReviewError{Asked: []string{"sam"}, Failed: []string{"rae"}, Err: errors.New("refused")}
+}
+
+func TestPartialRequestReviewAuditsBothParts(t *testing.T) {
+	log, err := audit.Open(t.TempDir(), "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mr := forge.Ref{Project: "grp/api", IID: 2, Kind: forge.KindMR}
+	err = Audited(partialWriter{}, log, false).RequestReview(context.Background(), mr, []string{"sam", "rae"}, false)
+	var pe *forge.PartialReviewError
+	if !errors.As(err, &pe) {
+		t.Fatalf("err = %v, want the partial error", err)
+	}
+	es, _ := log.Query(audit.Filter{Action: "forge.mr.request_review"})
+	if len(es) != 2 || es[0].Outcome != "ok" || es[1].Outcome != "error" || es[1].Error == "" {
+		t.Fatalf("audit = %+v", es)
 	}
 }

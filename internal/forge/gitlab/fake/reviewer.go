@@ -97,6 +97,29 @@ func (s *Server) mrReviewers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+func init() {
+	registerRoutes(func(s *Server, mux *http.ServeMux) { mux.HandleFunc("GET /api/v4/users", s.listUsers) })
+}
+
+// rereviewFailure is the message mergeRequestReviewerRereview answers with
+// for the users FailRereview named.
+type rereviewFailure struct {
+	msg   string
+	users []string
+}
+
+func (s *Server) rereviewFailure() *rereviewFailure {
+	return s.ext("rereview", func() any { return &rereviewFailure{} }).(*rereviewFailure)
+}
+
+// FailRereview makes mergeRequestReviewerRereview answer msg as a payload
+// error for these users, as GitLab does when it refuses the request.
+func (s *Server) FailRereview(msg string, users ...string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	*s.rereviewFailure() = rereviewFailure{msg: msg, users: users}
+}
+
 // ReviewerState is username's verdict on the MR: "unreviewed" for a reviewer
 // who has not reviewed, "" for someone who is not a reviewer.
 func (s *Server) ReviewerState(ref forge.Ref, username string) (string, error) {
@@ -192,6 +215,10 @@ func (s *Server) reviewerRereviewMutation(w http.ResponseWriter, vars map[string
 	i := slices.IndexFunc(m.Reviewers, func(u *user) bool { return u.ID == id })
 	if i < 0 {
 		reply([]string{"User is not a reviewer of this merge request"}, nil)
+		return
+	}
+	if f := s.rereviewFailure(); slices.Contains(f.users, m.Reviewers[i].Username) {
+		reply([]string{f.msg}, nil)
 		return
 	}
 	delete(m.ReviewState, m.Reviewers[i].Username)

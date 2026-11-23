@@ -99,20 +99,34 @@ func (c *Client) RequestReview(ctx context.Context, ref forge.Ref, usernames []s
 		}
 		seen[u.ID] = true
 	}
+	var landed, failed []string
+	var errs []error
 	if len(fresh) > 0 {
 		for _, u := range fresh {
 			set = append(set, u.ID)
 		}
 		if err := c.send(ctx, http.MethodPut, mrPath(ref), map[string][]int64{"reviewer_ids": set}, nil); err != nil {
-			return err
+			return err // nothing landed
+		}
+		for _, u := range fresh {
+			landed = append(landed, u.Username)
 		}
 	}
+	// Every re-request is tried: one that fails must not hide the others.
 	for _, u := range again {
 		if err := c.rereview(ctx, ref, u); err != nil {
-			return err
+			failed, errs = append(failed, u.Username), append(errs, err)
+			continue
 		}
+		landed = append(landed, u.Username)
 	}
-	return nil
+	switch {
+	case len(errs) == 0:
+		return nil
+	case len(landed) == 0:
+		return errors.Join(errs...)
+	}
+	return &forge.PartialReviewError{Asked: landed, Failed: failed, Err: errors.Join(errs...)}
 }
 
 // rereview asks a reviewer again through the mutation. An instance without it

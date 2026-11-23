@@ -609,7 +609,7 @@ func (m *model) onWritten(d *mrData, msg mrResultMsg) tea.Cmd {
 	}
 	if msg.err != nil {
 		m.emit(d, kind+".failed", events.Error, fmt.Sprintf("%s failed on %s", capitalize(msg.verb), d.ref), msg.err.Error())
-		if msg.what == "merge" || msg.what == "submit" {
+		if msg.what == "merge" || msg.what == "submit" || msg.what == "request_review" {
 			return tea.Batch(m.mrRefetch(d, relMR|relThreads), m.reloadHistory()) // the forge may have moved under us
 		}
 		return m.reloadHistory()

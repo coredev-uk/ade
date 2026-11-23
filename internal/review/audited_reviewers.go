@@ -2,10 +2,12 @@ package review
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 
+	"github.com/coredev-uk/ade/internal/audit"
 	"github.com/coredev-uk/ade/internal/forge"
 )
 
@@ -102,9 +104,38 @@ func (a *AuditedWriter) RequestReview(ctx context.Context, mr forge.Ref, users [
 	if !ok {
 		return errNoReviewers(mr)
 	}
-	return a.do("forge.mr.request_review", mr.String(), "", map[string]any{"users": users, "again": again}, func() error {
-		return rv.RequestReview(ctx, mr, users)
-	})
+	var err error
+	if !a.dry {
+		err = rv.RequestReview(ctx, mr, users)
+	}
+	// A request that only partly landed leaves two entries: the users asked
+	// (ok) and the users that were not (the error).
+	var pe *forge.PartialReviewError
+	if errors.As(err, &pe) {
+		a.auditRequest(mr, pe.Asked, again, nil)
+		a.auditRequest(mr, pe.Failed, again, err)
+		return err
+	}
+	a.auditRequest(mr, users, again, err)
+	return err
+}
+
+// auditRequest records one forge.mr.request_review entry, as do does.
+func (a *AuditedWriter) auditRequest(mr forge.Ref, users []string, again bool, err error) {
+	if a.log == nil {
+		return
+	}
+	e := audit.Entry{
+		Action: "forge.mr.request_review", Item: mr.String(),
+		Params: map[string]any{"users": users, "again": again}, DryRun: a.dry,
+	}
+	switch {
+	case err != nil:
+		e.Outcome, e.Error = "error", err.Error()
+	case a.dry:
+		e.Outcome = "skipped"
+	}
+	_ = a.log.Append(e) // never mask the forge result with an audit failure
 }
 
 func errNoReviewers(mr forge.Ref) error {

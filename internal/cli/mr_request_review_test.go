@@ -95,3 +95,43 @@ func TestMRRequestReviewRefusals(t *testing.T) {
 		t.Errorf("merged MR: %v", err)
 	}
 }
+
+// One user is added and the other cannot be asked again: the plan was on
+// screen before the write, the error says which part landed, and both parts
+// are audited.
+func TestMRRequestReviewPartialSuccess(t *testing.T) {
+	e := newCLIEnv(t)
+	r := ref(rateMR)
+	e.srv.AddUser("reviewer-sam", "Sam Second")
+	e.srv.FailRereview("the reviewer cannot be asked now", "reviewer-rae")
+	out, err := e.mr("request-review", rateMR, "@reviewer-sam", "@reviewer-rae")
+	if err == nil {
+		t.Fatalf("a partly failed request exited zero:\n%s", out)
+	}
+	for _, want := range []string{"only partly landed", "asked @reviewer-sam", "could not ask @reviewer-rae", "the reviewer cannot be asked now"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error lacks %q: %v", want, err)
+		}
+	}
+	for _, want := range []string{"asking for a review on", "@reviewer-sam  not a reviewer yet: added", "@reviewer-rae"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the plan was not printed before the write; output lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "asked for a review on") {
+		t.Errorf("success line printed after a failure:\n%s", out)
+	}
+	if names, _ := e.srv.MRReviewers(r); !slices.Equal(names, []string{"reviewer-rae", "reviewer-sam"}) {
+		t.Errorf("the part that could land did not: %v", names)
+	}
+	es := e.audited("forge.mr.request_review")
+	if len(es) != 2 || es[0].Outcome != "ok" || es[1].Outcome != "error" {
+		t.Fatalf("audit = %+v, want the landed part (ok) and the failed part (error)", es)
+	}
+	if u, _ := es[0].Params["users"].([]any); len(u) != 1 || u[0] != "reviewer-sam" {
+		t.Errorf("landed users = %v", es[0].Params["users"])
+	}
+	if u, _ := es[1].Params["users"].([]any); len(u) != 1 || u[0] != "reviewer-rae" || !strings.Contains(es[1].Error, "cannot be asked now") {
+		t.Errorf("failed entry = %+v", es[1])
+	}
+}

@@ -41,6 +41,7 @@ mutation ReviewerRereview($projectPath: ID!, $iid: String!, $userId: UserID!) {
 - An instance whose schema lacks the mutation answers a GraphQL validation error; ADE reports "this instance cannot re-request a review" (`forge.ErrUnavailable`) and has written nothing for that user. It does not fall back to the quick action, which would post a note.
 - A user who is not a reviewer of the MR gets an entry in `errors` `[INFERENCE: wording not documented]`. ADE only sends the mutation for users it saw in the MR's reviewer set.
 - The mutation is a write: it goes out with the write token.
+- ADE tries every re-request even when one fails, so a refusal for one reviewer does not hide the others; with some already landed (new users added, other reviewers asked) it reports a partial result naming both groups.
 
 ## Sources
 

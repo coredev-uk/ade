@@ -136,3 +136,32 @@ func TestRequestReviewIsInTheHelpAndFooter(t *testing.T) {
 		t.Fatal("the palette entry did not open the dialog")
 	}
 }
+
+// A request that only partly lands says which part did, and the page reads
+// the MR again so the reviewer that was added shows.
+func TestRequestReviewPartialLanding(t *testing.T) {
+	e := newMREnv(t, fake.Free)
+	ref := mrRef("api", 1)
+	e.srv.AddUser("reviewer-sam", "Sam Second")
+	e.srv.FailRereview("refused", "reviewer-rae")
+	e.open(ref.String())
+	e.press("v")
+	e.typ("@reviewer-sam")
+	e.press("enter")
+	var detail string
+	for _, ev := range e.drainEvents() {
+		if ev.Kind == "mr.request_review.failed" {
+			detail = ev.Detail
+		}
+	}
+	if !strings.Contains(detail, "asked @reviewer-sam") || !strings.Contains(detail, "could not ask @reviewer-rae") {
+		t.Errorf("failure detail = %q", detail)
+	}
+	if names, _ := e.srv.MRReviewers(ref); !slices.Equal(names, []string{"reviewer-rae", "reviewer-sam"}) {
+		t.Errorf("reviewers = %v", names)
+	}
+	e.want("reviewer-sam")
+	if es := e.audited("forge.mr.request_review"); len(es) != 2 {
+		t.Errorf("audit = %+v, want both parts", es)
+	}
+}
