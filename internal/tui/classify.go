@@ -53,10 +53,18 @@ type classifyDialog struct {
 	pf  *ai.Preflight // what the AI call would cost, for clAsk
 
 	labels []clLabel
+	// manual marks labels that are known values to pick from by hand, none
+	// suggested (and so none ticked).
+	manual bool
 	cur    int
 	added  []string
 	warn   string
 	err    error
+	// noAI is set once the suggestion is made by keywords, though a model was
+	// set up: the call failed (aiErr says how) or the pre-flight was declined
+	// (aiErr nil).
+	noAI  bool
+	aiErr error
 	// failedAt is the stage that failed: it words the cause, since the raw
 	// error is for the audit log, not for the dialog.
 	failedAt clStage
@@ -133,13 +141,13 @@ func (m model) openClassify() (model, tea.Cmd) {
 func (m model) classifyCmd(d *classifyDialog, assume bool) tea.Cmd {
 	ctx, a := m.ctx, m.app
 	forgeName := d.res.Manifest.Forge
-	in := d.in
+	in, noAI := d.in, d.noAI
 	return func() tea.Msg {
 		svc, err := ai.NewService(a)
 		if err != nil {
 			return clSuggestedMsg{d: d, err: err}
 		}
-		cr, err := svc.Classify(ctx, forgeName, in, ai.ClassifyOpts{Assume: assume})
+		cr, err := svc.Classify(ctx, forgeName, in, ai.ClassifyOpts{Assume: assume, NoAI: noAI})
 		var nc *ai.ErrNeedsConfirm
 		if errors.As(err, &nc) {
 			return clSuggestedMsg{d: d, pf: &nc.Preflight}
@@ -171,12 +179,24 @@ func (m model) classifyUpdate(msg tea.Msg) (model, tea.Cmd, bool) {
 		switch {
 		case msg.pf != nil:
 			d.stage, d.pf = clAsk, msg.pf
+		case msg.err != nil && m.aiOn() && !d.noAI && !errors.Is(msg.err, ai.ErrNothingToClassify):
+			// The model failed (the call audited its own failure): the keyword
+			// suggestion and the weight need no model, so show those.
+			d.noAI, d.aiErr = true, msg.err
+			return m, m.classifyCmd(d, false), true
 		case msg.err != nil:
 			d.stage, d.err, d.failedAt = clFailed, msg.err, clThinking
 		default:
 			d.cr, d.stage = msg.cr, clSuggest
 			for _, l := range msg.cr.Suggestion.Labels {
 				d.labels = append(d.labels, clLabel{name: l, on: true})
+			}
+			if len(d.labels) == 0 {
+				// Nothing fits: the team's known labels, unticked, to pick by hand.
+				for _, l := range ai.PickableLabels(d.in) {
+					d.labels = append(d.labels, clLabel{name: l})
+				}
+				d.manual = len(d.labels) > 0
 			}
 		}
 		return m, nil, true
@@ -247,7 +267,11 @@ func (m model) classifyKey(ks string) (model, tea.Cmd) {
 		case "y", "enter":
 			d.stage, d.pf = clThinking, nil
 			return m, m.classifyCmd(d, true)
-		case "esc", "q", "n":
+		case "k", "n":
+			// Declined: keywords and the weight need no model and cost nothing.
+			d.stage, d.pf, d.noAI = clThinking, nil, true
+			return m, m.classifyCmd(d, false)
+		case "esc", "q":
 			m.cl = nil
 		}
 	case clDone, clFailed:
@@ -265,6 +289,9 @@ func (m model) classifyKey(ks string) (model, tea.Cmd) {
 func (m model) classifyApply(d *classifyDialog, add []string) tea.Cmd {
 	ctx, a := m.ctx, m.app
 	w, ref, source := d.res.Forge, d.ref, d.cr.Suggestion.Source
+	if d.manual {
+		source = "manual" // picked by hand from the known labels: no suggestion made them
+	}
 	return func() tea.Msg {
 		return clAppliedMsg{d: d, err: ai.ApplyLabels(ctx, w, a.Audit, ref, add, source)}
 	}
@@ -293,21 +320,8 @@ func (m model) classifyOverlay(w, h int) string {
 		l = append(l, stFaint.Render(g.Sync+" "+m.classifyWhat()+m.g.Ell))
 		hint = keys("esc", "cancel")
 	case clAsk:
-		l = append(l, stWarn.Render(g.Warn+" this asks the model first"))
-		for _, ln := range packFields(m.g, strings.Split(m.g.T(d.pf.Describe()), m.g.T(" · ")), g.sep(), "  ", inner) {
-			l = append(l, stFaint.Render(ln))
-		}
-		for _, c := range d.pf.Confirm {
-			for i, ln := range wrap(c, inner-2) {
-				if i == 0 {
-					ln = g.Warn + " " + ln
-				} else {
-					ln = "  " + ln
-				}
-				l = append(l, stWarn.Render(ln))
-			}
-		}
-		hint = keys("y", "send", "esc", "cancel")
+		l = append(l, m.preflightLines(d.pf, inner)...)
+		hint = keys("y", "send", "n", "use keywords instead", "esc", "cancel")
 	case clSuggest:
 		l = append(l, m.classifySuggestView(d, inner)...)
 		hint = keys("space", "tick", "enter", "add labels", "esc", "close")
@@ -341,6 +355,27 @@ func (m model) classifyOverlay(w, h int) string {
 	}
 	l = append(l, "", hint)
 	return m.dialog(m.g.T("Classify · ")+d.ref.String(), l, dw)
+}
+
+// preflightLines is the "this asks the model first" block of a call that
+// waits for a yes: what it would cost and why it needs asking.
+func (m model) preflightLines(pf *ai.Preflight, inner int) []string {
+	g := m.g
+	l := []string{stWarn.Render(g.Warn + " this asks the model first")}
+	for _, ln := range packFields(g, strings.Split(g.T(pf.Describe()), g.T(" · ")), g.sep(), "  ", inner) {
+		l = append(l, stFaint.Render(ln))
+	}
+	for _, c := range pf.Confirm {
+		for i, ln := range wrap(c, inner-2) {
+			if i == 0 {
+				ln = g.Warn + " " + ln
+			} else {
+				ln = "  " + ln
+			}
+			l = append(l, stWarn.Render(ln))
+		}
+	}
+	return l
 }
 
 // classifyFailure words a failed dialog as "cause · what to do". A failed
@@ -403,7 +438,7 @@ func packFields(g glyphs, fields []string, sep, indent string, w int) []string {
 
 // classifyWhat says how the suggestion is being made.
 func (m model) classifyWhat() string {
-	if m.cl != nil && m.cl.res != nil && m.app != nil && m.app.Config.AI.Mode != "off" && m.app.Config.AI.Profile != "" {
+	if m.cl != nil && m.cl.res != nil && !m.cl.noAI && m.aiOn() {
 		return "asking the model"
 	}
 	return "matching keywords"
@@ -413,6 +448,9 @@ func (m model) classifySuggestView(d *classifyDialog, inner int) []string {
 	g := m.g
 	s := d.cr.Suggestion
 	how := m.g.T("keywords · AI is off or not configured · no cost")
+	if d.noAI {
+		how = m.g.T("keywords · without a model · no cost")
+	}
 	if s.Source == ai.SourceAI {
 		how = "AI"
 		if r := d.cr.Run; r != nil {
@@ -429,9 +467,16 @@ func (m model) classifySuggestView(d *classifyDialog, inner int) []string {
 	}
 	miss := d.in.Missing()
 	l := []string{}
+	if d.aiErr != nil {
+		cause := ai.Human(d.aiErr)
+		l = append(l, stWarn.Render(ansi.Wrap(g.Warn+" the model could not answer: "+cause, inner, "")), "")
+	}
 	if len(miss) > 0 {
 		l = append(l, section("Suggested labels", how, inner, g))
-		if len(d.labels) == 0 {
+		switch {
+		case d.manual:
+			l = append(l, stFaint.Render("no label fits "+strings.Join(miss, " and ")+" confidently; tick one to add it by hand"))
+		case len(d.labels) == 0:
 			l = append(l, stFaint.Render("no label fits "+strings.Join(miss, " and ")+" confidently; add one by hand"))
 		}
 	}

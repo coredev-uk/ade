@@ -50,7 +50,7 @@ func (m model) render() string {
 		layers = append(layers, lipgloss.NewLayer(fit(m.g, d, dw, h-2)).X(w-dw).Y(1).Z(1))
 	}
 	mrDialog := m.mr != nil && (m.mr.modal != nil || m.help)
-	if ts := m.nc.toastStack(m.g, toastWidth(w)); ts != "" && !m.nc.open && !m.help && m.agt == nil && m.ait == nil && m.sw == nil && m.cl == nil && m.nt == nil && m.ne == nil && m.wt == nil && m.sm == nil && m.cm == nil && m.hs.pal == nil && !mrDialog { // a dialog owns the screen: toasts must not cover its keys
+	if ts := m.nc.toastStack(m.g, toastWidth(w)); ts != "" && !m.nc.open && !m.help && m.agt == nil && m.ait == nil && m.sw == nil && m.cl == nil && m.nt == nil && m.ne == nil && m.wt == nil && m.sm == nil && m.cm == nil && m.hs.pal == nil && m.ag.pf == nil && !mrDialog { // a dialog owns the screen: toasts must not cover its keys
 		layers = append(layers, lipgloss.NewLayer(ts).X(w-lipgloss.Width(ts)-1).Y(max(1, h-1-lipgloss.Height(ts))).Z(3))
 	}
 	switch {
@@ -61,7 +61,7 @@ func (m model) render() string {
 		if narrow {
 			hw = w
 		}
-		d := helpView(hw, h, m.g)
+		d := helpView(hw, h, m.g, m.aiOn())
 		top := max(0, (h-2-lipgloss.Height(d))/2)
 		layers = append(layers, blankFieldLayer(m.g, strings.Repeat("\n", top)+d, w, h))
 	}
@@ -93,6 +93,9 @@ func (m model) render() string {
 	}
 	if l := m.aiTextOverlayLayer(w, h); l != nil {
 		layers = append(layers, l)
+	}
+	if o := m.agileAskOverlay(w); o != "" {
+		layers = append(layers, blankFieldLayer(m.g, o, w, h))
 	}
 	if l := m.commentsOverlayLayer(w, h); l != nil {
 		layers = append(layers, l)
@@ -178,7 +181,7 @@ func (m model) footer(w int) string {
 	switch {
 	case m.ne != nil:
 		return m.noteEditFooter(w)
-	case m.hs.pal != nil, m.sm != nil, m.nt != nil, m.wt != nil, m.cl != nil, m.ait != nil, m.cm != nil:
+	case m.hs.pal != nil, m.sm != nil, m.nt != nil, m.wt != nil, m.cl != nil, m.ait != nil, m.cm != nil, m.ag.pf != nil:
 		return "" // the dialog carries its own key row
 	case m.agt != nil:
 		return " " + keys("esc", "back/close", "ctrl+c", "quit") + stFaint.Render("   the agent dialog has its own keys")
@@ -549,7 +552,25 @@ type helpGroup struct {
 // helpGroups lists every Home and Worktrees key. full gives each key its own
 // row; the tight form pairs related keys so the dialog still fits a short
 // terminal.
-func helpGroups(full bool) []helpGroup {
+func helpGroups(full, aiOn bool) []helpGroup {
+	groups := helpGroupsAll(full)
+	if aiOn {
+		return groups
+	}
+	// Without AI the keys that only drive a model are not listed.
+	for gi := range groups {
+		rows := groups[gi].rows[:0:0]
+		for _, r := range groups[gi].rows {
+			if r[0] != "R" {
+				rows = append(rows, r)
+			}
+		}
+		groups[gi].rows = rows
+	}
+	return groups
+}
+
+func helpGroupsAll(full bool) []helpGroup {
 	if !full {
 		return []helpGroup{
 			{"Move", [][2]string{
@@ -625,11 +646,11 @@ func helpGroups(full bool) []helpGroup {
 	}
 }
 
-func helpView(w, h int, g glyphs) string {
+func helpView(w, h int, g glyphs, aiOn bool) string {
 	render := func(full bool) []string {
 		inner := w - 4
 		l := []string{stBold.Render("Keys")}
-		for _, grp := range helpGroups(full) {
+		for _, grp := range helpGroups(full, aiOn) {
 			l = append(l, section(grp.title, "", inner, g))
 			for _, r := range grp.rows {
 				desc := ansi.Wrap(r[1], max(10, inner-9), " ")

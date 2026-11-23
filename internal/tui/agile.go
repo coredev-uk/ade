@@ -48,7 +48,10 @@ type agileUI struct {
 
 	loading   bool
 	narrating bool
-	scroll    int
+	// pf is the narrative's pre-flight while it waits for a yes (inline y/n
+	// dialog, like the other AI surfaces); nothing was sent.
+	pf     *ai.Preflight
+	scroll int
 }
 
 // agileMsg is implemented by the messages the pages exchange with Update.
@@ -189,6 +192,10 @@ func (m model) agileUpdate(msg agileMsg) (tea.Model, tea.Cmd) {
 // agileKey handles a key while an agile page is open. ok is false for keys
 // the global handler should take (quit, help, notifications, refresh).
 func (m model) agileKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
+	if m.ag.pf != nil && k.String() != "ctrl+c" {
+		next, cmd := m.agileAskKey(k.String())
+		return next, cmd, true
+	}
 	switch ks := k.String(); ks {
 	case "esc":
 		if m.help {
@@ -235,7 +242,7 @@ func (m model) agileKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		next, cmd := m.copyAgile()
 		return next, cmd, true
 	case "n":
-		next, cmd := m.narrate()
+		next, cmd := m.narrate(false)
 		return next, cmd, true
 	case ">", "M", "J", "K":
 		if m.ag.kind != agileReview {
@@ -396,9 +403,10 @@ func fmtSpan(g glyphs, start, due string) string {
 }
 
 // narrate asks the AI service for the open report's narrative. The call is
-// cached by content (a repeat costs $0), audited and capped; with ai.mode off
-// or a needed confirmation it only says so, since a key press cannot confirm.
-func (m model) narrate() (model, tea.Cmd) {
+// cached by content (a repeat costs $0), audited and capped. With AI
+// unavailable it says why; when the pre-flight needs a yes it asks inline
+// (agileAskKey), and assume answers that.
+func (m model) narrate(assume bool) (model, tea.Cmd) {
 	if m.ag.narrating {
 		return m, nil
 	}
@@ -414,6 +422,10 @@ func (m model) narrate() (model, tea.Cmd) {
 	default:
 		return m, nil
 	}
+	if ok, why := m.aiAvail(); !ok {
+		m.pushAISkipped("no AI narrative: " + why)
+		return m, nil
+	}
 	m.ag.narrating = true
 	kind, ctx, a := m.ag.kind, m.ctx, m.app
 	return m, func() tea.Msg {
@@ -422,7 +434,7 @@ func (m model) narrate() (model, tea.Cmd) {
 			return narrativeMsg{kind: kind, err: err}
 		}
 		svc.SprintStart = budget.SprintStart(a)
-		n := &agile.AINarrator{Svc: svc}
+		n := &agile.AINarrator{Svc: svc, Tune: func(j *ai.Job) { j.Assume = assume }}
 		msg := narrativeMsg{kind: kind}
 		if st != nil {
 			var s agile.Standup
@@ -446,10 +458,10 @@ func (m model) narrateAuto() (model, tea.Cmd) {
 	if a == nil || m.ag.kind != agileReview {
 		return m, nil
 	}
-	if cfg := a.Config; cfg.AI.Mode == "off" || len(cfg.AI.Profiles) == 0 {
+	if !m.aiOn() {
 		return m, nil
 	}
-	next, cmd := m.narrate()
+	next, cmd := m.narrate(false)
 	if cmd == nil {
 		return next, nil
 	}
@@ -474,22 +486,12 @@ func (m model) narrativeDone(msg narrativeMsg) (tea.Model, tea.Cmd) {
 	if msg.auto && msg.err != nil {
 		return m, nil // nobody asked: say nothing
 	}
+	if nc := new(*ai.ErrNeedsConfirm); errors.As(msg.err, nc) {
+		m.ag.pf = &(*nc).Preflight // asked inline: agileAskKey answers it
+		return m, nil
+	}
 	if msg.err != nil {
-		text, subject := "no AI narrative: "+msg.err.Error(), ""
-		if errors.As(msg.err, new(*ai.ErrNeedsConfirm)) {
-			text = "AI narrative needs confirmation"
-			subject = "run: ade standup --ai --yes"
-			if msg.review != nil {
-				subject = "run: ade sprint review --ai --yes"
-				if msg.review.Mine {
-					subject = "run: ade sprint review --mine --ai --yes"
-				}
-			}
-		}
-		e := events.New("ui.ai_skipped", events.Warn, text)
-		e.Subject = subject
-		e.Transient = true
-		m.nc.push(e)
+		m.pushAISkipped("no AI narrative: " + ai.Human(msg.err))
 		return m, nil
 	}
 	if msg.standup != nil && m.ag.standup != nil && m.ag.standup.Date == msg.standup.Date {
@@ -509,4 +511,39 @@ func (m model) narrativeDone(msg narrativeMsg) (tea.Model, tea.Cmd) {
 	e.Transient = true
 	m.nc.push(e)
 	return m, nil
+}
+
+// pushAISkipped toasts why an AI step was left out.
+func (m *model) pushAISkipped(text string) {
+	e := events.New("ui.ai_skipped", events.Warn, text)
+	e.Transient = true
+	m.nc.push(e)
+}
+
+// agileAskKey answers the narrative's pre-flight: y sends the call, anything
+// that closes the dialog sends nothing and leaves the report as it is.
+func (m model) agileAskKey(ks string) (model, tea.Cmd) {
+	switch ks {
+	case "y", "enter":
+		m.ag.pf = nil
+		return m.narrate(true)
+	case "n", "esc", "q":
+		m.ag.pf = nil
+	}
+	return m, nil
+}
+
+// agileAskOverlay is the narrative's pre-flight dialog.
+func (m model) agileAskOverlay(w int) string {
+	if m.ag.pf == nil {
+		return ""
+	}
+	dw := min(w, 100)
+	l := m.preflightLines(m.ag.pf, dw-4)
+	l = append(l, "", keys("y", "send", "esc", "cancel"))
+	title := "AI narrative · standup"
+	if m.ag.kind == agileReview {
+		title = "AI narrative · sprint retro"
+	}
+	return m.dialog(m.g.T(title), l, dw)
 }

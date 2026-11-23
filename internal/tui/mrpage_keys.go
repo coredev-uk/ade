@@ -73,6 +73,9 @@ func (m *model) mrKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 			return nil, true
 		}
 	}
+	if m.aiKeyUnavailable(ks) {
+		return nil, true
+	}
 	if p.data == nil {
 		return m.overviewKey(ks), true
 	}
@@ -164,6 +167,37 @@ func moveKey(ks string) (int, bool) {
 		return -10, true
 	}
 	return 0, false
+}
+
+// aiKeyUnavailable is true for an AI key pressed while AI cannot be used: the
+// page hides these keys, so the press says why once instead of doing nothing.
+func (m *model) aiKeyUnavailable(ks string) bool {
+	p := m.mr
+	if p.data == nil {
+		return false
+	}
+	switch ks {
+	case "A", "B":
+	case "s", "d":
+		if p.tab != tabOverview && p.tab != tabThreads {
+			return false
+		}
+	case "t":
+		if p.tab != tabCI {
+			return false
+		}
+	default:
+		return false
+	}
+	ok, why := m.aiAvail()
+	if ok {
+		return false
+	}
+	if !p.aiToldOff {
+		p.aiToldOff = true
+		m.notice(events.Info, "No AI on this page: "+why)
+	}
+	return true
 }
 
 func (m *model) overviewKey(ks string) tea.Cmd {

@@ -31,11 +31,16 @@ const (
 	aiTextStandIn                   // a stand-in description for an empty one
 )
 
-func (k aiTextKind) title() string {
-	if k == aiTextStandIn {
+// title names the dialog; a digest is only an "AI digest" when a model can
+// write it, otherwise it lists the new comments.
+func (k aiTextKind) title(aiOn bool) string {
+	switch {
+	case k == aiTextStandIn:
 		return "AI stand-in description"
+	case aiOn:
+		return "AI digest"
 	}
-	return "AI digest"
+	return "New comments"
 }
 
 // aiTextSection is the answer for one issue or MR of the item.
@@ -58,6 +63,9 @@ type aiTextDialog struct {
 	pf       *ai.Preflight // the next ref's call waits for a yes
 	busy     bool
 	scroll   int
+	// noAI lists the comments as they are, without a model: asked for at the
+	// pre-flight prompt ("n"), so the sections still to do skip the call.
+	noAI bool
 	// notice is shown instead of sections when nothing is asked.
 	notice string
 }
@@ -88,13 +96,11 @@ func (m model) openAIText(kind aiTextKind) (model, tea.Cmd) {
 	case aiTextDigest:
 		d.refs = digestRefs(it)
 	case aiTextStandIn:
-		switch {
-		case !m.aiOn():
-			d.notice = "AI is off or has no profile (ai.mode, ai.profile): a stand-in needs a model. Nothing was sent."
+		if ok, why := m.aiAvail(); !ok {
+			d.notice = "A stand-in needs a model: " + why + ". Nothing was sent."
 			return m, nil
-		default:
-			d.refs = standInRefs(it)
 		}
+		d.refs = standInRefs(it)
 		if len(d.refs) == 0 {
 			d.notice = "Every issue of this item has a description: no stand-in needed. Nothing was sent."
 			return m, nil
@@ -148,11 +154,11 @@ func (m model) aiTextCmd(d *aiTextDialog, assume bool) tea.Cmd {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	kind, key, refs, from := d.kind, d.forgeKey, d.refs, d.next
+	kind, key, refs, from, noAI := d.kind, d.forgeKey, d.refs, d.next, d.noAI
 	return func() tea.Msg {
 		svc, err := ai.NewService(a)
 		if err != nil {
-			return aiTextMsg{d: d, secs: []aiTextSection{{warn: err.Error()}}, next: len(refs)}
+			return aiTextMsg{d: d, secs: []aiTextSection{{warn: aiCause(err)}}, next: len(refs)}
 		}
 		svc.SprintStart = budget.SprintStart(a)
 		var out []aiTextSection
@@ -160,7 +166,7 @@ func (m model) aiTextCmd(d *aiTextDialog, assume bool) tea.Cmd {
 			ref := refs[i]
 			be, err := mm.backend(ctx, ref, key)
 			if err != nil {
-				out = append(out, aiTextSection{ref: ref, warn: err.Error()})
+				out = append(out, aiTextSection{ref: ref, warn: oneLine(err.Error())})
 				continue
 			}
 			var sec aiTextSection
@@ -168,7 +174,7 @@ func (m model) aiTextCmd(d *aiTextDialog, assume bool) tea.Cmd {
 			if kind == aiTextStandIn {
 				sec, pf = standInSection(ctx, svc, be, key, ref, assume && i == from)
 			} else {
-				sec, pf = digestSection(ctx, svc, be, key, ref, assume && i == from)
+				sec, pf = digestSection(ctx, svc, be, key, ref, assume && i == from, noAI)
 			}
 			if pf != nil {
 				return aiTextMsg{d: d, secs: out, next: i, pf: pf}
@@ -179,7 +185,11 @@ func (m model) aiTextCmd(d *aiTextDialog, assume bool) tea.Cmd {
 	}
 }
 
-func digestSection(ctx context.Context, svc *ai.Service, be forge.Forge, key string, ref forge.Ref, assume bool) (aiTextSection, *ai.Preflight) {
+// digestSection answers one ref. When the model cannot (the call fails), the
+// new comments are listed as they are and the marker moves, as `ade ai digest
+// --no-ai` does: a failing model never hides the comments. noAI skips the
+// call from the start.
+func digestSection(ctx context.Context, svc *ai.Service, be forge.Forge, key string, ref forge.Ref, assume, noAI bool) (aiTextSection, *ai.Preflight) {
 	sec := aiTextSection{ref: ref}
 	in, err := ai.LoadDigestInput(ctx, be, ref)
 	sec.title = in.Title
@@ -187,10 +197,16 @@ func digestSection(ctx context.Context, svc *ai.Service, be forge.Forge, key str
 		sec.warn = aiCause(err)
 		return sec, nil
 	}
-	res, err := svc.Digest(ctx, key, in, ai.DigestOpts{Assume: assume})
+	res, err := svc.Digest(ctx, key, in, ai.DigestOpts{Assume: assume, NoAI: noAI})
 	var nc *ai.ErrNeedsConfirm
 	if errors.As(err, &nc) {
 		return sec, &nc.Preflight
+	}
+	var failed error
+	if err != nil && res.Text == "" && res.Count > 0 && !noAI {
+		// The call failed (it audited itself): list the comments instead.
+		failed = err
+		res, err = svc.Digest(ctx, key, in, ai.DigestOpts{NoAI: true})
 	}
 	since := "(first look)"
 	if !res.Since.IsZero() {
@@ -205,6 +221,8 @@ func digestSection(ctx context.Context, svc *ai.Service, be forge.Forge, key str
 		sec.guide = fmt.Sprintf("%s %s", countWord(res.Count, "new comment"), since)
 		sec.text = res.Text
 		switch {
+		case res.Source == ai.DigestSourceList && failed != nil:
+			sec.note = "listed as they are: the model could not answer (" + ai.Human(failed) + ")"
 		case res.Source == ai.DigestSourceList:
 			sec.note = "listed as they are: no model was asked"
 		case res.Run != nil && res.Run.CacheHit:
@@ -291,7 +309,13 @@ func (m model) aiTextKey(ks string) (model, tea.Cmd) {
 		case "y", "enter":
 			d.pf, d.busy = nil, true
 			return m, m.aiTextCmd(d, true)
-		case "n", "esc", "q":
+		case "n":
+			if d.kind == aiTextDigest { // declined: the comments, listed as they are
+				d.pf, d.noAI, d.busy = nil, true, true
+				return m, m.aiTextCmd(d, false)
+			}
+			m.ait = nil
+		case "esc", "q":
 			m.ait = nil
 		}
 		return m, nil
@@ -323,7 +347,7 @@ func (m model) aiTextOverlay(w, h int) string {
 	dw := min(w, 100)
 	inner := dw - 4
 	g := m.g
-	title := d.kind.title() + g.T(" · ") + d.item.Ref.String()
+	title := d.kind.title(m.aiOn()) + g.T(" · ") + d.item.Ref.String()
 	var l []string
 	l = append(l, stFaint.Render(ansi.Truncate(d.item.Issue.Title, inner, g.Ell)), "")
 	var body []string
@@ -350,6 +374,9 @@ func (m model) aiTextOverlay(w, h int) string {
 		why := strings.Join(d.pf.Confirm, "; ")
 		l = append(l, "", stWarn.Render(ansi.Wrap(g.Warn+" "+why, inner, "")), stFaint.Render(ansi.Truncate(g.T(d.pf.Describe()), inner, g.Ell)))
 		hint = keys("y", "ask", "n", "close")
+		if d.kind == aiTextDigest {
+			hint = keys("y", "ask the model", "n", "list the comments instead", "esc", "close")
+		}
 	}
 	l = append(l, "", hint)
 	return m.dialog(title, l, dw)

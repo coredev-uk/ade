@@ -210,7 +210,26 @@ func TestAIOffHidesEveryAIAffordance(t *testing.T) {
 		}
 		e.open(mrRef("api", 2).String())
 		e.wantNot("Summary", "asking the model", "agent review pass", "A agent review")
-		e.press("d", "s", "A")
+		// The description is the page's text, not an AI summary's.
+		for _, ln := range strings.Split(strings.TrimSpace(e.m.mr.data.mr.Description), "\n") {
+			if ln = strings.TrimSpace(strings.Trim(ln, "#*- ")); ln != "" {
+				e.want(ln)
+				break
+			}
+		}
+		e.press("d", "s", "A", "B")
+		told := 0
+		for _, tst := range e.m.nc.toasts {
+			if strings.HasPrefix(tst.ev.Title, "No AI on this page: ") {
+				told++
+				if mode == "off" && !strings.Contains(tst.ev.Title, "ai.mode") || mode == "noprofile" && !strings.Contains(tst.ev.Title, "ai.profile") {
+					t.Errorf("mode %s: the toast gives no reason: %q", mode, tst.ev.Title)
+				}
+			}
+		}
+		if told != 1 {
+			t.Errorf("mode %s: %d toasts for four AI keys, want one", mode, told)
+		}
 		e.press("2", "d", "s", "A")
 		e.press("4")
 		e.wantNot("agent review running", "A runs", "A agent review")

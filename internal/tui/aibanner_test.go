@@ -219,3 +219,45 @@ func TestMRSummaryWaitsOnAStoppedDay(t *testing.T) {
 		t.Fatalf("s did not ask: %v", got)
 	}
 }
+
+// The chip tells "not set up" (nothing), "off", a profile problem and a call
+// that failed apart, without making a call.
+func TestChipNamesTheAIStateWithoutACall(t *testing.T) {
+	h, log := bannerHome(t)
+	a := h.m.app
+	for _, tc := range []struct {
+		name string
+		set  func()
+		want string
+	}{
+		{"off", func() { a.Config.AI.Mode = "off" }, "AI off"},
+		{"no profile configured", func() { a.Config.AI.Mode, a.Config.AI.Profiles, a.Config.AI.Profile = "ask", nil, "" }, ""},
+		{"none selected", func() {
+			a.Config.AI.Profiles, a.Config.AI.Profile = map[string]config.AIProfile{"gw": {Driver: "openai-compat"}}, ""
+		}, "AI no profile selected"},
+		{"selected one missing", func() { a.Config.AI.Profile = "gone" }, "AI profile not defined"},
+		{"usable", func() { a.Config.AI.Profile = "gw" }, "AI $0.00 / $2.00 day"},
+	} {
+		tc.set()
+		h.reloadChip()
+		if got := strings.TrimSpace(ansi.Strip(h.m.chip.render(h.m.g))); !strings.HasSuffix(got, tc.want) {
+			t.Errorf("%s: chip = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+
+	// A model call that failed today (not a budget stop) is a warning until a
+	// later call succeeds.
+	ai := func(outcome string) audit.Entry {
+		return audit.Entry{Action: "ai.summarize", Item: "x", Outcome: outcome, AI: &audit.AIInfo{Profile: "gw", Model: "m", CostSource: "reported"}}
+	}
+	log.Append(ai("error"))
+	h.reloadChip()
+	if got := ansi.Strip(h.m.chip.render(h.m.g)); got != "▲ AI $0.00 / $2.00 day last call failed" {
+		t.Errorf("after a failed call: %q", got)
+	}
+	log.Append(ai("ok"))
+	h.reloadChip()
+	if got := ansi.Strip(h.m.chip.render(h.m.g)); got != "AI $0.00 / $2.00 day" {
+		t.Errorf("after a call that worked: %q", got)
+	}
+}
