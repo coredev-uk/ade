@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -428,7 +429,9 @@ func (m model) sectionGuide(res *forgesync.Result, sec homeSection, rows []homeR
 	}
 }
 
-// shortRefOf finds the row's project tracker to shorten its ref.
+// shortRefOf finds the row's project tracker to shorten its ref. A repo name
+// longer than maxRepoCells is abbreviated (homeRepo), so one long name does
+// not widen the ref column of every row and crowd out the titles.
 func (m model) shortRefOf(r homeRow) string {
 	tracker := ""
 	for i := range m.results {
@@ -436,10 +439,42 @@ func (m model) shortRefOf(r homeRow) string {
 			tracker = m.results[i].Tracker
 		}
 	}
+	var ref forge.Ref
 	if r.mr != nil {
-		return shortRef(r.mr.Ref, tracker)
+		ref = r.mr.Ref
+	} else {
+		ref = r.item.Ref
 	}
-	return shortRef(r.item.Ref, tracker)
+	s := shortRef(ref, tracker)
+	i := strings.IndexAny(s, "#!&")
+	if ref.Project == tracker || i <= 0 {
+		return s
+	}
+	return homeRepo(s[:i], m.g.Ell) + s[i:]
+}
+
+// maxRepoCells is the widest repo name the Home ref column shows in full.
+const maxRepoCells = 10
+
+// homeRepo is name when it fits maxRepoCells, else its acronym: the first
+// letter of each word split at '-', '_' and '.' (payments-service → ps). A
+// name of one word is cut to maxRepoCells, ending in ell.
+func homeRepo(name, ell string) string {
+	if utf8.RuneCountInString(name) <= maxRepoCells {
+		return name
+	}
+	words := strings.FieldsFunc(name, func(r rune) bool { return r == '-' || r == '_' || r == '.' })
+	if len(words) > 1 {
+		var b strings.Builder
+		for _, w := range words {
+			r, _ := utf8.DecodeRuneInString(w)
+			b.WriteRune(r)
+		}
+		if a := b.String(); utf8.RuneCountInString(a) <= maxRepoCells {
+			return a
+		}
+	}
+	return string([]rune(name)[:maxRepoCells-utf8.RuneCountInString(ell)]) + ell
 }
 
 func (m model) homeRowLine(r homeRow, lay homeLayout, selected bool, titleW int, marks map[string]int) string {

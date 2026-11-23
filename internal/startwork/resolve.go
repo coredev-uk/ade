@@ -89,7 +89,7 @@ func Resolve(ctx context.Context, a *app.App, open OpenFunc, arg string) (*Resol
 		}
 	}
 	for _, c := range cands {
-		if c.m.Tracker.Project != ref.Project {
+		if !forge.SameProject(c.m.Tracker.Project, ref.Project) {
 			continue
 		}
 		return resolveIn(ctx, a, open, c.m, ref)

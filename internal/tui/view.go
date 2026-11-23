@@ -32,8 +32,11 @@ func (m model) render() string {
 	if m.w == 0 {
 		w, h = 120, 36 // before the first WindowSizeMsg
 	}
-	body := m.body(w, h-3)
-	screen := m.header(w) + "\n\n" + body + "\n" + m.footer(w)
+	top, bodyH := m.header(w)+"\n", h-3
+	if b := m.homeBanner(w); b != "" { // AI paused for the budget (aibanner.go)
+		top, bodyH = top+b+"\n", bodyH-1
+	}
+	screen := top + "\n" + m.body(w, bodyH) + "\n" + m.footer(w)
 	layers := []*lipgloss.Layer{lipgloss.NewLayer(fit(m.g, screen, w, h))}
 	// On narrow terminals overlays take the full width: a partly covered list
 	// would show cut-off fragments of the rows beneath.

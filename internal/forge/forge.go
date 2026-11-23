@@ -58,6 +58,11 @@ func (r Ref) String() string {
 
 func (r Ref) IsZero() bool { return r.Project == "" && r.IID == 0 }
 
+// SameProject reports whether two project paths name the same project. GitLab
+// and GitHub paths are case-insensitive, and the forge answers with its own
+// spelling ("Acme/Tracker") whatever a manifest wrote ("acme/tracker").
+func SameProject(a, b string) bool { return strings.EqualFold(a, b) }
+
 // ParseRef parses "group/proj#12" or "group/proj!3".
 func ParseRef(s string) (Ref, error) {
 	i := strings.LastIndexAny(s, "#!")

@@ -1,89 +1,76 @@
 name: Release
 
-# A release is cut when main's CHANGELOG.md starts with a version heading
-# (`## v1.2.3`, renamed from `## Unreleased` in the PR) whose tag does not exist
-# yet, once CI has passed on that commit. Pushing a `v*` tag by hand still
-# releases that tag. Release notes are the version's CHANGELOG section.
+# release-please (release-please-config.json) keeps one release PR open on
+# main: the next version, from the Conventional Commit titles merged since the
+# last tag, and its CHANGELOG.md section. Merging that PR releases it: once CI
+# passes on main, release-please tags the merge commit and creates the GitHub
+# release with that section as its notes, and goreleaser uploads the archives
+# to it.
 #
-# The tag is pushed with GITHUB_TOKEN, which starts no other workflow run, so
-# goreleaser runs here in the same job rather than from a tag-push trigger.
+# A tag or release made with GITHUB_TOKEN starts no other workflow run, so
+# goreleaser runs here rather than from a tag-push trigger. With GITHUB_TOKEN
+# the release PR also gets no CI run of its own (it only touches
+# CHANGELOG.md and .release-please-manifest.json); a RELEASE_PLEASE_TOKEN
+# secret (a fine-grained token or app token with contents and pull-requests
+# write) makes it get one.
+#
+# A release whose goreleaser step failed: run this workflow by hand with its
+# tag (Actions → Release → Run workflow); that only runs goreleaser.
 
 on:
   workflow_run:
     workflows: [CI]
     types: [completed]
     branches: [main]
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "An existing release tag to build and upload the archives for (v1.2.3)"
+        required: true
 
 permissions:
   contents: write
+  issues: write
+  pull-requests: write
 
 concurrency:
   group: release
   cancel-in-progress: false
 
 jobs:
-  goreleaser:
+  release-please:
     if: >-
-      github.event_name == 'push' ||
-      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  goreleaser:
+    needs: release-please
+    if: >-
+      always() &&
+      (github.event_name == 'workflow_dispatch' || needs.release-please.outputs.release_created == 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+          ref: ${{ github.event.inputs.tag || needs.release-please.outputs.tag_name }}
           fetch-depth: 0
 
-      - name: Decide the version
-        id: version
-        run: |
-          if [ "$GITHUB_EVENT_NAME" = push ]; then
-            tag=$GITHUB_REF_NAME
-          else
-            tag=$(scripts/release/changelog.sh version)
-            if [ -z "$tag" ]; then
-              echo "CHANGELOG.md starts with no version heading: nothing to release"
-              exit 0
-            fi
-            if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-              echo "$tag is already tagged: nothing to release"
-              exit 0
-            fi
-          fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-
-      - name: Tag the commit
-        if: steps.version.outputs.tag != '' && github.event_name == 'workflow_run'
-        env:
-          TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "$TAG" -m "$TAG"
-          git push origin "refs/tags/$TAG"
-
-      - name: Release notes from CHANGELOG.md
-        if: steps.version.outputs.tag != ''
-        env:
-          TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          if scripts/release/changelog.sh notes "$TAG" > "$RUNNER_TEMP/notes.md"; then
-            echo "NOTES=$RUNNER_TEMP/notes.md" >> "$GITHUB_ENV"
-          else
-            echo "no '## $TAG' section in CHANGELOG.md: goreleaser writes the notes from the commits"
-          fi
-
       - uses: DeterminateSystems/nix-installer-action@main
-        if: steps.version.outputs.tag != ''
       - uses: DeterminateSystems/magic-nix-cache-action@main
-        if: steps.version.outputs.tag != ''
 
-      - name: Release
-        if: steps.version.outputs.tag != ''
-        run: |
-          set --
-          if [ -n "${NOTES:-}" ]; then set -- --release-notes "$NOTES"; fi
-          nix develop -c goreleaser release --clean "$@"
+      - name: Build and upload the archives
+        run: nix develop -c goreleaser release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

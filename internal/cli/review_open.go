@@ -65,7 +65,7 @@ func findReviewRepo(ctx context.Context, a *app.App, ref forge.Ref) (reviewTarge
 			continue // an unreachable manifest must not block the others
 		}
 		for _, name := range slices.Sorted(mapKeys(m.Repos)) {
-			if m.Repos[name].Path == ref.Project {
+			if forge.SameProject(m.Repos[name].Path, ref.Project) {
 				hits = append(hits, reviewTarget{manifest: m, repo: name, bare: filepath.Join(a.Root, m.Name, name, ".bare")})
 			}
 		}
