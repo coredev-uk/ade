@@ -837,20 +837,17 @@ func TestHistoryOfItemWithoutMR(t *testing.T) {
 	e.want("[History]", "No recorded actions")
 }
 
-// With a commit prefix the squash option shows the squash commit line and the
-// squash carries the prefixed message; a merge commit is never prefixed.
-func TestMergeCommitPrefix(t *testing.T) {
-	e := newMREnv(t, fake.Free)
-	ref := mrRef("api", 1)
-	title := "GL-1 Rate-limit the export endpoint"
-
+// seedMergeManifest caches a work item owning ref and a project manifest whose
+// [conventions] table is conv.
+func seedMergeManifest(t *testing.T, e *mrEnv, ref forge.Ref, conv string) {
+	t.Helper()
 	root := t.TempDir()
 	e.m.app.Root = root
 	dir := filepath.Join(root, "demo")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	man := "name = \"demo\"\nforge = \"f\"\n[conventions]\ncommit_prefix = \"GL-{parent}\"\n"
+	man := "name = \"demo\"\nforge = \"f\"\n[conventions]\n" + conv
 	if err := os.WriteFile(filepath.Join(dir, ".project.toml"), []byte("source = \"t\"\nmanifest = '''\n"+man+"'''\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -865,6 +862,15 @@ func TestMergeCommitPrefix(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+}
+
+// With a commit prefix the squash option shows the squash commit line and the
+// squash carries the prefixed message; a merge commit is never prefixed.
+func TestMergeCommitPrefix(t *testing.T) {
+	e := newMREnv(t, fake.Free)
+	ref := mrRef("api", 1)
+	title := "GL-1 Rate-limit the export endpoint"
+	seedMergeManifest(t, e, ref, "commit_prefix = \"GL-{parent}\"\n")
 
 	e.open(ref.String())
 	e.press("m")
@@ -880,6 +886,41 @@ func TestMergeCommitPrefix(t *testing.T) {
 	}
 	if params["squash_commit_message"] != title {
 		t.Errorf("squash_commit_message = %v", params["squash_commit_message"])
+	}
+}
+
+// Without squash a set commit prefix is not sent, and the dialog says so.
+func TestMergeDialogWarnsThePrefixNeedsSquash(t *testing.T) {
+	e := newMREnv(t, fake.Free)
+	ref := mrRef("api", 1)
+	seedMergeManifest(t, e, ref, "commit_prefix = \"GL-{parent}\"\n")
+	e.open(ref.String())
+	e.press("m")
+	e.want("[ ] s  squash commits", "no squash: the commit prefix is not used")
+	e.wantNot("squash commit: ")
+	e.press("s")
+	e.want("squash commit: GL-1 ")
+	e.wantNot("no squash")
+}
+
+// conventions.mr.squash and remove_source_branch seed the dialog's toggles; s
+// and d still flip them.
+func TestMergeDialogSeededFromTheManifest(t *testing.T) {
+	e := newMREnv(t, fake.Free)
+	ref := mrRef("api", 1)
+	seedMergeManifest(t, e, ref, "[conventions.mr]\nsquash = true\nremove_source_branch = true\n")
+	e.open(ref.String())
+	e.press("m")
+	e.want("[x] s  squash commits", "[x] d  delete the source branch", "[ ] w  merge when")
+	e.press("s")
+	e.want("[ ] s  squash commits", "[x] d  delete the source branch")
+	e.press("s", "enter")
+	merged, _, params, err := e.srv.MergeState(ref)
+	if err != nil || !merged {
+		t.Fatalf("merged = %v, %v", merged, err)
+	}
+	if params["squash"] != true || params["should_remove_source_branch"] != true {
+		t.Errorf("merge parameters = %v", params)
 	}
 }
 
