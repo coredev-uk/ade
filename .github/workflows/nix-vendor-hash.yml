@@ -1,0 +1,149 @@
+# Keeps vendorHash in flake.nix in step with go.mod and go.sum. Every module change moves
+# that hash, and a dependency bump (Renovate's, Dependabot's, `go get`) changes go.sum but
+# not the hash, so `nix build` and `nix flake check` then fail with a hash mismatch. This
+# builds the Go modules (`.#default.goModules`) whenever a pull request touches go.mod,
+# go.sum or the flake, and on every push to main. On a mismatch in a pull request from this
+# repository it commits the hash Nix reported to the branch as bot-cecil; the push is made
+# with the App's token, so the checks run again on it (GITHUB_TOKEN pushes start no workflow).
+#
+# Two jobs, so the branch's code never runs next to a secret:
+#   check  evaluates and builds the branch's Go modules with a read-only token and no secrets,
+#          and hands the hash Nix got over as an output;
+#   fix    has bot-cecil's token, runs no repository code, and writes only a hash of the
+#          expected shape into the vendorHash line.
+# A fork's pull request only gets the failing check, with the hash to use in its error.
+#
+# Maintainer setup: the `nix-vendor-hash` environment, with required reviewers. bot-cecil's token
+# comes from octo-sts (octo-sts.hera.ac, which holds the App's key) under
+# .github/chainguard/nix-vendor-hash.sts.yaml, with Contents write on this repository. A pull
+# request's ref can't satisfy a branch policy, so the fix job waits for a reviewer's approval
+# instead; no copy of the key exists in this repository for a branch's workflow to read.
+name: Nix vendorHash
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: nix-vendor-hash-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: Nix vendorHash
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: read # the pull request's changed files
+    outputs:
+      hash: ${{ steps.build.outputs.hash }}
+    steps:
+      # Always reports, so it can be a required check: a pull request that touches neither
+      # the modules nor the flake passes without building.
+      - name: Did the Go modules or the flake change?
+        id: want
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if [ -z "$PR" ] ||
+            gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename' |
+            grep -qxE 'go\.(mod|sum)|flake\.(nix|lock)'; then
+            echo "run=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "run=false" >>"$GITHUB_OUTPUT"
+            echo "::notice::no Go module or flake change"
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.want.outputs.run == 'true'
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
+        if: steps.want.outputs.run == 'true'
+
+      - name: Build the Go modules
+        id: build
+        if: steps.want.outputs.run == 'true'
+        run: |
+          if nix build --no-link -L .#default.goModules 2>&1 | tee "$RUNNER_TEMP/build.log"; then
+            echo "vendorHash is current"
+            exit 0
+          fi
+          got=$(sed -n 's|^ *got: *\(sha256-[A-Za-z0-9+/]\{43\}=\)$|\1|p' "$RUNNER_TEMP/build.log" | head -1)
+          if [ -z "$got" ]; then
+            echo "::error::the Go modules failed to build for another reason than vendorHash"
+            exit 1
+          fi
+          echo "hash=$got" >>"$GITHUB_OUTPUT"
+          echo "::error file=flake.nix::vendorHash is out of date; it should be $got"
+          exit 1
+
+  fix:
+    name: Commit the vendorHash to the pull request
+    needs: check
+    if: >-
+      ${{ always() && needs.check.result == 'failure' && needs.check.outputs.hash != ''
+      && github.event_name == 'pull_request'
+      && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: nix-vendor-hash # required reviewers: the App's key is not for a branch's run alone
+    permissions:
+      id-token: write # the OIDC token octo-sts exchanges for bot-cecil's
+    steps:
+      - name: Generate bot-cecil token
+        id: app-token
+        uses: octo-sts/action@f603d3be9d8dd9871a265776e625a27b00effe05 # v1.1.1
+        with:
+          domain: octo-sts.hera.ac
+          scope: ${{ github.repository }}
+          identity: nix-vendor-hash
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: true
+
+      - name: Commit and push
+        env:
+          HASH: ${{ needs.check.outputs.hash }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          MESSAGE: "fix(nix): update vendorHash"
+        run: |
+          # The branch must still be where the hash was computed; a newer push has its own run.
+          if [ "$(git rev-parse HEAD)" != "$HEAD_SHA" ]; then
+            echo "::notice::the branch moved since the check; its own run checks it"
+            exit 0
+          fi
+          # Once only: if Nix still disagrees after this job's own commit, a person has to look.
+          if [ "$(git log -1 --format=%s)" = "$MESSAGE" ]; then
+            echo "::error::vendorHash is still wrong after the last update; it should be $HASH"
+            exit 1
+          fi
+          [[ $HASH =~ ^sha256-[A-Za-z0-9+/]{43}=$ ]] || {
+            echo "::error::unexpected hash: $HASH"
+            exit 1
+          }
+          sed -i -E "s|^( +vendorHash = \")sha256-[A-Za-z0-9+/]{43}=(\";)$|\1$HASH\2|" flake.nix
+          if git diff --quiet; then
+            echo "::error::no vendorHash line to update in flake.nix"
+            exit 1
+          fi
+          git config user.name "bot-cecil[bot]"
+          git config user.email "bot-cecil[bot]@users.noreply.github.com"
+          git commit -qam "$MESSAGE"
+          git push origin "HEAD:refs/heads/$HEAD_REF"
