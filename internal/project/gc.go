@@ -2,7 +2,9 @@ package project
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -31,6 +33,12 @@ type Tree struct {
 	// Pushed says what proves the commits are on the remote ("HEAD is
 	// api!7's head", "on origin/develop"); set when no guard failed.
 	Pushed string `json:"pushed,omitempty"`
+
+	// merged holds the head commit of each merged MR of the branch (the sha is
+	// empty when the forge gave none), and forgeName the manifest's forge: what
+	// DeleteBranch needs to tell a squash-merged branch from an unmerged one.
+	merged    []mrHead
+	forgeName string
 }
 
 // Removable reports whether every guard passed.
@@ -127,6 +135,7 @@ func (s *Service) judge(ctx context.Context, t *Tree, ts TreeStatus, m *config.M
 		return
 	}
 	var heads []mrHead
+	t.forgeName = m.Forge
 	repo, ok := m.Repos[t.Repo]
 	switch {
 	case !ok:
@@ -136,7 +145,7 @@ func (s *Service) judge(ctx context.Context, t *Tree, ts TreeStatus, m *config.M
 	default:
 		mrs, err := lookup(ctx, m, repo.Path, ts.Branch)
 		var why string
-		why, heads = mrVerdict(t, mrs, err)
+		why, heads, t.merged = mrVerdict(t, mrs, err)
 		if why != "" {
 			t.Keep = append(t.Keep, why)
 		}
@@ -154,21 +163,23 @@ func (s *Service) judge(ctx context.Context, t *Tree, ts TreeStatus, m *config.M
 }
 
 // mrVerdict says why the MRs of a branch keep the worktree ("" when they
-// allow removal) and returns the head commits they ended at.
-func mrVerdict(t *Tree, mrs []forge.MR, err error) (why string, heads []mrHead) {
+// allow removal) and returns the head commits they ended at, and which of
+// them are the merged MRs'.
+func mrVerdict(t *Tree, mrs []forge.MR, err error) (why string, heads, merged []mrHead) {
 	if err != nil {
-		return "could not read merge requests: " + err.Error(), nil
+		return "could not read merge requests: " + err.Error(), nil, nil
 	}
 	if len(mrs) == 0 {
-		return "no merge request for this branch", nil
+		return "no merge request for this branch", nil, nil
 	}
 	var done *forge.MR
 	for i, mr := range mrs {
 		switch mr.State {
 		case "opened":
-			return fmt.Sprintf("merge request %s is still open", mrLabel(mr.Ref)), nil
+			return fmt.Sprintf("merge request %s is still open", mrLabel(mr.Ref)), nil, nil
 		case "merged":
 			done = &mrs[i]
+			merged = append(merged, mrHead{sha: mr.HeadSHA, mr: mrLabel(mr.Ref)})
 		case "closed":
 			if done == nil {
 				done = &mrs[i]
@@ -179,10 +190,10 @@ func mrVerdict(t *Tree, mrs []forge.MR, err error) (why string, heads []mrHead) 
 		}
 	}
 	if done == nil {
-		return "merge request state unknown", nil
+		return "merge request state unknown", nil, nil
 	}
 	t.MR = fmt.Sprintf("%s %s", mrLabel(done.Ref), done.State)
-	return "", heads
+	return "", heads, merged
 }
 
 func mrLabel(ref forge.Ref) string {
@@ -285,14 +296,15 @@ func commits(n int) string {
 }
 
 // RemoveTree removes a worktree that Trees judged removable, and its local
-// branch when git agrees the branch is merged. It never forces: git itself
-// refuses a worktree that turned dirty since the judgement. branchKept is true
-// when the branch had to stay.
-func (s *Service) RemoveTree(ctx context.Context, t Tree) (branchKept bool, err error) {
+// branch when it is merged: git sees it so (`git branch -d`), or its commits
+// all sit in the head of a merged MR (a squash merge: `git branch -D`). It
+// never forces the worktree: git itself refuses one that turned dirty since the
+// judgement. The BranchFate says what became of the branch.
+func (s *Service) RemoveTree(ctx context.Context, t Tree) (BranchFate, error) {
 	if err := s.RemoveWorktree(ctx, t); err != nil {
-		return false, err
+		return BranchFate{}, err
 	}
-	return !s.DeleteBranch(ctx, t), nil
+	return s.DeleteBranch(ctx, t), nil
 }
 
 // RemoveWorktree removes the worktree of a tree that Trees judged removable,
@@ -316,18 +328,115 @@ func (s *Service) RemoveWorktree(ctx context.Context, t Tree) error {
 	return nil
 }
 
-// DeleteBranch deletes the local branch of a removed tree with `git branch
-// -d`, which refuses a branch that is not merged. It reports whether the
-// branch is gone.
-func (s *Service) DeleteBranch(ctx context.Context, t Tree) bool {
+// BranchFate is what became of the local branch of a removed tree.
+type BranchFate struct {
+	Deleted bool
+	// Forced means `git branch -D` deleted it, because git did not see it
+	// merged but its commits are in a merged MR's head.
+	Forced bool
+	// Why says what the decision rests on: the proof for a forced deletion, the
+	// reason a branch stayed.
+	Why string
+}
+
+// DeleteBranch deletes the local branch of a removed tree. `git branch -d`
+// goes first, as it deletes whatever git sees as merged. When it refuses, the
+// branch is still deleted with `git branch -D` if PlanBranch finds all its
+// commits in a merged MR's head (a squash merge leaves nothing for git to
+// see); otherwise it stays, with the reason.
+func (s *Service) DeleteBranch(ctx context.Context, t Tree) BranchFate {
 	var c git.Client
-	_, err := c.Run(ctx, t.Bare, "branch", "-d", t.Branch)
-	if err == nil {
-		s.audit(audit.Entry{
-			Action: "git.branch.delete", Target: t.Branch, Project: t.Project,
-			Params: map[string]any{"repo": t.Repo, "mr": t.MR}, Outcome: "ok",
-		})
+	e := audit.Entry{
+		Action: "git.branch.delete", Target: t.Branch, Project: t.Project,
+		Params: map[string]any{"repo": t.Repo, "mr": t.MR},
 	}
+	if _, err := c.Run(ctx, t.Bare, "branch", "-d", t.Branch); err == nil {
+		e.Outcome = "ok"
+		s.audit(e)
+		return BranchFate{Deleted: true}
+	}
+	contained, why := s.PlanBranch(ctx, t)
+	if !contained {
+		return BranchFate{Why: why}
+	}
+	e.Params["forced"] = true
+	e.Params["why"] = why
+	_, err := c.Run(ctx, t.Bare, "branch", "-D", t.Branch)
+	e.Outcome = outcome(err)
+	if err != nil {
+		e.Error = err.Error()
+		s.audit(e)
+		return BranchFate{Why: err.Error()}
+	}
+	s.audit(e)
+	return BranchFate{Deleted: true, Forced: true, Why: why}
+}
+
+// PlanBranch reports whether the tree's local branch may be deleted with `git
+// branch -D` although git does not see it merged: every commit on it is in the
+// head of a merged MR of the branch. The default branch never is. why gives the
+// proof, or the reason it is not. It deletes nothing; it may fetch the MR's
+// head commit when the clone lacks it.
+func (s *Service) PlanBranch(ctx context.Context, t Tree) (contained bool, why string) {
+	var c git.Client
+	def, err := c.DefaultBranch(ctx, t.Bare)
+	if err == nil && def == t.Branch {
+		return false, "it is the default branch"
+	}
+	tip, err := c.Run(ctx, t.Bare, "rev-parse", "--verify", "--quiet", "refs/heads/"+t.Branch)
+	if err != nil {
+		return false, "the branch does not exist"
+	}
+	tip = strings.TrimSpace(tip)
+	if len(t.merged) == 0 {
+		return false, "its merge request was closed, not merged"
+	}
+	var unknown, absent []string
+	for _, h := range t.merged {
+		switch h.sha {
+		case "":
+			unknown = append(unknown, h.mr)
+			continue
+		case tip:
+			return true, "its tip is " + h.mr + "'s head"
+		}
+		if !s.haveCommit(ctx, t, h.sha) {
+			absent = append(absent, h.mr)
+			continue
+		}
+		_, err := c.Run(ctx, t.Bare, "merge-base", "--is-ancestor", tip, h.sha)
+		var ee *exec.ExitError
+		switch {
+		case err == nil:
+			return true, "its commits are all in " + h.mr + "'s head"
+		case !errors.As(err, &ee) || ee.ExitCode() != 1:
+			return false, "cannot compare it with " + h.mr + ": " + err.Error()
+		}
+	}
+	switch {
+	case len(absent) > 0:
+		return false, absent[0] + "'s head commit is not in the clone and could not be fetched"
+	case len(unknown) > 0:
+		return false, "the forge gave no head commit for " + unknown[0]
+	}
+	return false, "local commits not in the merged MR " + t.merged[0].mr
+}
+
+// haveCommit reports whether the bare clone has commit sha, fetching it from
+// the remote when not.
+func (s *Service) haveCommit(ctx context.Context, t Tree, sha string) bool {
+	var c git.Client
+	if _, err := c.Run(ctx, t.Bare, "cat-file", "-e", sha+"^{commit}"); err == nil {
+		return true
+	}
+	gc, err := s.GitClient(ctx, t.forgeName, t.Bare)
+	if err != nil {
+		return false
+	}
+	if _, err := gc.Run(ctx, t.Bare, "fetch", "--quiet", "origin", sha); err != nil {
+		return false
+	}
+	_, err = c.Run(ctx, t.Bare, "cat-file", "-e", sha+"^{commit}")
 	return err == nil
 }
 

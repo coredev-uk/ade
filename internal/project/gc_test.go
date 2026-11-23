@@ -78,12 +78,12 @@ func TestGCRemovesMergedCleanPushedWorktree(t *testing.T) {
 		t.Errorf("command = %q", got)
 	}
 
-	kept, err := g.svc.RemoveTree(context.Background(), tr)
+	fate, err := g.svc.RemoveTree(context.Background(), tr)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if kept {
-		t.Error("the merged-and-pushed branch should have been deleted too")
+	if !fate.Deleted || fate.Forced {
+		t.Errorf("the merged-and-pushed branch should have been deleted with -d: %+v", fate)
 	}
 	if exists(g.tree) {
 		t.Error("worktree directory still there")
@@ -181,12 +181,119 @@ func TestGCMergedBranchDeletedOnTheRemote(t *testing.T) {
 	if !tr.Removable() {
 		t.Fatalf("tree on the MR's final head = %+v", tr)
 	}
-	kept, err := g.svc.RemoveTree(context.Background(), tr)
+	fate, err := g.svc.RemoveTree(context.Background(), tr)
 	if err != nil || exists(g.tree) {
 		t.Fatalf("remove: %v (tree exists %v)", err, exists(g.tree))
 	}
-	if !kept {
-		t.Error("git does not consider an unmerged-looking branch merged: it must stay and be reported")
+	if !fate.Deleted || !fate.Forced || !strings.Contains(fate.Why, "its tip is api!7's head") {
+		t.Errorf("git does not see the branch as merged, but its tip is the merged MR's head: %+v", fate)
+	}
+	if out := gitCmd(t, filepath.Join(g.app.Root, "demo", "api", ".bare"), "branch", "--list", "feature/x"); out != "" {
+		t.Errorf("local branch survived: %q", out)
+	}
+	audited, err := g.app.Audit.Query(audit.Filter{Action: "git.branch.delete"})
+	if err != nil || len(audited) != 1 || audited[0].Outcome != "ok" || audited[0].Params["forced"] != true {
+		t.Errorf("audit = %+v %v", audited, err)
+	}
+}
+
+// pushedBranch commits twice on the feature branch and pushes; it returns the
+// first commit (an ancestor of the tip) and the tip. The branch loses its
+// upstream, as when the forge deleted the merged branch: git then judges "merged"
+// against the default branch, which a squash merge never reaches.
+func (g *gcEnv) pushedBranch() (first, tip string) {
+	g.t.Helper()
+	gitCmd(g.t, g.tree, "commit", "--quiet", "--allow-empty", "-m", "one")
+	first = gitCmd(g.t, g.tree, "rev-parse", "HEAD")
+	gitCmd(g.t, g.tree, "commit", "--quiet", "--allow-empty", "-m", "two")
+	gitCmd(g.t, g.tree, "push", "--quiet", "origin", "feature/x")
+	gitCmd(g.t, g.tree, "branch", "--unset-upstream")
+	return first, gitCmd(g.t, g.tree, "rev-parse", "HEAD")
+}
+
+// The squash-merge decision: the branch goes with -D only when every commit on
+// it is in a merged MR's head.
+func TestGCBranchDeletionAfterASquashMerge(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name   string
+		mr     func(g *gcEnv, first, tip string) forge.MR
+		forced bool
+		why    string // the Why of the outcome
+	}{
+		{"tip is the head", func(_ *gcEnv, _, tip string) forge.MR { return mrOf("merged", tip) }, true, "its tip is api!7's head"},
+		{"tip is an ancestor of the head", func(g *gcEnv, _, _ string) forge.MR {
+			// The MR's head is a commit on top of the tip, pushed from elsewhere.
+			gitCmd(g.t, g.r.work, "fetch", "--quiet", "origin", "feature/x")
+			gitCmd(g.t, g.r.work, "checkout", "--quiet", "-B", "feature/x", "origin/feature/x")
+			gitCmd(g.t, g.r.work, "commit", "--quiet", "--allow-empty", "-m", "three")
+			gitCmd(g.t, g.r.work, "push", "--quiet", "origin", "feature/x")
+			if _, err := g.svc.Update(context.Background()); err != nil { // the head commit reaches the clone
+				g.t.Fatal(err)
+			}
+			return mrOf("merged", gitCmd(g.t, g.r.work, "rev-parse", "HEAD"))
+		}, true, "its commits are all in api!7's head"},
+		{"commits beyond the head", func(_ *gcEnv, first, _ string) forge.MR { return mrOf("merged", first) }, false, "local commits not in the merged MR api!7"},
+		{"closed, not merged", func(_ *gcEnv, _, tip string) forge.MR { return mrOf("closed", tip) }, false, "its merge request was closed, not merged"},
+		{"no head commit from the forge", func(*gcEnv, string, string) forge.MR { return mrOf("merged", "") }, false, "the forge gave no head commit for api!7"},
+		{"head commit unknown to the clone", func(*gcEnv, string, string) forge.MR {
+			return mrOf("merged", "1111111111111111111111111111111111111111")
+		}, false, "api!7's head commit is not in the clone and could not be fetched"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			g := newGCEnv(t)
+			first, tip := g.pushedBranch()
+			mr := tc.mr(g, first, tip)
+			tr := g.one(answer(mr))
+			if !tr.Removable() {
+				t.Fatalf("tree kept: %v", tr.Keep)
+			}
+			bare := filepath.Join(g.app.Root, "demo", "api", ".bare")
+			contained, why := g.svc.PlanBranch(ctx, tr)
+			if contained != tc.forced || why != tc.why {
+				t.Errorf("PlanBranch = %v, %q; want %v, %q", contained, why, tc.forced, tc.why)
+			}
+			fate, err := g.svc.RemoveTree(ctx, tr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fate.Deleted != tc.forced || fate.Forced != tc.forced || fate.Why != tc.why {
+				t.Errorf("fate = %+v; want deleted %v with %q", fate, tc.forced, tc.why)
+			}
+			if left := gitCmd(t, bare, "branch", "--list", "feature/x") != ""; left == tc.forced {
+				t.Errorf("branch present = %v after %+v", left, fate)
+			}
+		})
+	}
+}
+
+func TestGCNeverDeletesTheDefaultBranch(t *testing.T) {
+	g := newGCEnv(t)
+	tr := g.one(answer(mrOf("merged", "")))
+	tr.Branch = "main"
+	tr.merged = []mrHead{{sha: gitCmd(t, filepath.Join(g.app.Root, "demo", "api", ".bare"), "rev-parse", "main"), mr: "api!7"}}
+	if contained, why := g.svc.PlanBranch(context.Background(), tr); contained || why != "it is the default branch" {
+		t.Errorf("PlanBranch(main) = %v, %q", contained, why)
+	}
+}
+
+func TestGCKeepsABranchCheckedOutElsewhere(t *testing.T) {
+	g := newGCEnv(t)
+	_, tip := g.pushedBranch()
+	tr := g.one(answer(mrOf("merged", tip)))
+	if err := g.svc.RemoveWorktree(context.Background(), tr); err != nil {
+		t.Fatal(err)
+	}
+	bare := filepath.Join(g.app.Root, "demo", "api", ".bare")
+	other := filepath.Join(t.TempDir(), "elsewhere")
+	gitCmd(t, bare, "worktree", "add", "--quiet", other, "feature/x")
+	fate := g.svc.DeleteBranch(context.Background(), tr)
+	if fate.Deleted || !strings.Contains(fate.Why, "worktree") {
+		t.Errorf("fate = %+v; git must refuse a branch checked out in another worktree", fate)
+	}
+	if gitCmd(t, bare, "branch", "--list", "feature/x") == "" {
+		t.Error("the branch checked out elsewhere is gone")
 	}
 }
 

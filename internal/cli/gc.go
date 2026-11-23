@@ -24,10 +24,16 @@ func init() { register(newGCCmd) }
 type gcRow struct {
 	project.Tree
 	Action string `json:"action"` // remove | keep
-	// Removed and BranchKept report what a real run did.
-	Removed    bool   `json:"removed,omitempty"`
-	BranchKept bool   `json:"branch_kept,omitempty"`
-	Error      string `json:"error,omitempty"`
+	// Removed, BranchKept and BranchForced report what a real run did: the
+	// branch stayed, or went with `git branch -D` since git saw no merge but
+	// every commit is in a merged MR's head. BranchWhy gives the reason or
+	// proof; in a dry run (ade cleanup) it is the proof, and BranchForced says
+	// -D would be needed unless git sees the branch as merged by then.
+	Removed      bool   `json:"removed,omitempty"`
+	BranchKept   bool   `json:"branch_kept,omitempty"`
+	BranchForced bool   `json:"branch_forced,omitempty"`
+	BranchWhy    string `json:"branch_why,omitempty"`
+	Error        string `json:"error,omitempty"`
 }
 
 func newGCCmd() *cobra.Command {
@@ -45,9 +51,11 @@ what shows it is pushed. A branch without an upstream counts as pushed only when
 is the head commit of one of its merge requests or is on a remote branch that still
 exists after a fetch (gc fetches each such repo, with --prune, to find out). The
 baseline tree and worktrees whose branch has an open merge request or none are
-never touched.
+never touched. The local branch goes with the worktree when git sees it as merged, or
+(git branch -D) when every commit on it is in the head commit of a merged merge request,
+as after a squash merge; otherwise it stays, with the reason.
 
---dry-run only reports: it touches no worktree or branch, but still fetches. Without --yes it asks first (and refuses to run unattended).
+--dry-run only reports, including which branches it would delete and why: it touches no worktree or branch, but still fetches. Without --yes it asks first (and refuses to run unattended).
 Exits 2 when a removal failed.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -67,8 +75,18 @@ Exits 2 when a removal failed.`,
 				}
 			}
 			w := cmd.OutOrStdout()
+			if dryRun {
+				for _, i := range doomed {
+					rows[i].planBranch(cmd.Context(), ps)
+				}
+			}
 			if !jsonOut {
 				printGC(w, rows)
+				if dryRun {
+					for _, i := range doomed {
+						fmt.Fprintln(w, rows[i].planLine())
+					}
+				}
 			}
 			if !dryRun && len(doomed) > 0 {
 				ok, err := confirmGC(cmd, len(doomed), yes)
@@ -97,7 +115,7 @@ Exits 2 when a removal failed.`,
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "report what would be removed and why the rest stays; no worktree or branch is touched, but remote-tracking refs are refreshed (fetch --prune)")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "report what would be removed (branches too, and why) and why the rest stays; no worktree or branch is touched, but remote-tracking refs are refreshed (fetch --prune)")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "remove without asking")
 	cmd.Flags().StringVar(&only, "project", "", "only this project")
 	return cmd
@@ -183,15 +201,47 @@ func isDevNull(f *os.File) bool {
 // returns how many failed.
 func removeAll(ctx context.Context, ps *project.Service, rows []gcRow, idx []int) (failed int) {
 	for _, i := range idx {
-		kept, err := ps.RemoveTree(ctx, rows[i].Tree)
+		fate, err := ps.RemoveTree(ctx, rows[i].Tree)
 		if err != nil {
 			rows[i].Error = err.Error()
 			failed++
 			continue
 		}
-		rows[i].Removed, rows[i].BranchKept = true, kept
+		rows[i].setBranchFate(fate)
 	}
 	return failed
+}
+
+// setBranchFate records a removal and what became of its branch.
+func (r *gcRow) setBranchFate(f project.BranchFate) {
+	r.Removed, r.BranchKept, r.BranchForced, r.BranchWhy = true, !f.Deleted, f.Forced, f.Why
+}
+
+// planBranch fills in what a dry run says about the branch of a row to remove:
+// BranchForced when every commit on it is in a merged MR's head, so `git branch
+// -D` deletes it even if git does not see it merged; BranchWhy the proof, or why
+// it stays unless git sees it merged by then.
+func (r *gcRow) planBranch(ctx context.Context, ps *project.Service) {
+	r.BranchForced, r.BranchWhy = ps.PlanBranch(ctx, r.Tree)
+}
+
+// planLine is the dry-run sentence about a row's branch.
+func (r gcRow) planLine() string {
+	if r.BranchForced {
+		return fmt.Sprintf("would delete branch %s (git branch -D unless git sees it merged by then: %s)", r.Branch, r.BranchWhy)
+	}
+	return fmt.Sprintf("would delete branch %s only if git sees it merged (%s)", r.Branch, r.BranchWhy)
+}
+
+// branchLine says what became of a removed row's branch.
+func (r gcRow) branchLine() string {
+	switch {
+	case r.BranchKept:
+		return fmt.Sprintf("removed %s (branch %s kept: %s)", r.Label(), r.Branch, r.BranchWhy)
+	case r.BranchForced:
+		return fmt.Sprintf("removed %s, deleted branch %s with git branch -D (%s)", r.Label(), r.Branch, r.BranchWhy)
+	}
+	return fmt.Sprintf("removed %s, deleted branch %s", r.Label(), r.Branch)
 }
 
 func printRemoved(w io.Writer, rows []gcRow, idx []int) {
@@ -200,8 +250,8 @@ func printRemoved(w io.Writer, rows []gcRow, idx []int) {
 		switch {
 		case r.Error != "":
 			fmt.Fprintf(w, "failed  %s  %s\n", r.Label(), r.Error)
-		case r.BranchKept:
-			fmt.Fprintf(w, "removed %s (branch %s kept: git does not consider it merged)\n", r.Label(), r.Branch)
+		case r.BranchKept || r.BranchForced:
+			fmt.Fprintln(w, r.branchLine())
 		default:
 			fmt.Fprintf(w, "removed %s\n", r.Label())
 		}
