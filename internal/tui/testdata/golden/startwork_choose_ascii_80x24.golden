@@ -13,7 +13,6 @@
 |   * Draft MR     child, link, branch, draft MR, worktree                     |
 |   o Branch only  child, link, branch, worktree; M opens the MR later         |
 |   o Browse       worktree on the default branch; no forge write              |
-|                                                                              |
 |  Child issue -------------------------------------- conventions.child_issue  |
 |   * auto    a child when the repo is not the tracker's                       |
 |   o always  always a child issue                                             |

@@ -123,6 +123,8 @@ type pull struct {
 	BaseMoved bool           // MoveBase ran: the base branch is checked for lag (update_branch.go)
 	Updates   int            // update-branch requests accepted
 	Update    *pendingUpdate // accepted, not landed yet
+	// DescWrites counts PATCHes that rewrote the body (Description).
+	DescWrites int
 }
 
 type autoMerge struct {

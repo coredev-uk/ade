@@ -136,8 +136,12 @@ func (s *Server) updateMR(w http.ResponseWriter, r *http.Request) {
 	}
 	_, hasDesc := p["description"]
 	title := str(p, "title")
-	if title == "" && !hasDesc {
+	event := str(p, "state_event")
+	if title == "" && !hasDesc && event == "" {
 		badRequest(w, "title is empty")
+		return
+	}
+	if event != "" && !s.applyStateEvent(w, m, event) {
 		return
 	}
 	if title != "" {
@@ -541,4 +545,38 @@ func (s *Server) mrCommits(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	paged(s, w, r, out, func(o object) any { return o })
+}
+
+// applyStateEvent applies state_event=close|reopen. Closing needs an open MR
+// and reopening a closed one; a merged MR does neither (400). Reopening while
+// another MR is open for the same source and target is a 409, as on create.
+// The documented contract only names the two events; the refusals are
+// [INFERENCE] (docs/gitlab-api/workflow.md).
+func (s *Server) applyStateEvent(w http.ResponseWriter, m *mr, event string) bool {
+	switch event {
+	case "close":
+		if m.State != "opened" {
+			badRequest(w, "Cannot close a merge request that is "+m.State)
+			return false
+		}
+		m.State, m.AutoMerge = "closed", false
+	case "reopen":
+		if m.State != "closed" {
+			badRequest(w, "Cannot reopen a merge request that is "+m.State)
+			return false
+		}
+		for _, o := range s.st.mrs {
+			if o != m && o.Project == m.Project && o.State == "opened" && o.Source == m.Source && o.Target == m.Target {
+				writeJSON(w, http.StatusConflict, object{"message": []string{
+					fmt.Sprintf("Another open merge request already exists for this source branch: !%d", o.IID),
+				}})
+				return false
+			}
+		}
+		m.State = "opened"
+	default:
+		badRequest(w, "state_event does not have a valid value")
+		return false
+	}
+	return true
 }

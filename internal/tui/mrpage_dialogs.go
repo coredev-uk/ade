@@ -30,7 +30,7 @@ const (
 	modalMerge
 	modalLog
 	modalAI
-	modalDescribe // an AI-drafted MR description, editable, applied on enter
+	modalDescribe // an MR description, editable (an AI draft, or the current one for E), applied on enter
 	modalRebase   // update the source branch from the target on the forge
 )
 
@@ -81,6 +81,10 @@ type mrModal struct {
 
 	thread string // reply: the discussion
 	aiNote string // reply: set when the text is an AI draft
+	// manual marks a description written by hand (E): no model, no new draft.
+	// qaSeen is the text whose quick actions the user was already warned of.
+	manual bool
+	qaSeen string
 	aiCut  string // reply: set when the AI draft is cut short, so the user finishes it before posting
 
 	ai aiKey // modalAI: the call waiting for a yes
@@ -261,7 +265,7 @@ func (m *model) modalKey(k tea.KeyPressMsg) tea.Cmd {
 				return nil
 			}
 			p.modal = nil
-			return m.actReply(md.thread, body)
+			return m.actReply(md.thread, body, md.aiNote != "") // aiNote is set when the editor opened with an AI draft
 		}
 		md.ed.handle(k)
 	case modalComment, modalEditDraft:
@@ -435,6 +439,9 @@ func (m model) modalHint(md *mrModal) string {
 	case modalAI:
 		return keys("enter", "send", "esc", "cancel")
 	case modalDescribe:
+		if md.manual {
+			return keys("enter", "write to the MR", "alt+enter", "newline", "esc", "discard")
+		}
 		return keys("enter", "write to the MR", "alt+enter", "newline", "ctrl+r", "new draft", "esc", "discard")
 	case modalComment:
 		return keys("enter", "add draft", "tab", "severity", "alt+enter", "newline", "esc", "cancel")

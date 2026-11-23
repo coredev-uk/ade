@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/coredev-uk/ade/internal/audit"
 )
 
 // AIDir is the folder of AI output inside an item record.
@@ -77,7 +79,9 @@ func (s *Store) WriteArtifact(itemDir, name string, a Artifact) (string, error) 
 		if err != nil {
 			return "", err
 		}
-		body := strings.TrimRight(a.Body, "\n") + "\n"
+		// AI output can echo what it was given (a token in a CI log): it is
+		// masked on its way to disk like item.md and comments.json are.
+		body := audit.Redact(strings.TrimRight(a.Body, "\n")) + "\n"
 		_, werr := f.WriteString(a.frontmatter() + body)
 		if cerr := f.Close(); werr == nil {
 			werr = cerr

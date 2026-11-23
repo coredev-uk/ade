@@ -186,7 +186,9 @@ func (d Deps) profiles(ctx context.Context, now time.Time, o Options) []ProfileV
 		if w, err := d.Ledger.Spend(name, ledger.WeekStart(now, d.Loc), time.Time{}); err == nil {
 			v.WeekUSD = w
 		}
-		d.provider(ctx, name, p, &v, o)
+		if d.Cfg.AI.Mode != "off" { // off is off: no key command, no billing endpoint; the local ledger above stays
+			d.provider(ctx, name, p, &v, o)
+		}
 		out = append(out, v)
 	}
 	return out

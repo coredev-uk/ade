@@ -41,6 +41,7 @@ type startFlags struct {
 	noWorkspace bool
 	layout      string
 	dryRun      bool
+	newMR       bool
 	session     string // zellij session for the tab; verify scripts only
 	onlyChild   bool   // `ade issue child`: just the child issue and its links
 }
@@ -58,6 +59,7 @@ func (f *startFlags) bind(cmd *cobra.Command, withMode bool) {
 		fl.StringVar(&f.session, "session", "", "zellij session to open the tab in (default: ade; for tests)")
 		_ = fl.MarkHidden("session")
 	}
+	fl.BoolVar(&f.newMR, "new-mr", false, "open a new MR when the branch's latest MR is closed, instead of stopping with the command that reopens it")
 	fl.StringVar(&f.child, "child", "", "child issue: auto | always | never; default from conventions.child_issue")
 	fl.StringVar(&f.template, "template", "", "MR template name (file in .gitlab/merge_request_templates, without .md)")
 	fl.StringSliceVar(&f.strip, "strip-actions", nil, "remove quick actions from the MR body: names (assign_reviewer,label) or all when given without a value")
@@ -181,6 +183,7 @@ func (f startFlags) choices(r *startwork.Resolved) (startwork.Choices, error) {
 	if err := f.pinBranches(r.Manifest, &ch); err != nil {
 		return ch, err
 	}
+	ch.NewMR = f.newMR
 	ch.Template = f.template
 	for _, s := range f.strip {
 		if s == "all" {
