@@ -22,9 +22,10 @@ func TestDialogsOpenWhileASlowSyncRuns(t *testing.T) {
 	e.srv.SetLatency(200 * time.Millisecond)
 
 	syncDone := make(chan struct{})
+	svc := e.m.sync // the goroutine must not read e.m: the key presses below rewrite it
 	go func() {
 		defer close(syncDone)
-		_, _ = e.m.sync.Sync(context.Background())
+		_, _ = svc.Sync(context.Background())
 	}()
 	time.Sleep(100 * time.Millisecond) // the sync is under way
 	select {

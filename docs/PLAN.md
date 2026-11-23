@@ -940,7 +940,7 @@ Verification:
 - Unit tests on domain derivation (stage, court, iteration window edge cases around weekends and overlap).
 - `teatest` golden tests for pages at 80×24, 120×40, and 200×50, in dark, light, and NO_COLOR. As built: `internal/tui/testdata/golden` (Home, Home preview, every MR page tab, the Start work dialog; 80×24 and 160×45; NO_COLOR and ascii variants) and `internal/overview/testdata/golden` (the overview pane), through `internal/goldentest`; `go test ./internal/tui ./internal/overview -run TestGolden -update` rewrites them.
 - VHS tapes produce screenshots for design review.
-- `nix flake check` runs the offline test suite.
+- `nix flake check` runs the offline test suite. As built: CI also runs it under the race detector (`nix develop -c env CGO_ENABLED=1 go test -race -count=1 ./...`, the `race` job of `ci.yml`); `-race` needs cgo, so only that test run turns it on, never a build.
 
 ---
 

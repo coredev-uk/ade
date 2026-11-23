@@ -233,13 +233,15 @@ func TestAgentListMarksADeadRunFailed(t *testing.T) {
 
 func TestQuittingWaitsForAgentStepsToSettle(t *testing.T) {
 	done := make(chan struct{})
+	started := make(chan struct{})
 	release := make(chan struct{})
 	go agGo(func() tea.Msg {
+		close(started)
 		<-release
 		close(done)
 		return nil
 	})()
-	time.Sleep(50 * time.Millisecond)
+	<-started // the step is counted before it signals
 	start := time.Now()
 	go func() { time.Sleep(100 * time.Millisecond); close(release) }()
 	waitAgentSteps(5 * time.Second)

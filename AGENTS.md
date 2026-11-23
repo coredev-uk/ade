@@ -20,8 +20,9 @@ ADE is an agentic development environment for the terminal: a Bubble Tea dashboa
 
 Tools come from the flake: `nix develop -c <cmd>`, or let direnv load it (`.envrc` is `use flake`). Go, gopls, golangci-lint, gofumpt, goreleaser, vhs, jq, ripgrep and the runtime tools (git, zellij, lazygit, delta, neovim, glab, gh) are on its PATH.
 
-- CI (`.github/workflows/ci.yml`): `nix flake check` (the whole `go test ./...` in the Nix sandbox), `nix develop -c golangci-lint run ./...` (gofumpt included), `nix develop -c goreleaser check`, `nix build`.
+- CI (`.github/workflows/ci.yml`): job `check` runs `nix flake check` (the whole `go test ./...` in the Nix sandbox), `nix develop -c golangci-lint run ./...` (gofumpt included), `nix develop -c goreleaser check`, `nix build`; job `race` runs `nix develop -c env CGO_ENABLED=1 go test -race -count=1 ./...`.
 - Fast loop: `go test ./internal/<pkg>` and `go test ./internal/<pkg> -run '^TestName$'`; `go vet ./...`; `gofumpt -w <files>`.
+- Race detector: `nix develop -c env CGO_ENABLED=1 go test -race -count=1 ./...` (the dev shell sets `CGO_ENABLED=0` for the shipped binary and `-race` needs cgo, so set it for that command only). Fix a race at its root (a lock, a channel, a copy before the goroutine starts), never with a skip.
 - `vendorHash` in `flake.nix` tracks `go.mod` and `go.sum`: after a Go dependency change, `nix build .#default.goModules` fails with the hash it wants; paste that into `vendorHash`. On a pull request from this repository, `.github/workflows/nix-vendor-hash.yml` does it for you (as bot-cecil, after a reviewer approves its `nix-vendor-hash` environment).
 - Generated files:
   - JSON Schemas: `go test ./internal/config -run TestCommittedSchemasAreCurrent -update-schema` (a test fails while `docs/schema/` is stale).
@@ -63,7 +64,7 @@ Rationale: `docs/PLAN.md` §4.3, §5 and §9.
 - No telemetry. Local records stay outside repos, `0700`, never synced; AI audit events record destination host and bytes.
 - The dashboard never blocks on a sync: dialogs read their one item, sync status lives in the header, never a modal.
 - Tests are hermetic: isolated `HOME`/XDG dirs (`t.TempDir()`, `ADE_CONFIG`), no network outside `-tags live`, and time from the fake forge's clock (`srv.Now()`, `srv.Advance`) whenever forge timestamps are involved. A window relative to the wall clock (`--since 7d`) against fake data stops matching a week later.
-- Pure Go, `CGO_ENABLED=0`: no cgo dependency (SQLite is modernc).
+- Pure Go, `CGO_ENABLED=0`: no cgo dependency (SQLite is modernc). Only the race-detector test run sets `CGO_ENABLED=1`, because `-race` needs it; the binary is never built that way.
 
 ## Process
 

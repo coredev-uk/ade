@@ -28,3 +28,16 @@ jobs:
         run: nix develop -c goreleaser check
       - name: Build
         run: nix build
+
+  # The suite under the race detector. The dev shell builds with CGO_ENABLED=0
+  # (the shipped binary is static); -race needs cgo, so only this step turns it
+  # on, and `nix build` and `nix flake check` stay cgo-free.
+  race:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
+      - name: Tests (race detector)
+        run: nix develop -c env CGO_ENABLED=1 go test -race -count=1 ./...
