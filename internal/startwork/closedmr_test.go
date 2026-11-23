@@ -2,6 +2,7 @@ package startwork_test
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -75,5 +76,41 @@ func TestStartStopsAtAClosedMR(t *testing.T) {
 				t.Errorf("--new-mr result MR = %v, want a new one", mr)
 			}
 		})
+	}
+}
+
+// A closed MR of another branch of the issue does not stop the MR step of the
+// branch being worked on.
+func TestStartIgnoresAClosedMROfAnotherBranch(t *testing.T) {
+	h := newHarness(t, fake.Free)
+	ctx := context.Background()
+	branchOnly := draftApi()
+	branchOnly.Mode = startwork.ModeBranch
+	_, first, err := h.start(3, branchOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := target(t, first, "api").Child
+	c := gitlab.New(h.srv.URL, fake.Token)
+	if _, err := c.CreateBranch(ctx, apiProj, "other-attempt", "main"); err != nil {
+		t.Fatal(err)
+	}
+	other, err := c.CreateMR(ctx, forge.MRDraft{Project: apiProj, Source: "other-attempt", Target: "main", Title: "other", Description: "Closes #" + strconv.Itoa(child.IID)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.CloseMR(ctx, other.Ref); err != nil {
+		t.Fatal(err)
+	}
+	plan, _, err := h.start(3, draftApi())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := plan.Targets[0].Found
+	if f.ClosedMR != nil {
+		t.Fatalf("closed MR of branch %q stopped branch %q", f.ClosedMR.SourceBranch, f.Branch)
+	}
+	if plan.Writes() == 0 {
+		t.Errorf("the MR step should still be pending: %+v", plan.Steps)
 	}
 }

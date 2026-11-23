@@ -395,18 +395,19 @@ func (e *Env) findPinnedBranch(ctx context.Context, t Target, ch Choices, name s
 }
 
 // setMR records the MR the work continues on, or else, unless ch.NewMR, the
-// closed MR a new one would shadow.
+// latest closed MR of the same branch, which a new MR would shadow. A closed MR
+// of another branch of the issue is none of this branch's business.
 func setMR(f *Found, mrs []forge.MR, ch Choices) {
-	if f.MR = pickMR(mrs); f.MR == nil && !ch.NewMR && f.ClosedMR == nil {
-		f.ClosedMR = pickClosed(mrs)
+	if f.MR = pickMR(mrs); f.MR == nil && !ch.NewMR && f.ClosedMR == nil && f.Branch != "" {
+		f.ClosedMR = pickClosed(mrs, f.Branch)
 	}
 }
 
-// pickClosed is the most recent closed MR (the highest number).
-func pickClosed(mrs []forge.MR) *forge.MR {
+// pickClosed is the most recent closed MR (the highest number) from branch.
+func pickClosed(mrs []forge.MR, branch string) *forge.MR {
 	var best *forge.MR
 	for i := range mrs {
-		if mrs[i].State == "closed" && (best == nil || mrs[i].Ref.IID > best.Ref.IID) {
+		if mrs[i].State == "closed" && mrs[i].SourceBranch == branch && (best == nil || mrs[i].Ref.IID > best.Ref.IID) {
 			best = &mrs[i]
 		}
 	}

@@ -826,7 +826,7 @@ func mrStep(tp TargetPlan) Step {
 	if c := f.ClosedMR; c != nil {
 		return Step{
 			Kind: StepMR, Repo: tp.Target.Name, Done: true, Closed: true,
-			Text: fmt.Sprintf("closed MR exists: reopen with `ade mr reopen %s`, or pass --new-mr to open a new one", c.Ref),
+			Text: fmt.Sprintf("closed MR exists: reopen it with `ade mr reopen %s`; `ade start --new-mr` opens a new one", c.Ref),
 		}
 	}
 	kind := "MR"

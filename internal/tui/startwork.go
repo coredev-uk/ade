@@ -1339,6 +1339,8 @@ func (m model) swNote(n string, inner int) []string {
 // local git step, or something that exists already.
 func stepMark(g glyphs, s startwork.Step) string {
 	switch {
+	case s.Closed:
+		return stWarn.Render(g.Warn + " closed")
 	case s.Done:
 		return stFaint.Render(g.OK + " exists")
 	case s.Write:
