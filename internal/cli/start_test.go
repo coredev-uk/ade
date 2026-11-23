@@ -107,3 +107,36 @@ func TestStartBranchFlagErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestStartBaseFlagSetsBasesAndAddsRepos(t *testing.T) {
+	r := resolvedFor(t, config.Conventions{}, "api")
+	ch, err := startFlags{bases: []string{"api=release/1.2", "web=release/2.0"}}.choices(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(ch.Repos, []string{"api", "web"}) {
+		t.Errorf("repos = %v: want the routed repo, then web added by --base", ch.Repos)
+	}
+	if want := map[string]string{"api": "release/1.2", "web": "release/2.0"}; !maps.Equal(ch.Bases, want) {
+		t.Errorf("bases = %v, want %v", ch.Bases, want)
+	}
+}
+
+func TestStartBaseFlagErrors(t *testing.T) {
+	r := resolvedFor(t, config.Conventions{}, "api")
+	for name, tc := range map[string]struct {
+		f    startFlags
+		want string
+	}{
+		"no equals":    {startFlags{bases: []string{"api"}}, "want repo=value"},
+		"empty branch": {startFlags{bases: []string{"api="}}, "want repo=value"},
+		"unknown repo": {startFlags{bases: []string{"db=release"}}, "unknown repo"},
+		"bad name":     {startFlags{bases: []string{"api=a b"}}, "not a valid branch name"},
+		"browse":       {startFlags{mode: "browse", bases: []string{"api=release"}}, "browse"},
+	} {
+		_, err := tc.f.choices(r)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want %q", name, err, tc.want)
+		}
+	}
+}

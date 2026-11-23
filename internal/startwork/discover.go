@@ -119,6 +119,11 @@ func (e *Env) Discover(ctx context.Context, item domain.WorkItem, m *config.Mani
 
 func (e *Env) discoverTarget(ctx context.Context, item domain.WorkItem, m *config.Manifest, ch Choices, t Target) (Found, error) {
 	var f Found
+	if base := ch.Bases[t.Name]; base != "" {
+		if err := ValidBranchName(base); err != nil {
+			return f, fmt.Errorf("base: %w", err)
+		}
+	}
 	bare := e.bare(m, t.Name)
 	f.Cloned = !t.Tracker && exists(filepath.Join(bare, "HEAD"))
 	if ch.Mode == ModeBrowse {
@@ -149,6 +154,11 @@ func (e *Env) discoverTarget(ctx context.Context, item domain.WorkItem, m *confi
 	if err := e.findBranchAndMR(ctx, item, m, ch, t, work, &f); err != nil {
 		return f, err
 	}
+	if base := ch.Bases[t.Name]; base != "" && !ch.OnlyChild && (f.Branch == "" || (f.MR == nil && ch.Mode == ModeDraft)) {
+		if err := e.checkBase(ctx, t, base); err != nil {
+			return f, err
+		}
+	}
 	f.Worktree = e.treeOf(ctx, bare, f.Cloned, f.Branch)
 	f.Installed = e.installed(m, t.Name, f.Worktree)
 	if ch.Mode == ModeDraft && f.MR == nil {
@@ -158,6 +168,20 @@ func (e *Env) discoverTarget(ctx context.Context, item domain.WorkItem, m *confi
 		e.findReviewers(ctx, m, t, &f)
 	}
 	return f, nil
+}
+
+// checkBase refuses a base branch the forge does not have, before anything is
+// written: a branch cut from a missing ref, or an MR into one, would fail
+// half way through the plan.
+func (e *Env) checkBase(ctx context.Context, t Target, base string) error {
+	bs, err := e.Forge.Branches(ctx, t.Project, base)
+	if err != nil {
+		return fmt.Errorf("base branch %s of %s: %w", base, t.Project, err)
+	}
+	if !slices.Contains(bs, base) {
+		return fmt.Errorf("base branch %q does not exist in %s", base, t.Project)
+	}
+	return nil
 }
 
 // findReviewers reads who conventions.mr.reviewer_group stands for. A group

@@ -925,6 +925,40 @@ func TestStartDialogBranchKeyPinsARepoBranch(t *testing.T) {
 	e.wantNot("branch " + startwork.ChildIIDPlaceholder + "-retry (new)")
 }
 
+func TestStartDialogBaseKeySetsARepoBaseBranch(t *testing.T) {
+	e := newSWEnv(t)
+	if _, err := e.forge.CreateBranch(context.Background(), "ade-demo-env/web", "release/2.0", "main"); err != nil {
+		t.Fatal(err)
+	}
+	e.selectRow(trk(3).String())
+	e.press("s", "j", "B") // the web row
+	if e.m.sw.branchIn == nil || !e.m.sw.baseEdit {
+		t.Fatal("B did not open the base input")
+	}
+	e.want("base ", "empty: the default branch")
+	e.typ("a b")
+	e.press("enter") // a name with a space is refused
+	if e.m.sw.branchIn == nil || !strings.Contains(e.m.sw.warn, "not a valid branch name") {
+		t.Fatalf("invalid name accepted: input open %v, warn %q", e.m.sw.branchIn != nil, e.m.sw.warn)
+	}
+	e.press("backspace", "backspace", "backspace")
+	e.typ("release/2.0")
+	e.press("enter")
+	if e.m.sw.branchIn != nil || e.m.sw.ch.Bases["web"] != "release/2.0" || len(e.m.sw.ch.Branches) != 0 {
+		t.Fatalf("bases = %v, branches = %v, input open %v", e.m.sw.ch.Bases, e.m.sw.ch.Branches, e.m.sw.branchIn != nil)
+	}
+	if got := e.m.sw.chosen(); !slices.Equal(got, []string{"api", "web"}) {
+		t.Errorf("repos = %v: naming a base should tick the repo", got)
+	}
+	e.want("base release/2.0")
+
+	e.press("enter")
+	if e.m.sw.stage != swConfirm {
+		t.Fatalf("stage = %v (warn %q, err %v)", e.m.sw.stage, e.m.sw.warn, e.m.sw.err)
+	}
+	e.want("base release/2.0", "from release/2.0", "→ release/2.0")
+}
+
 // `s` on started work opens it without the dialog's questions: a missing
 // worktree is added and its install hooks run (the done view says so), and
 // when everything exists the dialog closes as the tab opens.

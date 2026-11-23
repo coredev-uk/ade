@@ -111,6 +111,12 @@ type Choices struct {
 	// An existing branch and its MR are reused; otherwise the name is created.
 	// Entries for repos not in Repos, and Browse, ignore it.
 	Branches map[string]string `json:"branches,omitempty"`
+	// Bases names the branch to start from in a repo, instead of its default
+	// branch (a hotfix on release/1.2): the new branch is cut from it, the MR
+	// targets it and the worktree records it as ade.target. It must exist on
+	// the forge when something is created from it. Entries for repos not in
+	// Repos, and Browse, ignore it.
+	Bases map[string]string `json:"bases,omitempty"`
 }
 
 // ValidBranchName rejects a name git would refuse; the forge has the last word
@@ -320,10 +326,12 @@ type TargetPlan struct {
 	Branch string `json:"branch,omitempty"`
 	// Pinned says Choices.Branches named the branch.
 	Pinned bool      `json:"pinned,omitempty"`
-	Base   string    `json:"base,omitempty"` // branch cut from
+	Base   string    `json:"base,omitempty"` // branch cut from, and the MR's target
 	Child  ChildSpec `json:"child"`
 	MR     MRSpec    `json:"mr"`
 	Found  Found     `json:"found"`
+	// BaseChosen says Choices.Bases named Base, not the repo's default branch.
+	BaseChosen bool `json:"base_chosen,omitempty"`
 }
 
 // PinnedNote words the branch Choices.Branches chose for this repo, existing
@@ -439,9 +447,17 @@ func BuildPlan(in PlanInput) (Plan, error) {
 		if err != nil {
 			return Plan{}, err
 		}
+		if b := ch.Bases[name]; b != "" {
+			if err := ValidBranchName(b); err != nil {
+				return Plan{}, fmt.Errorf("base for %s: %w", name, err)
+			}
+		}
 		tp := planTarget(in, t)
 		p.Targets = append(p.Targets, tp)
 		p.Warnings = append(p.Warnings, tp.Found.Warnings...)
+		if tp.BaseChosen && tp.Found.MR != nil && tp.Found.MR.TargetBranch != tp.Base {
+			p.Warnings = append(p.Warnings, fmt.Sprintf("%s: %s already targets %s: base %s applies to new work only", name, tp.Found.MR.Ref, tp.Found.MR.TargetBranch, tp.Base))
+		}
 	}
 	if ch.OnlyChild {
 		return onlyChild(p), nil
@@ -514,6 +530,9 @@ func planTarget(in PlanInput, t Target) TargetPlan {
 	}
 	if tp.Base == "" {
 		tp.Base = "main"
+	}
+	if b := ch.Bases[t.Name]; b != "" && ch.Mode != ModeBrowse {
+		tp.Base, tp.BaseChosen = b, true
 	}
 	tp.UseChild = useChild(m, ch, t)
 	tp.Child = childSpec(in, t)
@@ -838,7 +857,11 @@ func worktreeStep(in PlanInput, tp TargetPlan, exists bool) Step {
 	if exists {
 		return Step{Kind: StepWorktree, Repo: tp.Target.Name, Done: true, Path: dir, Text: "worktree " + dir + " exists"}
 	}
-	return Step{Kind: StepWorktree, Repo: tp.Target.Name, Path: dir, Text: "fetch, add worktree " + dir + " tracking origin/" + branch}
+	text := "fetch, add worktree " + dir + " tracking origin/" + branch
+	if tp.BaseChosen && in.Choices.Mode != ModeBrowse {
+		text += ", ade.target " + tp.Base
+	}
+	return Step{Kind: StepWorktree, Repo: tp.Target.Name, Path: dir, Text: text}
 }
 
 // installStep is the install step of a target whose repo declares install

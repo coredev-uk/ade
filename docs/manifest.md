@@ -250,7 +250,7 @@ into the bare repository's own `config.worktree`, which git requires):
 ```
 ade.parent        = 412          # the tracker issue's iid
 ade.commitPrefix  = GL-412       # absent when commit_prefix is not set (a stale value is removed)
-ade.target        = main         # the MR's target branch; absent when not known yet
+ade.target        = main         # the MR's target branch (the default branch, or the --base chosen at start); absent when not known yet
 ```
 
 A `commit-msg` hook (a global `core.hooksPath` one works for every worktree) can use them to prefix the first
