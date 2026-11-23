@@ -435,7 +435,7 @@ func TestWWithAIOffOpensNothingAndSaysSo(t *testing.T) {
 	if cmd != nil || len(h.calls) != 0 {
 		t.Fatalf("W opened a tab with AI off: %+v", h.calls)
 	}
-	if e := h.lastToast(); !strings.Contains(e.Title, "AI is off: no agent pane") {
+	if e := h.lastToast(); !strings.Contains(e.Title, "AI is off (ai.mode = off): no agent pane") {
 		t.Fatalf("pop-up: %+v", e)
 	}
 }

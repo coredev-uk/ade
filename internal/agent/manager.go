@@ -84,8 +84,8 @@ func (m *Manager) role(k Kind) ai.Role {
 // been sent to a model yet.
 func (m *Manager) New(ctx context.Context, req Request) (Run, ai.Preflight, error) {
 	var pf ai.Preflight
-	if m.Cfg.AI.Mode == "off" {
-		return Run{}, pf, ai.ErrDisabled
+	if err := m.aiOff(); err != nil {
+		return Run{}, pf, err
 	}
 	name, p, err := m.Cfg.Profile(req.Profile)
 	if err != nil {

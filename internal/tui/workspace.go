@@ -58,8 +58,8 @@ func (m model) openWorkspace(other bool) (model, tea.Cmd) {
 	if m.isAgilePage() || m.isToolPage() {
 		return m, nil
 	}
-	if other && m.app.Config.AI.Mode == "off" {
-		e := events.New("workspace.hint", events.Info, "AI is off: no agent pane")
+	if ok, why := m.aiAvail(); other && !ok {
+		e := events.New("workspace.hint", events.Info, why+": no agent pane")
 		e.Subject = "w opens the editor layout"
 		e.Transient = true
 		m.nc.push(e)
@@ -167,9 +167,10 @@ func (m model) openTarget(t workspace.Target, items []workspace.ItemRef, other b
 }
 
 // otherMainPane is the layout `W` asks for: omp unless that is the default, then the editor.
-// With AI off there is no agent pane to toggle to: W keeps the editor.
+// Without usable AI (off, no profile) there is no agent pane to toggle to: W
+// keeps the editor.
 func otherMainPane(a *app.App, proj string) string {
-	if a.Config.AI.Mode == "off" {
+	if ok, _ := a.Config.AI.Available(); !ok {
 		return workspace.LayoutCode
 	}
 	manifestLayout := ""

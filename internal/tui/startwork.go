@@ -126,7 +126,8 @@ var swLayouts = []struct {
 	{workspace.LayoutManual, "shell", "a plain shell"},
 }
 
-// swLayoutChoices are the main-pane choices on offer: the agent pane needs AI.
+// swLayoutChoices are the main-pane choices on offer: the agent pane needs
+// usable AI (config.AI.Available).
 func swLayoutChoices(aiOff bool) []struct{ layout, label, what string } {
 	if !aiOff {
 		return swLayouts
@@ -267,7 +268,7 @@ func (m model) swResolved(msg swResolvedMsg) (model, tea.Cmd, bool) {
 	d.res, d.env = msg.res, m.swEnv()
 	d.env.Forge = d.res.Forge
 	d.ch = startwork.DefaultChoices(d.res.Manifest, d.res.Item)
-	d.ch.Layout = swDefaultLayout(m.app.Config.Host.Layout, d.res.Manifest, m.app.Config.AI.Mode == "off")
+	d.ch.Layout = swDefaultLayout(m.app.Config.Host.Layout, d.res.Manifest, !m.aiOn())
 	d.buildRepos()
 	if d.mrOnly {
 		d.ch.Mode, d.ch.OnlyMR = startwork.ModeDraft, true
@@ -464,7 +465,7 @@ func (m model) swChooseKey(d *startDialog, k tea.KeyPressMsg) (model, tea.Cmd) {
 	case "c":
 		d.ch.Child = swChildren[(swChildIndex(d.ch.Child)+1)%len(swChildren)].policy
 	case "a":
-		ls := swLayoutChoices(m.app.Config.AI.Mode == "off")
+		ls := swLayoutChoices(!m.aiOn())
 		i := slices.IndexFunc(ls, func(x struct{ layout, label, what string }) bool { return x.layout == d.ch.Layout })
 		d.ch.Layout = ls[(i+1)%len(ls)].layout
 	case "b":
@@ -927,7 +928,7 @@ func (m model) swChooseView(d *startDialog, inner int) []string {
 	}
 	// The main pane is one row, toggled with a: its three choices fit the line.
 	main := stFaint.Render("Main pane  ")
-	for _, x := range swLayoutChoices(m.app.Config.AI.Mode == "off") {
+	for _, x := range swLayoutChoices(!m.aiOn()) {
 		dot, label := g.Ahead, x.label
 		if d.ch.Layout == x.layout {
 			dot, label = g.Done, stBold.Render(x.label)

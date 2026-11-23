@@ -112,3 +112,15 @@ func TestNoQuickActionsIsIdempotentAndCRLFSafe(t *testing.T) {
 		t.Fatalf("got %q", once)
 	}
 }
+
+func TestQuickActionNameAgreesWithNoQuickActions(t *testing.T) {
+	for _, line := range []string{"/close", "  /assign @rae", "\t/label ~bug", "\u200b/approve", "/usr/bin/env", "/ no", "//x", "text /close", ""} {
+		_, ok := QuickActionName(line)
+		if esc := NoQuickActions(line) != line; ok != esc {
+			t.Errorf("%q: QuickActionName %v, NoQuickActions escapes %v", line, ok, esc)
+		}
+	}
+	if cmd, _ := QuickActionName("  /assign @rae"); cmd != "/assign" {
+		t.Errorf("cmd = %q", cmd)
+	}
+}

@@ -68,6 +68,7 @@ func newSWEnvWith(t *testing.T, edit func(string) string) *swEnvT {
 		t.Fatal(err)
 	}
 	cfg := config.Defaults()
+	cfg.AI.Profile, cfg.AI.Profiles = "sub", map[string]config.AIProfile{"sub": {Driver: "omp"}} // AI is usable here
 	cfg.Forges["sandbox-gitlab"] = config.Forge{Kind: "gitlab"}
 	cfg.Projects = []config.ProjectRef{{Source: mpath}}
 	al, err := audit.Open(filepath.Join(dir, "records"), "user")
