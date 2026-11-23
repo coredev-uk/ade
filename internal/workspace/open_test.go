@@ -27,7 +27,7 @@ func newApp(t *testing.T, f *fixture, mode string) *app.App {
 	}
 	a := &app.App{
 		Paths:  paths.Paths{CacheDir: filepath.Join(dir, "cache"), DataDir: filepath.Join(dir, "data")},
-		Config: &config.Config{Host: config.Host{Mode: mode}},
+		Config: &config.Config{Host: config.Host{Mode: mode}, AI: config.AI{Mode: "ask", Profile: "t", Profiles: map[string]config.AIProfile{"t": {}}}},
 		Root:   f.root, RecordsDir: filepath.Join(dir, "records"), Audit: al, Bus: events.NewBus(),
 	}
 	t.Cleanup(func() { a.Close() })
@@ -267,7 +267,7 @@ func TestOpenFallsBackToTheEditorLayoutWhenAIIsOff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Layout != LayoutCode || res.Notice != NoticeAIOff {
+	if res.Layout != LayoutCode || res.Notice != NoticeAIUnavailable("AI is off (ai.mode = off)") {
 		t.Fatalf("%+v", res)
 	}
 	// The host default asks for agent too; the rendered tab has no agent pane.
@@ -289,6 +289,21 @@ func TestOpenSaysWhenOmpIsMissingForTheAgentLayout(t *testing.T) {
 		t.Fatal(err)
 	}
 	if res.Layout != LayoutAgent || res.Notice != NoticeNoOmp {
+		t.Fatalf("%+v", res)
+	}
+}
+
+func TestOpenFallsBackToTheEditorLayoutWithoutAUsableAIProfile(t *testing.T) {
+	f := newFixture(t, appManifest, "api/main", "web/main")
+	a := newApp(t, f, "plain")
+	a.Config.AI.Profile = ""
+	_, why := a.Config.AI.Available()
+	tree := filepath.Join(f.root, "demo", "web", "main")
+	res, err := Open(context.Background(), a, "demo", "web", tree, WithLayout(LayoutAgent))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Layout != LayoutCode || res.Notice != NoticeAIUnavailable(why) {
 		t.Fatalf("%+v", res)
 	}
 }

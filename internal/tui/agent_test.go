@@ -73,6 +73,7 @@ func newAgEnv(t *testing.T, g glyphs, w int) *agEnv {
 	agGit(t, main, "worktree", "add", "-q", "-b", "1-rate-limit", wt)
 
 	cfg := config.Defaults()
+	cfg.AI.Profile, cfg.AI.Profiles = "sub", map[string]config.AIProfile{"sub": {Driver: "omp"}} // AI is usable here
 	a := &app.App{Paths: paths.Paths{CacheDir: filepath.Join(tmp, "cache")}, Config: &cfg, Bus: events.NewBus(), RecordsDir: filepath.Join(tmp, "rec")}
 	t.Cleanup(func() { a.Close() })
 	al, err := audit.Open(a.RecordsDir, "user")

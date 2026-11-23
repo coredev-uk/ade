@@ -187,7 +187,7 @@ func TestMRDescribeWarnsAboutQuickActionsOnGitLabAndSendsThemAsWritten(t *testin
 	r := ref(rateMR)
 	text := "Closes #1\n/assign @sandbox-dev\n```\n/close\n```\n/label ~bug"
 	out := e.mustMR("describe", rateMR, "--body-file", bodyFile(t, text), "--yes")
-	if !strings.Contains(out, "warning: /assign, /label run as quick actions when GitLab saves this description") {
+	if !strings.Contains(out, "warning: /assign, /close, /label run as quick actions when GitLab saves this description") {
 		t.Errorf("no quick-action warning:\n%s", out)
 	}
 	if d, _, _ := e.srv.Description(r); d != text {
@@ -195,7 +195,7 @@ func TestMRDescribeWarnsAboutQuickActionsOnGitLabAndSendsThemAsWritten(t *testin
 	}
 	asJSON(t)
 	var a describeAction
-	if err := json.Unmarshal([]byte(e.mustMR("--dry-run", "describe", rateMR, "--body-file", bodyFile(t, text+"\n/close"))), &a); err != nil || strings.Join(a.QuickActions, " ") != "/assign /label /close" {
+	if err := json.Unmarshal([]byte(e.mustMR("--dry-run", "describe", rateMR, "--body-file", bodyFile(t, text+"\n  /ready"))), &a); err != nil || strings.Join(a.QuickActions, " ") != "/assign /close /label /ready" {
 		t.Errorf("json = %+v, %v", a, err)
 	}
 }
