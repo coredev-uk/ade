@@ -44,6 +44,21 @@ func (s *Server) pull(ref forge.Ref) (*pull, error) {
 	return it.PR, nil
 }
 
+// Description is the PR's current body and how many times a client rewrote
+// it through PATCH /pulls/{n}.
+func (s *Server) Description(ref forge.Ref) (body string, writes int, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, it, err := s.item(ref)
+	if err != nil {
+		return "", 0, err
+	}
+	if it.PR == nil {
+		return "", 0, fmt.Errorf("%s is not a pull request", ref)
+	}
+	return it.Body, it.PR.DescWrites, nil
+}
+
 // Publishes is how many reviews were submitted on the PR, whether through
 // the submit-pending endpoint or by creating a review with an event.
 func (s *Server) Publishes(ref forge.Ref) (int, error) {
