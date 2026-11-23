@@ -4,13 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
 
 	"github.com/coredev-uk/ade/internal/project"
-	"github.com/coredev-uk/ade/internal/workspace"
 )
 
 func init() { register(newPushCmd) }
@@ -35,14 +33,11 @@ func newPushCmd() *cobra.Command {
 			"It never forces. It refuses, changing nothing, the repo's default branch, a detached HEAD and a branch\n" +
 			"that diverged from its remote branch (update it first, e.g. git pull --rebase). A branch with nothing\n" +
 			"ahead says so and exits 0. Uncommitted changes are not pushed; the output warns when there are some.\n" +
-			"It refuses to run inside an agent run (ADE_AGENT_RUN=1): ADE pushes an agent's work after you reviewed\n" +
-			"the diff, with `ade agent push`.",
+			"It is refused inside an agent run (ADE_AGENT_RUN=1, like every command that writes to the forge): ADE\n" +
+			"pushes an agent's work after you reviewed the diff, with `ade agent push`.",
 		Example: "  ade push\n  ade push ~/ade/acme/api/42-limit --dry-run --json",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if os.Getenv(workspace.AgentRunEnv) == "1" {
-				return errors.New("ade push is not for agents: this is an agent run, and ADE pushes an agent's work after the user reviewed the diff (ade agent push)")
-			}
 			a := appFrom(cmd)
 			ctx := cmd.Context()
 			ps := project.New(a, "user")
