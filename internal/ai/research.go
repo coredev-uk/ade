@@ -10,7 +10,7 @@ import (
 	"github.com/coredev-uk/ade/internal/forge"
 )
 
-const researchVersion = "research-v1"
+const researchVersion = "research-v2"
 
 //go:embed prompts/research.md
 var researchSystem string
@@ -115,7 +115,7 @@ func ResearchJob(forgeName string, in ResearchInput) Job {
 	}
 	return Job{
 		Feature: "research", Role: RolePlan, PromptVersion: researchVersion,
-		System: researchSystem, Prompt: b.String(),
+		System: guarded(researchSystem), Prompt: untrusted("issue, discussion, links and merge requests", b.String()),
 		Forge: forgeName, Ref: is.Ref, Name: "research-issue" + fmt.Sprint(is.Ref.IID),
 		MaxTokens: 1500,
 	}

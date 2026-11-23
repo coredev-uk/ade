@@ -12,7 +12,7 @@ import (
 )
 
 // digestVersion keys the result cache: change the prompt, bump it.
-const digestVersion = "digest-v1"
+const digestVersion = "digest-v2"
 
 //go:embed prompts/digest.md
 var digestSystem string
@@ -155,7 +155,7 @@ func DigestJob(forgeName string, in DigestInput, c NewComments) Job {
 	}
 	return Job{
 		Feature: "digest", Role: RoleExplain, PromptVersion: digestVersion,
-		System: digestSystem, Prompt: b.String(),
+		System: guarded(digestSystem), Prompt: untrusted("new comments", b.String()),
 		Forge: forgeName, Ref: in.Ref, Name: fmt.Sprintf("digest-%s%d", kind, in.Ref.IID),
 		MaxTokens: 400,
 		Params:    map[string]any{"comments": c.Count()},

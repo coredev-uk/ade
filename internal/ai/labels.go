@@ -72,9 +72,8 @@ func ClassifyJob(forgeName string, in ClassifyInput) (Job, error) {
 		return Job{}, ErrNothingToClassify
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "Issue %s: %s\n", in.Issue.Ref, in.Issue.Title)
-	fmt.Fprintf(&b, "Current labels: %s\n", strings.Join(in.Issue.Labels, ", "))
-	fmt.Fprintf(&b, "\nDescription:\n%s\n", clip(in.Issue.Description, maxDescription))
+	b.WriteString(untrusted("issue", fmt.Sprintf("Issue %s: %s\nCurrent labels: %s\n\nDescription:\n%s",
+		in.Issue.Ref, in.Issue.Title, strings.Join(in.Issue.Labels, ", "), clip(in.Issue.Description, maxDescription))))
 	fmt.Fprintf(&b, "\nMISSING facets: %s\n", strings.Join(miss, ", "))
 	if slices.Contains(miss, "type") {
 		if len(in.KnownTypes) > 0 {
@@ -88,9 +87,10 @@ func ClassifyJob(forgeName string, in ClassifyInput) (Job, error) {
 	}
 	return Job{
 		Feature: "classify", Role: RoleClassify, PromptVersion: classifyVersion,
-		System: classifySystem, Prompt: b.String(), Schema: classifySchema,
+		System: guarded(classifySystem), Prompt: b.String(), Schema: classifySchema,
 		Forge: forgeName, Ref: in.Issue.Ref, Name: "classify",
 		MaxTokens: 600, // a reasoning model spends part of the cap thinking
+		Validate:  func(text string) error { _, err := ParseSuggestion(text, in); return err },
 	}, nil
 }
 
