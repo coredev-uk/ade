@@ -34,11 +34,15 @@ or an MR) belongs to, in the cache, it judges each of the item's worktrees exact
 does: the merge requests of its branch must all be merged or closed (at least one), the tree
 must be clean and everything committed pushed. Then, for the trees that pass, it removes the
 worktree, fast-forwards the default-branch baseline tree of the repo (after a fetch; only a clean
-tree with nothing of its own moves) and deletes the local branch with git branch -d, which keeps
-a branch git does not see as merged (a squash merge). Nothing is ever forced.
+tree with nothing of its own moves) and deletes the local branch with git branch -d. A squash
+merge leaves nothing for git to see, so a branch git refuses is still deleted, with git branch -D,
+when every commit on it is in the head commit of a merged MR of the branch (the head itself, or an
+ancestor of it; ade fetches the commit when the clone lacks it). A branch with commits outside the
+merged MR stays, with that reason. The default branch is never deleted, and git itself refuses a
+branch checked out in another worktree. Worktrees are never forced.
 
 A tree that fails a check stays, with the reason, and the command exits 2. --dry-run only
-reports (it still fetches). Without --yes it asks first and refuses to run unattended.
+reports (it still fetches) and says which branches it would delete and why. Without --yes it asks first and refuses to run unattended.
 <ref> is group/project#N or group/project!N, or N when one project is registered.`,
 		Example: "  ade cleanup acme/tracker#128\n  ade cleanup acme/api!12 --dry-run --json",
 		Args:    cobra.ExactArgs(1),
@@ -168,6 +172,9 @@ func cleanTrees(ctx context.Context, ps *project.Service, res *cleanupOut, doome
 	}
 	if dry {
 		removed = doomed
+		for _, i := range doomed {
+			res.Trees[i].planBranch(ctx, ps)
+		}
 	}
 	var seen []string
 	for _, i := range removed {
@@ -179,7 +186,7 @@ func cleanTrees(ctx context.Context, ps *project.Service, res *cleanupOut, doome
 	}
 	if !dry {
 		for _, i := range removed {
-			res.Trees[i].BranchKept = !ps.DeleteBranch(ctx, res.Trees[i].Tree)
+			res.Trees[i].setBranchFate(ps.DeleteBranch(ctx, res.Trees[i].Tree))
 		}
 	}
 	return failed
@@ -190,12 +197,11 @@ func printCleanup(w io.Writer, res cleanupOut, doomed []int) {
 		r := res.Trees[i]
 		switch {
 		case res.DryRun:
+			fmt.Fprintln(w, r.planLine())
 		case r.Error != "":
 			fmt.Fprintf(w, "failed  %s  %s\n", r.Label(), r.Error)
-		case r.BranchKept:
-			fmt.Fprintf(w, "removed %s (branch %s kept: git does not consider it merged; `git branch -D` deletes it)\n", r.Label(), r.Branch)
 		default:
-			fmt.Fprintf(w, "removed %s, deleted branch %s\n", r.Label(), r.Branch)
+			fmt.Fprintln(w, r.branchLine())
 		}
 	}
 	for _, b := range res.Baselines {

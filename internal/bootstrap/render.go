@@ -18,14 +18,17 @@ type RepoFinding struct {
 	AppMatched    bool     // false: the repo name is a guess, no app label matched it
 	Detected      Detected
 	Templates     []string // MR template names found on the default branch
+	HasCode       bool     // the root has files that say how to run it (go.mod, package.json, ...)
 }
 
 // Draft is a manifest with the reasons behind each choice. Render writes it
 // as TOML; everything in Manifest is also in the text, nothing else is.
 type Draft struct {
 	Manifest config.Manifest
-	Group    string
-	Tracker  forge.Repo
+	// TrackerIsRepo: the tracker is also a code repo and has its own [repos] table.
+	TrackerIsRepo bool
+	Group         string
+	Tracker       forge.Repo
 
 	TrackerWhy    string
 	IterationsWhy []string // comment lines for tracker.iterations
@@ -218,12 +221,16 @@ func (d *Draft) renderLabels(w *writer) {
 
 func (d *Draft) renderRepos(w *writer) {
 	if len(d.Repos) == 0 {
-		w.comment("No code repositories were found next to the tracker: add [repos.<name>] tables by hand.", "")
+		w.comment("No code repositories were found: add [repos.<name>] tables by hand.", "")
 		return
+	}
+	trackerNote := "The tracker repository is not listed: add a [repos.<name>] table for it if code is worked on there too."
+	if d.TrackerIsRepo {
+		trackerNote = "The tracker repository is listed too: its issues are worked on in it directly (no child issue)."
 	}
 	w.comment(
 		"Repositories of the group. `app` lists the values of the app label that route a tracker issue here.",
-		"The tracker repository is not listed: add a [repos.<name>] table for it if code is worked on there too.",
+		trackerNote,
 		`Add requires = ["<repo>"] to a repo that needs another checked out beside it (web needs api).`,
 	)
 	if d.KeyPrefix != "" {

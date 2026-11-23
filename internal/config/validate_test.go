@@ -66,6 +66,8 @@ func TestManifestValidate(t *testing.T) {
 		{"dotfiles absolute install", header + "[dotfiles]\nrepo = \"https://x/d.git\"\ninstall = \"/tmp/evil.sh\"\n", []string{"error: dotfiles.install:"}},
 		{"dotfiles unknown key warns", header + "[dotfiles]\nrepo = \"https://x/d.git\"\nrun = \"x\"\n", []string{"warn: dotfiles.run: unknown key"}},
 		{"commit prefix", header + "[conventions]\ncommit_prefix = \"GL-{parent}\"\n", nil},
+		{"commit prefix hook", header + "[conventions]\ncommit_prefix = \"GL-{parent}\"\ncommit_prefix_hook = true\n", nil},
+		{"commit prefix hook without a prefix", header + "[conventions]\ncommit_prefix_hook = true\n", []string{"error: conventions.commit_prefix_hook: needs conventions.commit_prefix"}},
 		{"commit prefix unknown placeholder", header + "[conventions]\ncommit_prefix = \"GL-{parnt}\"\n", []string{"error: conventions.commit_prefix: unknown placeholder {parnt}"}},
 		{"commit prefix with whitespace", header + "[conventions]\ncommit_prefix = \"GL-{parent} \"\n", []string{"error: conventions.commit_prefix:", "whitespace"}},
 		{"reviewer group", header + "[conventions]\nmr = { reviewer_group = \"acme/reviewers\" }\n", nil},

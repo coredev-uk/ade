@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/coredev-uk/ade/internal/app"
+	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/domain"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/git"
@@ -149,5 +151,129 @@ func TestCleanupNeedsACachedItemAndSaysWhenThereAreNoTrees(t *testing.T) {
 	e, _, _ := cleanupEnv(t)
 	if _, err := e.cleanup(adoptTracker+"#99", "--yes"); err == nil || !strings.Contains(err.Error(), "ade sync") {
 		t.Errorf("uncached: %v", err)
+	}
+}
+
+// headForge answers every MR with a fixed head commit, as a forge does for the
+// real source branch (the fake's are synthetic).
+type headForge struct {
+	forge.Forge
+	head *string
+}
+
+func (f headForge) ListMRs(ctx context.Context, q forge.MRQuery) ([]forge.MR, error) {
+	mrs, err := f.Forge.ListMRs(ctx, q)
+	for i := range mrs {
+		mrs[i].HeadSHA = *f.head
+	}
+	return mrs, err
+}
+
+// squashedEnv is cleanupEnv with the web branch carrying a commit that was
+// pushed and then squash-merged: main never gets the commit, so git does not
+// see the branch as merged, but the merged MR's head is the branch tip.
+func squashedEnv(t *testing.T) (e *cliEnv, web, bare string, mrHead *string) {
+	t.Helper()
+	e, web, _ = cleanupEnv(t)
+	gitAt(t, web, "commit", "--quiet", "--allow-empty", "-m", "squashed away")
+	gitAt(t, web, "push", "--quiet", "origin", "HEAD:refs/heads/"+cleanupWebBranch)
+	gitAt(t, web, "branch", "--unset-upstream") // the forge deleted the merged branch: git judges against main
+	head := gitOut(t, web, "rev-parse", "HEAD")
+	mrHead = &head
+	open := openGCForge
+	openGCForge = func(a *app.App) func(context.Context, string, config.Forge) (forge.Forge, error) {
+		inner := open(a)
+		return func(ctx context.Context, name string, f config.Forge) (forge.Forge, error) {
+			fg, err := inner(ctx, name, f)
+			return headForge{Forge: fg, head: mrHead}, err
+		}
+	}
+	t.Cleanup(func() { openGCForge = open })
+	return e, web, filepath.Join(e.app.Root, "demo-gl", "web", ".bare"), mrHead
+}
+
+func TestCleanupDeletesASquashMergedBranch(t *testing.T) {
+	e, web, bare, _ := squashedEnv(t)
+	out, err := e.cleanup(adoptTracker+"#2", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if want := "deleted branch " + cleanupWebBranch + " with git branch -D (its tip is web!2's head)"; !strings.Contains(out, want) {
+		t.Errorf("output lacks %q:\n%s", want, out)
+	}
+	if _, err := os.Stat(web); err == nil {
+		t.Error("the worktree is still there")
+	}
+	if branches := gitOut(t, bare, "branch", "--list", cleanupWebBranch); branches != "" {
+		t.Errorf("the squash-merged branch survived: %q", branches)
+	}
+	es := e.audited("git.branch.delete")
+	if len(es) != 1 || es[0].Outcome != "ok" || es[0].Params["forced"] != true {
+		t.Errorf("audit git.branch.delete = %+v", es)
+	}
+}
+
+func TestCleanupDryRunSaysWhichBranchesNeedDashD(t *testing.T) {
+	e, web, bare, _ := squashedEnv(t)
+	out, err := e.cleanup(adoptTracker+"#2", "--dry-run")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if want := "would delete branch " + cleanupWebBranch + " (git branch -D unless git sees it merged by then: its tip is web!2's head)"; !strings.Contains(out, want) {
+		t.Errorf("output lacks %q:\n%s", want, out)
+	}
+	if _, err := os.Stat(web); err != nil {
+		t.Error("--dry-run removed the worktree")
+	}
+	if gitOut(t, bare, "branch", "--list", cleanupWebBranch) == "" {
+		t.Error("--dry-run deleted the branch")
+	}
+	if got := e.audited("git.branch.delete"); len(got) != 0 {
+		t.Errorf("--dry-run audited a deletion: %+v", got)
+	}
+}
+
+func TestCleanupKeepsABranchWithCommitsOutsideTheMergedMR(t *testing.T) {
+	e, _, bare, mrHead := squashedEnv(t)
+	// The MR was merged at an earlier head: the tree has one commit more, pushed.
+	*mrHead = gitOut(t, bare, "rev-parse", cleanupWebBranch+"~1")
+	out, err := e.cleanup(adoptTracker+"#2", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if want := "branch " + cleanupWebBranch + " kept: local commits not in the merged MR web!2"; !strings.Contains(out, want) {
+		t.Errorf("output lacks %q:\n%s", want, out)
+	}
+	if gitOut(t, bare, "branch", "--list", cleanupWebBranch) == "" {
+		t.Error("a branch with commits outside the merged MR was deleted")
+	}
+	if got := e.audited("git.branch.delete"); len(got) != 0 {
+		t.Errorf("audit = %+v", got)
+	}
+}
+
+func TestGCDryRunSaysWhichBranchesNeedDashD(t *testing.T) {
+	e, web, bare, mrHead := squashedEnv(t)
+	out, err := e.gc("--dry-run")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if want := "would delete branch " + cleanupWebBranch + " (git branch -D unless git sees it merged by then: its tip is web!2's head)"; !strings.Contains(out, want) {
+		t.Errorf("output lacks %q:\n%s", want, out)
+	}
+	if _, err := os.Stat(web); err != nil {
+		t.Error("--dry-run removed the worktree")
+	}
+	if gitOut(t, bare, "branch", "--list", cleanupWebBranch) == "" {
+		t.Error("--dry-run deleted the branch")
+	}
+
+	*mrHead = gitOut(t, bare, "rev-parse", cleanupWebBranch+"~1")
+	out, err = e.gc("--dry-run")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if want := "would delete branch " + cleanupWebBranch + " only if git sees it merged (local commits not in the merged MR web!2)"; !strings.Contains(out, want) {
+		t.Errorf("output lacks %q:\n%s", want, out)
 	}
 }
