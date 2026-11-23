@@ -469,7 +469,7 @@ func (m model) mrFooter(w int) string {
 	if p.data != nil && !p.data.mr.Draft {
 		ready = "draft"
 	}
-	act := []string{"a", "approve", "R", ready, "m", "merge", "S", "submit", "u", "update", "p", "push"}
+	act := []string{"a", "approve", "R", ready, "m", "merge", "S", "submit", "u", "update"}
 	if p.item != nil {
 		act = append(act, "P", "agents")
 	}
