@@ -53,6 +53,7 @@ jobs:
     runs-on: ubuntu-latest
     # Everything goes through the App token below, minted by octo-sts; the
     # environment limits the run to main and v* tags.
+    timeout-minutes: 10
     environment: bot-cecil
     permissions:
       id-token: write # the OIDC token octo-sts exchanges for bot-cecil's
