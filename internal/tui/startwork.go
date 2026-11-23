@@ -126,6 +126,16 @@ var swLayouts = []struct {
 	{workspace.LayoutManual, "shell", "a plain shell"},
 }
 
+// swLayoutChoices are the main-pane choices on offer: the agent pane needs AI.
+func swLayoutChoices(aiOff bool) []struct{ layout, label, what string } {
+	if !aiOff {
+		return swLayouts
+	}
+	return slices.DeleteFunc(slices.Clone(swLayouts), func(x struct{ layout, label, what string }) bool {
+		return x.layout == workspace.LayoutAgent
+	})
+}
+
 // --- messages ----------------------------------------------------------------
 
 type (
@@ -257,7 +267,7 @@ func (m model) swResolved(msg swResolvedMsg) (model, tea.Cmd, bool) {
 	d.res, d.env = msg.res, m.swEnv()
 	d.env.Forge = d.res.Forge
 	d.ch = startwork.DefaultChoices(d.res.Manifest, d.res.Item)
-	d.ch.Layout = swDefaultLayout(m.app.Config.Host.Layout, d.res.Manifest)
+	d.ch.Layout = swDefaultLayout(m.app.Config.Host.Layout, d.res.Manifest, m.app.Config.AI.Mode == "off")
 	d.buildRepos()
 	if d.mrOnly {
 		d.ch.Mode, d.ch.OnlyMR = startwork.ModeDraft, true
@@ -281,9 +291,9 @@ func (m model) swResolved(msg swResolvedMsg) (model, tea.Cmd, bool) {
 // swDefaultLayout is the main-pane choice the dialog starts on: host.layout,
 // else the manifest's workspace, else the editor. Layouts the dialog does not
 // offer (review) fall back to the editor.
-func swDefaultLayout(user string, m *config.Manifest) string {
+func swDefaultLayout(user string, m *config.Manifest, aiOff bool) string {
 	l := workspace.DefaultLayout(user, m.Workspaces[workspace.DefaultWorkspace].Layout)
-	if slices.ContainsFunc(swLayouts, func(x struct{ layout, label, what string }) bool { return x.layout == l }) {
+	if slices.ContainsFunc(swLayoutChoices(aiOff), func(x struct{ layout, label, what string }) bool { return x.layout == l }) {
 		return l
 	}
 	return workspace.LayoutCode
@@ -454,7 +464,9 @@ func (m model) swChooseKey(d *startDialog, k tea.KeyPressMsg) (model, tea.Cmd) {
 	case "c":
 		d.ch.Child = swChildren[(swChildIndex(d.ch.Child)+1)%len(swChildren)].policy
 	case "a":
-		d.ch.Layout = swLayouts[(swLayoutIndex(d.ch.Layout)+1)%len(swLayouts)].layout
+		ls := swLayoutChoices(m.app.Config.AI.Mode == "off")
+		i := slices.IndexFunc(ls, func(x struct{ layout, label, what string }) bool { return x.layout == d.ch.Layout })
+		d.ch.Layout = ls[(i+1)%len(ls)].layout
 	case "b":
 		if d.cur < nr {
 			d.editBranch()
@@ -915,7 +927,7 @@ func (m model) swChooseView(d *startDialog, inner int) []string {
 	}
 	// The main pane is one row, toggled with a: its three choices fit the line.
 	main := stFaint.Render("Main pane  ")
-	for _, x := range swLayouts {
+	for _, x := range swLayoutChoices(m.app.Config.AI.Mode == "off") {
 		dot, label := g.Ahead, x.label
 		if d.ch.Layout == x.layout {
 			dot, label = g.Done, stBold.Render(x.label)
