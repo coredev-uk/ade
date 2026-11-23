@@ -18,6 +18,7 @@ import (
 	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/events"
 	"github.com/coredev-uk/ade/internal/git"
+	"github.com/coredev-uk/ade/internal/ledger"
 	"github.com/coredev-uk/ade/internal/project"
 	"github.com/coredev-uk/ade/internal/review"
 	"github.com/coredev-uk/ade/internal/workspace"
@@ -1026,18 +1027,29 @@ func (m *Manager) call(ctx context.Context, r *Run, kind Kind, prompt string) (c
 			return callResult{}, &ai.StopError{Source: "local", Message: fmt.Sprintf("run %s has used its cap of $%.2f", r.ID, r.CapUSD)}
 		}
 	}
-	period, err := m.periodRoom()
+	// The period caps count what other calls in flight have reserved, and this
+	// call reserves what it may spend (its cost ceiling) under the same lock,
+	// so runs and AI calls that start together cannot all take the same room.
+	// The reservation is dropped once the call is booked (recordCall below).
+	release, err := m.reserve(name, "agent-"+string(kind), func(held ledger.Held) (float64, error) {
+		period, err := m.periodRoom(held)
+		if err != nil {
+			return 0, err
+		}
+		if period.Limited {
+			if period.USD <= 0 {
+				return 0, &ai.StopError{Source: "local", Message: period.Which + ": nothing left for this call"}
+			}
+			if spec.MaxCostUSD == 0 || period.USD < spec.MaxCostUSD {
+				spec.MaxCostUSD, limit = period.USD, period.Which
+			}
+		}
+		return spec.MaxCostUSD, nil
+	})
 	if err != nil {
 		return callResult{}, err
 	}
-	if period.Limited {
-		if period.USD <= 0 {
-			return callResult{}, &ai.StopError{Source: "local", Message: period.Which + ": nothing left for this call"}
-		}
-		if spec.MaxCostUSD == 0 || period.USD < spec.MaxCostUSD {
-			spec.MaxCostUSD, limit = period.USD, period.Which
-		}
-	}
+	defer release()
 	dir := m.Store.Dir(*r)
 	if err := writeFile(filepath.Join(dir, "prompt-"+string(kind)+".md"), []byte(prompt)); err != nil {
 		return callResult{}, err

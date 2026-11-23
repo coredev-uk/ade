@@ -313,3 +313,37 @@ func TestAIResearchForegroundFilesTheJobToo(t *testing.T) {
 		t.Fatalf("an MR ref is refused: %v", err)
 	}
 }
+
+// A summary's Risk line and a triage's Fix lines come from text other people
+// write: both commands say so under the answer, in JSON too, and a command whose
+// answer carries no such advice does not.
+func TestAISummarizeAndCITriageSayTheAdviceCameFromUntrustedText(t *testing.T) {
+	e, _ := aiEnvFor(t, "[]")
+	out := e.mustAI("summarize", renameMR)
+	if !strings.Contains(out, ai.AdviceNote("summarize")) || !strings.Contains(out, "Risk line can be steered by the MR") {
+		t.Fatalf("summarize has no note:\n%s", out)
+	}
+	if !strings.Contains(e.mustAI("summarize", renameMR), ai.AdviceNote("summarize")) { // a cache hit says it too
+		t.Fatal("a cached summary lost the note")
+	}
+	if dry := e.mustAI("summarize", renameMR, "--dry-run"); strings.Contains(dry, "note:") {
+		t.Fatalf("a dry run has no answer to caution about:\n%s", dry)
+	}
+	asJSON(t)
+	var res aiOut
+	if err := json.Unmarshal([]byte(e.mustAI("summarize", renameMR)), &res); err != nil || res.Note != ai.AdviceNote("summarize") {
+		t.Fatalf("json note = %q, %v", res.Note, err)
+	}
+
+	e, _ = aiEnvTriple(t)
+	jsonOut = false
+	out = e.mustAI("ci-triage", webPath+"!1")
+	if !strings.Contains(out, ai.AdviceNote("ci-triage")) || !strings.Contains(out, "check them before you run anything") {
+		t.Fatalf("ci-triage has no note:\n%s", out)
+	}
+	asJSON(t)
+	var tri ciTriageOut
+	if err := json.Unmarshal([]byte(e.mustAI("ci-triage", webPath+"!1")), &tri); err != nil || tri.Note != ai.AdviceNote("ci-triage") {
+		t.Fatalf("json note = %q, %v", tri.Note, err)
+	}
+}

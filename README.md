@@ -34,3 +34,7 @@ The [setup guide](docs/setup.md) covers tools, tokens, self-hosted GitLab, Coder
 Report bugs and request features in [Issues](https://github.com/coredev-uk/ade/issues).
 To change the code, read [Develop](docs/reference.md#develop); the spec is [docs/PLAN.md](docs/PLAN.md),
 product constraints are in [PRODUCT.md](PRODUCT.md) and the visual system in [DESIGN.md](DESIGN.md).
+
+## License
+
+[MIT](LICENSE).

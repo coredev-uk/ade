@@ -143,6 +143,9 @@ type aiOut struct {
 	IncludesNotes bool `json:"includes_notes,omitempty"`
 	// Truncated: the model reached its output limit, so Text is cut short.
 	Truncated bool `json:"truncated,omitempty"`
+	// Note: set on an answer whose advice the input text can steer (a summary's
+	// Risk line, a CI triage's fixes): where it came from and to check it.
+	Note string `json:"note,omitempty"`
 }
 
 // runJob executes (or, with --dry-run, previews) a job and maps budget stops
@@ -165,6 +168,7 @@ func (e *aiEnv) runJob(cmd *cobra.Command, j ai.Job, o aiOpts) (ai.Result, aiOut
 	}
 	out.Text, out.CacheHit, out.CostUSD, out.SavedUSD = res.Text, res.CacheHit, res.CostUSD, res.SavedUSD
 	out.Profile, out.Model, out.Artifact, out.Truncated = res.Profile, res.Model, res.Artifact, res.Truncated
+	out.Note = ai.AdviceNote(j.Feature)
 	if res.Preflight.Model != "" {
 		out.Preflight = &res.Preflight
 	}
@@ -219,6 +223,9 @@ func emit(cmd *cobra.Command, o aiOut) error {
 	if o.Text != "" {
 		fmt.Fprintln(w, o.Text)
 		fmt.Fprintln(w)
+	}
+	if o.Note != "" {
+		fmt.Fprintln(w, o.Note)
 	}
 	printFooter(w, o)
 	return nil

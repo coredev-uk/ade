@@ -86,6 +86,7 @@
           meta = {
             description = "Agentic development environment (Go + Bubble Tea + zellij)";
             mainProgram = "ade";
+            license = pkgs.lib.licenses.mit;
           };
         };
 

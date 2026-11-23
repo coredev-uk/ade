@@ -26,6 +26,8 @@ func TestClassifyStopByBodyNotStatus(t *testing.T) {
 		"litellm model":         `{"error":{"message":"LiteLLM Virtual Key: abc, key_alias: None, exceeded budget for model=gpt","type":"x"}}`,
 		"anthropic platform":    `{"type":"error","error":{"type":"rate_limit_error","message":"cap","details":{"error_code":"enforced_spend_limit_reached"}}}`,
 		"anthropic user limit":  `{"type":"error","error":{"type":"invalid_request_error","message":"You have reached your specified API usage limits. You will regain access on 2026-12-01"}}`,
+		"anthropic balance":     `{"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."},"request_id":"req_011Cf75wfCXCbniKKrP6wSut"}`,
+		"anthropic billing":     `{"type":"error","error":{"type":"billing_error","message":"There's an issue with your billing or payment information."}}`,
 		"openai quota":          `{"error":{"message":"You exceeded your current quota","type":"insufficient_quota","code":"insufficient_quota"}}`,
 		"moonshot":              `{"error":{"message":"Your account is suspended","type":"exceeded_current_quota_error"}}`,
 		"plain text body":       `Budget has been exceeded for this key`,

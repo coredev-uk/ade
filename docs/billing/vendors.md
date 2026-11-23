@@ -125,6 +125,18 @@ These are **rate limits (RPM/ITPM/OTPM), not spend**. They say nothing about dol
 
 Spend-cap behaviour (relevant to ADE enforcement): each tier has a monthly org spend cap (Start $500, Build $1,000, Scale $200,000; Custom none). At the platform cap, requests get **HTTP 429** `rate_limit_error` with `error.details.error_code = "enforced_spend_limit_reached"` and **no `retry-after`**. At a user-set spend limit, requests get **HTTP 400** `invalid_request_error` starting "You have reached your specified API usage limits" (or "...workspace API usage limits"). Source: https://platform.claude.com/docs/en/api/rate-limits#reaching-your-spend-cap . ADE can use these error shapes as a hard backstop signal. A `spend-limit-reads-2026-09-26` anthropic-beta value appears in the legacy endpoint header enum, suggesting a read-spend-limit endpoint exists; its endpoint/shape was **not found/not documented in what I read**.
 
+**Empty prepaid credit balance (pinned for ADE's budget stop).** A Console organisation with no credits left gets, on `POST /v1/messages`:
+
+```
+HTTP 400
+{"type":"error","error":{"type":"invalid_request_error",
+ "message":"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."},
+ "request_id":"req_…"}
+```
+
+- **Sources, and how firm they are:** the status, type and exact message text come from a report against the SDK (https://github.com/anthropics/anthropic-sdk-typescript/issues/618: the message as first reported in 2024, and a plain-HTTPS reproduction on 2026-09-16 that shows the full body above, also returned per request inside Message Batches results). Anthropic's own errors page (https://platform.claude.com/docs/en/api/errors, checked 2026-11) does **not** carry this text: it documents `402 billing_error` ("an issue with your billing or payment information") and a 400 `invalid_request_error` for a spend limit you set, and Claude Code's error reference (https://code.claude.com/docs/en/errors, "Credit balance is too low") describes only the CLI's own message. The TypeScript SDK has a `BillingErrorObject` with `type: 'billing_error'` (`src/resources/shared.ts`), whose doc comment says the message wording can change. So the text is a **best available pin, not a documented contract**.
+- **What ADE does:** `classifyStop` (`internal/ai/stop.go`) treats a body whose `error.type` is `billing_error`, or whose message contains `your credit balance is too low` (case-insensitive), as a provider budget stop, the same path as `enforced_spend_limit_reached`: a `budget.stop` audit entry and the once-a-day notification instead of a generic error, never retried. It matches the message, not the status or `invalid_request_error`, because a malformed request has that same type and status. If Anthropic changes the wording and stops sending `billing_error`, calls with an empty balance fall back to an ordinary error until the needle is updated.
+
 ### 1.6 What Anthropic API endpoints CANNOT tell us
 
 - No remaining prepaid-credit balance endpoint found (not documented).

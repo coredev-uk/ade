@@ -29,6 +29,7 @@ archives:
       - tar.gz
     name_template: "ade_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
+      - LICENSE
       - README.md
       - docs/manifest.md
 
