@@ -133,6 +133,9 @@ type Run struct {
 	// Uncapped is the user's explicit yes to a codex implement/address run
 	// that cannot be stopped at the cost cap (codex reports cost per turn).
 	Uncapped bool `json:"uncapped,omitempty"`
+	// ReviewTree is the git tree of the agent's work when the run reached
+	// review: an in-place discard only proceeds when the worktree still is it.
+	ReviewTree string `json:"review_tree,omitempty"`
 	// BaseSHA is the worktree HEAD before the first implementation pass.
 	BaseSHA string `json:"base_sha,omitempty"`
 	// Commits are the SHAs ADE committed on push.

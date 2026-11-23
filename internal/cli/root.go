@@ -113,7 +113,11 @@ func newRoot() *cobra.Command {
 func Execute() int {
 	// SIGHUP too: a closed terminal or zellij pane must stop an agent run
 	// cleanly (the agent runs in its own process group and gets no hangup).
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	sigs := []os.Signal{os.Interrupt, syscall.SIGTERM}
+	if !signal.Ignored(syscall.SIGHUP) { // nohup ade … keeps running when the terminal closes
+		sigs = append(sigs, syscall.SIGHUP)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), sigs...)
 	defer stop()
 	cmd, err := newRoot().ExecuteContextC(ctx)
 	if a := appFrom(cmd); a != nil {

@@ -57,9 +57,21 @@ func gitIn(ctx context.Context, dir string, env []string, args ...string) (strin
 // of the index, so untracked files show up and the user's staging area is
 // never touched.
 func worktreeDiff(ctx context.Context, dir, base string, patch bool) (DiffSummary, error) {
-	idx, err := gitIn(ctx, dir, nil, "rev-parse", "--git-path", "index")
+	env, cleanup, err := stagedCopy(ctx, dir)
 	if err != nil {
 		return DiffSummary{}, err
+	}
+	defer cleanup()
+	return summarise(ctx, dir, env, base, true, patch)
+}
+
+// stagedCopy stages the whole working tree (untracked files included) into a
+// temporary copy of dir's index and returns the environment that selects it:
+// the user's own index is never touched.
+func stagedCopy(ctx context.Context, dir string) (env []string, cleanup func(), err error) {
+	idx, err := gitIn(ctx, dir, nil, "rev-parse", "--git-path", "index")
+	if err != nil {
+		return nil, nil, err
 	}
 	idxPath := strings.TrimSpace(idx)
 	if !filepath.IsAbs(idxPath) {
@@ -67,20 +79,54 @@ func worktreeDiff(ctx context.Context, dir, base string, patch bool) (DiffSummar
 	}
 	tmp, err := os.CreateTemp("", "ade-agent-index-*")
 	if err != nil {
-		return DiffSummary{}, err
+		return nil, nil, err
 	}
 	tmp.Close()
-	defer os.Remove(tmp.Name())
+	cleanup = func() { os.Remove(tmp.Name()) }
 	if b, err := os.ReadFile(idxPath); err == nil {
 		if err := os.WriteFile(tmp.Name(), b, 0o600); err != nil {
-			return DiffSummary{}, err
+			cleanup()
+			return nil, nil, err
 		}
 	}
-	env := []string{"GIT_INDEX_FILE=" + tmp.Name()}
+	env = []string{"GIT_INDEX_FILE=" + tmp.Name()}
 	if _, err := gitIn(ctx, dir, env, "add", "-A"); err != nil {
-		return DiffSummary{}, err
+		cleanup()
+		return nil, nil, err
 	}
-	return summarise(ctx, dir, env, base, true, patch)
+	return env, cleanup, nil
+}
+
+// worktreeTree is the git tree object of everything in dir's working tree
+// (untracked files included, ignored ones not): a snapshot to compare later.
+func worktreeTree(ctx context.Context, dir string) (string, error) {
+	env, cleanup, err := stagedCopy(ctx, dir)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
+	out, err := gitIn(ctx, dir, env, "write-tree")
+	return strings.TrimSpace(out), err
+}
+
+// changedSince lists "<status>\t<path>" of what differs between tree (a
+// snapshot) and dir's working tree now.
+func changedSince(ctx context.Context, dir, tree string) ([]string, error) {
+	cur, err := worktreeTree(ctx, dir)
+	if err != nil {
+		return nil, err
+	}
+	out, err := gitIn(ctx, dir, nil, "diff-tree", "-r", "--name-status", tree, cur)
+	if err != nil {
+		return nil, err
+	}
+	var files []string
+	for ln := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
+		if ln != "" {
+			files = append(files, ln)
+		}
+	}
+	return files, nil
 }
 
 // committedDiff is what the commits since base changed: HEAD against base,

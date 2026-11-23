@@ -379,7 +379,8 @@ func newAgentDiscardCmd() *cobra.Command {
 			"Also cleans up after an --ai-branch run that failed or was cancelled.\n\n" +
 			"A run that worked in the item's own worktree and waits in review: puts the worktree back to\n" +
 			"the commit the run started from (tracked files are reset, untracked files removed, ignored\n" +
-			"files kept). It refuses when the branch has moved since. It lists what goes and asks first on\n" +
+			"files kept). It refuses when the branch has moved, or when any file differs from the tree the\n" +
+			"agent left (changes of yours; it lists them). It lists what goes and asks first on\n" +
 			"a terminal; --yes skips the question.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

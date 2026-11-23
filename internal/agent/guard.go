@@ -183,10 +183,26 @@ func readLock(path string) (run string, pid int, start uint64) {
 	return f[0], pid, start
 }
 
+// ErrUnverifiedPID is returned when a process should be stopped but its start
+// time was never recorded (a run made before ADE recorded it): a pid alone may
+// have been reused by an unrelated process, so ADE does not kill it.
+var ErrUnverifiedPID = errors.New("no start time was recorded for the process")
+
 // killVerified kills the process group led by pid, but only when pid still is
 // the process recorded with start time pstart: a recycled pid is somebody
-// else's process.
+// else's process. Without a recorded start time it kills nothing and returns
+// ErrUnverifiedPID (where /proc cannot give start times at all, the pid is all
+// there is to go on).
 func killVerified(pid int, pstart uint64) error {
+	if pid <= 0 {
+		return nil
+	}
+	if pstart == 0 && workspace.ProcessStart(os.Getpid()) != 0 {
+		if workspace.ProcessAlive(pid, 0) {
+			return fmt.Errorf("pid %d: %w: it is not killed; if it is still the agent, stop it yourself (kill -- -%d)", pid, ErrUnverifiedPID, pid)
+		}
+		return nil
+	}
 	if !workspace.ProcessAlive(pid, pstart) {
 		return nil
 	}

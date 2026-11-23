@@ -37,7 +37,7 @@ func TestAgentRunGuardRefusesWritesApprovalsAndTriage(t *testing.T) {
 		}
 		return cmd
 	}
-	refused := []string{"review submit", "agent approve", "agent push", "ai triage accept", "mr merge", "mr reply", "mr approve", "issue weight", "start"}
+	refused := []string{"review submit", "agent approve", "agent push", "ai triage accept", "mr merge", "mr reply", "mr approve", "issue weight", "start", "review add", "review rm", "project bootstrap", "cache reset"}
 	reads := []string{"mr show", "mr diff", "review list", "agent list", "agent show", "agent diff", "item", "inbox"}
 
 	t.Setenv(workspace.AgentRunEnv, "1")
@@ -94,6 +94,38 @@ func TestAgentRunGuardThroughTheRoot(t *testing.T) {
 		err := cmd.ExecuteContext(context.Background())
 		if err == nil || !strings.Contains(err.Error(), "refused while an agent run is in progress") {
 			t.Errorf("ade %s with ADE_AGENT_RUN=1: %v", strings.Join(args, " "), err)
+		}
+	}
+}
+
+// Every command that can run must have been classified: refused in an agent
+// run, or looked at and allowed. A new write command fails here until its
+// author decides.
+func TestEveryCommandIsClassifiedForAgentRuns(t *testing.T) {
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		if c.Runnable() && c.Name() != "help" && c.Name() != "completion" && c.Parent() != nil {
+			classified := false
+			for p := c; p != nil; p = p.Parent() {
+				if _, ok := p.Annotations[annAgentRefused]; ok {
+					classified = true
+				}
+				if _, ok := p.Annotations[annAgentAllowed]; ok && p == c {
+					classified = true
+				}
+			}
+			if !classified {
+				t.Errorf("%q is neither refused nor allowed in an agent run: add it to agentRefused (it writes to a forge, approves, accepts or starts an agent) or agentAllowed (it reads or is local) in agentguard.go", c.CommandPath())
+			}
+		}
+		for _, s := range c.Commands() {
+			walk(s)
+		}
+	}
+	walk(newRoot())
+	for path := range agentAllowed {
+		if _, refused := agentRefused[path]; refused {
+			t.Errorf("%q is both allowed and refused", path)
 		}
 	}
 }

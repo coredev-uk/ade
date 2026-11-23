@@ -207,5 +207,15 @@ func (m *Manager) restoreStart(ctx context.Context, r Run) error {
 	if tip != r.BaseSHA {
 		return fmt.Errorf("%s has moved from %s to %s since the run started: commits are not thrown away; reset them yourself", r.Branch, short(r.BaseSHA), short(tip))
 	}
+	if r.ReviewTree == "" {
+		return errors.New("the run recorded no snapshot of the agent's tree (it predates snapshots), so ADE cannot tell its changes from yours: reset the worktree by hand")
+	}
+	files, err := changedSince(ctx, r.Worktree, r.ReviewTree)
+	if err != nil {
+		return err
+	}
+	if len(files) > 0 {
+		return fmt.Errorf("the worktree differs from what the agent left, so some of it is yours and discard would throw it away; changed since the run finished:\n  %s\nrestore or commit those first, or reset by hand", strings.Join(files, "\n  "))
+	}
 	return restoreTo(ctx, r.Worktree, r.BaseSHA)
 }

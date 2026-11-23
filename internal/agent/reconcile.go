@@ -59,9 +59,12 @@ func (m *Manager) Reconcile() ([]Run, error) {
 
 // reap fails one dead run.
 func (m *Manager) reap(r Run) (Run, bool) {
-	_ = killVerified(r.PID, r.PIDStart)
+	kerr := killVerified(r.PID, r.PIDStart)
 	now := m.Now()
 	reason := "the ADE process that ran it ended before it finished (closed terminal, crash or kill): the run is failed, its work so far is in the worktree"
+	if errors.Is(kerr, ErrUnverifiedPID) {
+		reason += "; " + kerr.Error()
+	}
 	var open *Call
 	if n := len(r.Calls); n > 0 && r.Calls[n-1].Ended.IsZero() {
 		open = &r.Calls[n-1]

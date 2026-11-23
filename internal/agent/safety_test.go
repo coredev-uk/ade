@@ -476,3 +476,83 @@ func TestRedactsKnownTokensInTheTranscript(t *testing.T) {
 		t.Errorf("redacted = %s", got)
 	}
 }
+
+// A run recorded before ADE kept process start times has only a pid, which may
+// belong to someone else by now: it is never killed.
+func TestUnverifiedPIDIsNeverKilled(t *testing.T) {
+	e := newEnv(t)
+	victim := exec.Command("sleep", "60")
+	victim.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := victim.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(-victim.Process.Pid, syscall.SIGKILL); _ = victim.Wait() })
+
+	r := e.newRun(KindPlan, e.ctx())
+	r.State, r.PID, r.PIDStart = StateRunning, victim.Process.Pid, 0
+	if err := e.st.Save(r); err != nil {
+		t.Fatal(err)
+	}
+	got, err := e.m.Cancel(r.ID)
+	if got.State != StateCancelled || err == nil || !strings.Contains(err.Error(), "no start time") || !strings.Contains(err.Error(), strconv.Itoa(victim.Process.Pid)) {
+		t.Errorf("cancel must mark the run, kill nothing and name the pid: %v %s", err, got.State)
+	}
+	if syscall.Kill(victim.Process.Pid, 0) != nil {
+		t.Fatal("cancel killed a process whose identity was never verified")
+	}
+
+	// Reconcile does the same for a dead owner.
+	r2 := e.newRun(KindPlan, e.ctx())
+	r2.State, r2.Owner, r2.OwnerStart, r2.PID, r2.PIDStart = StateRunning, 999999, 1, victim.Process.Pid, 0
+	if err := e.st.Save(r2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.m.Reconcile(); err != nil {
+		t.Fatal(err)
+	}
+	if cur, _ := e.st.Get(r2.ID); cur.State != StateFailed || !strings.Contains(cur.Error, "no start time") {
+		t.Errorf("the failed run must tell the user about the pid: %+v", cur)
+	}
+	if syscall.Kill(victim.Process.Pid, 0) != nil {
+		t.Fatal("reconcile killed an unverified process")
+	}
+}
+
+func TestDiscardRefusesWhatIsNotTheAgents(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	r, err := e.m.Implement(ctx, e.approved().ID)
+	if err != nil || r.ReviewTree == "" {
+		t.Fatalf("a run in review records the tree the agent left: %v %+v", err, r)
+	}
+	// You edited the agent's file and added one of yours after it finished.
+	if err := os.WriteFile(filepath.Join(e.wt, "hello.txt"), []byte("edited by me\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(e.wt, "mine.txt"), []byte("mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.m.Discard(ctx, r.ID)
+	if err == nil || !strings.Contains(err.Error(), "mine.txt") || !strings.Contains(err.Error(), "hello.txt") || !strings.Contains(err.Error(), "yours") {
+		t.Fatalf("discard must refuse and say what changed: %v", err)
+	}
+	if !exists(filepath.Join(e.wt, "mine.txt")) || !exists(filepath.Join(e.wt, "hello.txt")) {
+		t.Error("a refused discard removed files")
+	}
+	if cur, _ := e.m.Store.Get(r.ID); cur.State != StateReview {
+		t.Errorf("a refused discard leaves the run in review: %s", cur.State)
+	}
+
+	// A run that predates snapshots cannot tell the agent's changes from yours.
+	if err := os.Remove(filepath.Join(e.wt, "mine.txt")); err != nil {
+		t.Fatal(err)
+	}
+	cur, _ := e.m.Store.Get(r.ID)
+	cur.ReviewTree = ""
+	if err := e.st.Save(cur); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.m.Discard(ctx, r.ID); err == nil || !strings.Contains(err.Error(), "no snapshot") {
+		t.Errorf("legacy run: %v", err)
+	}
+}

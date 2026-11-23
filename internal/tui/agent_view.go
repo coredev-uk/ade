@@ -293,7 +293,7 @@ func (m model) agDiscardView(d *agentDialog, inner int) ([]string, string) {
 		if ds := d.diff; ds != nil {
 			l = append(l, fmt.Sprintf(m.g.T("%s · +%d -%d"), countWord(len(ds.Files), "file"), ds.Added(), ds.Removed()), "")
 		}
-		l = append(l, wrap("Puts "+stBold.Render(r.Worktree)+" back to the commit the run started from: tracked files are reset and untracked files removed (ignored files stay). Refused if "+stBold.Render(r.Branch)+" has moved since.", inner)...)
+		l = append(l, wrap("Puts "+stBold.Render(r.Worktree)+" back to the commit the run started from: tracked files are reset and untracked files removed (ignored files stay). Refused if "+stBold.Render(r.Branch)+" has moved, or any file differs from what the agent left (it then lists them: they are yours).", inner)...)
 		return l, keys("y", "discard", "n", "back")
 	}
 	l := []string{section("Discard", "the -ai branch", inner, g), ""}

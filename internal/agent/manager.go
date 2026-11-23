@@ -176,6 +176,10 @@ func (m *Manager) New(ctx context.Context, req Request) (Run, ai.Preflight, erro
 	if err := req.Context.write(m.Store.Dir(r)); err != nil {
 		return Run{}, pf, err
 	}
+	if req.AllowUncapped && m.checkUncapped(r.Driver, req.Kind, r.CapUSD, false) != nil {
+		// The user's yes to an uncapped codex run, as AllowUncapped records it.
+		m.audit(auditEntry("agent.allow-uncapped", "user", r, map[string]any{"run": r.ID, "driver": r.Driver, "cap_usd": r.CapUSD}))
+	}
 	m.emit(r, "queued", events.Info, true, "", "")
 	return r, pf, nil
 }
@@ -569,6 +573,11 @@ func (m *Manager) toReview(ctx context.Context, r Run, requireChange bool) (Run,
 	if d.Empty() && requireChange {
 		return m.fail(r, errNoChanges)
 	}
+	// The tree the agent left: discard compares against it, so it never throws
+	// away anything that was not the agent's.
+	if r.ReviewTree, err = worktreeTree(ctx, r.WorkDir()); err != nil {
+		return m.fail(r, fmt.Errorf("snapshot: %w", err))
+	}
 	r.Error = ""
 	if err := m.move(&r, StateReview); err != nil {
 		return r, err
@@ -859,7 +868,7 @@ func (m *Manager) Cancel(id string) (Run, error) {
 	// Only the process that was recorded: a pid that has been reused since is
 	// somebody else's.
 	if err := killVerified(pid, pstart); err != nil {
-		return r, fmt.Errorf("stop pid %d: %w", pid, err)
+		return r, fmt.Errorf("run cancelled, but %w", err)
 	}
 	return r, nil
 }

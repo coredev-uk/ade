@@ -2,6 +2,7 @@ package tui
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -86,6 +87,21 @@ func TestAgentXOnARunInReviewDiscardsAfterConfirm(t *testing.T) {
 	}
 	file := filepath.Join(e.wt, "limiter.go")
 	if err := os.WriteFile(file, []byte("package api\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The tree the agent left, as the manager snapshots it (a temporary index).
+	idx := filepath.Join(t.TempDir(), "index")
+	for _, args := range [][]string{{"add", "-A"}, {"write-tree"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = e.wt
+		cmd.Env = append(os.Environ(), "GIT_INDEX_FILE="+idx, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.ReviewTree = strings.TrimSpace(string(out))
+	}
+	if err := e.mgr.Store.Save(r); err != nil {
 		t.Fatal(err)
 	}
 
