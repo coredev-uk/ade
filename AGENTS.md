@@ -20,7 +20,7 @@ ADE is an agentic development environment for the terminal: a Bubble Tea dashboa
 
 Tools come from the flake: `nix develop -c <cmd>`, or let direnv load it (`.envrc` is `use flake`). Go, gopls, golangci-lint, gofumpt, goreleaser, vhs, jq, ripgrep and the runtime tools (git, zellij, lazygit, delta, neovim, glab, gh) are on its PATH.
 
-- CI (`.github/workflows/ci.yml`): `nix flake check` (the whole `go test ./...` in the Nix sandbox), `nix develop -c golangci-lint run ./...` (gofumpt included), `nix build`.
+- CI (`.github/workflows/ci.yml`): `nix flake check` (the whole `go test ./...` in the Nix sandbox), `nix develop -c golangci-lint run ./...` (gofumpt included), `nix develop -c goreleaser check`, `nix build`.
 - Fast loop: `go test ./internal/<pkg>` and `go test ./internal/<pkg> -run '^TestName$'`; `go vet ./...`; `gofumpt -w <files>`.
 - Generated files:
   - JSON Schemas: `go test ./internal/config -run TestCommittedSchemasAreCurrent -update-schema` (a test fails while `docs/schema/` is stale).

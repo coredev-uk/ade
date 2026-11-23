@@ -7,7 +7,7 @@
   prHourlyLimit: 4,
   prConcurrentLimit: 10,
   // Go modules and GitHub Actions only. The flake's inputs (flake.lock) move by hand
-  // (docs/setup.md), and a Go module bump also moves flake.nix's vendorHash, which
+  // (`nix flake update`), and a Go module bump also moves flake.nix's vendorHash, which
   // .github/workflows/nix-vendor-hash.yml commits to the PR.
   enabledManagers: ["gomod", "github-actions"],
   postUpdateOptions: ["gomodTidy", "gomodUpdateImportPaths"],
