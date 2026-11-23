@@ -264,7 +264,7 @@ func (m *model) modalKey(k tea.KeyPressMsg) tea.Cmd {
 				return nil
 			}
 			p.modal = nil
-			return m.actReply(md.thread, body)
+			return m.actReply(md.thread, body, md.aiNote != "") // aiNote is set when the editor opened with an AI draft
 		}
 		md.ed.handle(k)
 	case modalComment, modalEditDraft:

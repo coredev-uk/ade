@@ -7,16 +7,17 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/coredev-uk/ade/internal/aimark"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/review"
 )
 
 // Prompt versions key the result cache: change a prompt, bump its version.
 const (
-	summarizeVersion = "summarize-v2"
-	classifyVersion  = "classify-v3"
-	replyVersion     = "draft-reply-v2"
-	reviewVersion    = "review-v1"
+	summarizeVersion = "summarize-v3"
+	classifyVersion  = "classify-v4"
+	replyVersion     = "draft-reply-v3"
+	reviewVersion    = "review-v2"
 )
 
 var (
@@ -53,7 +54,8 @@ func clip(s string, n int) string {
 
 // mrHeader is the part of an MR prompt that identifies the change. It holds
 // only what describes the change itself (never counts or timestamps that move
-// without the code moving), so an unchanged MR hashes the same.
+// without the code moving), so an unchanged MR hashes the same. The title,
+// branch names and description are the forge's text: an untrusted block.
 func mrHeader(mr forge.MR, head string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Merge request: %s\n", mr.Title)
@@ -62,20 +64,21 @@ func mrHeader(mr forge.MR, head string) string {
 	if d := clip(mr.Description, maxDescription); d != "" {
 		fmt.Fprintf(&b, "\nDescription:\n%s\n", d)
 	}
-	return b.String()
+	return untrusted("merge request", b.String())
 }
 
 func issueBlock(is *forge.Issue) string {
 	if is == nil {
 		return ""
 	}
-	return fmt.Sprintf("\nLinked issue %s: %s\n%s\n", is.Ref, is.Title, clip(is.Description, maxDescription))
+	return "\n" + untrusted("linked issue", fmt.Sprintf("Linked issue %s: %s\n%s", is.Ref, is.Title, clip(is.Description, maxDescription)))
 }
 
 // renderDiff writes the MR's files as unified hunks, each file clipped and the
 // whole bounded. With numbered, every line carries its line number (new-file
 // numbers for added and unchanged lines, old-file numbers for removed ones),
-// which is what lets a reviewer cite lines.
+// which is what lets a reviewer cite lines. The result is plain text: callers
+// put it in an untrusted block.
 func renderDiff(d forge.Diff, numbered bool) string {
 	var b strings.Builder
 	omitted := 0
@@ -125,50 +128,94 @@ func SummarizeJob(forgeName string, mr forge.MR, d forge.Diff, issue *forge.Issu
 	head := firstNonEmpty(d.HeadSHA, mr.HeadSHA)
 	return Job{
 		Feature: "summarize", Role: RoleExplain, PromptVersion: summarizeVersion,
-		System: summarizeSystem,
-		Prompt: mrHeader(mr, head) + issueBlock(issue) + "\nChanges:\n" + renderDiff(d, false),
+		System: guarded(summarizeSystem),
+		Prompt: mrHeader(mr, head) + issueBlock(issue) + "\nChanges:\n" + untrusted("diff", renderDiff(d, false)),
 		Forge:  forgeName, Ref: mr.Ref, Name: "summary-mr" + fmt.Sprint(mr.Ref.IID),
 		MaxTokens: 500,
 		Params:    map[string]any{"head": head},
 	}
 }
 
+// ReplyRole is whose voice a draft reply is written in. The thread's reader
+// may be the merge request's author, a reviewer, or unknown (the dashboard did
+// not say who is signed in): a reviewer must not get "I'll fix it" drafted for
+// them.
+type ReplyRole int
+
+const (
+	ReplyUnknown  ReplyRole = iota // identity not known: no promises either way
+	ReplyAuthor                    // the reader opened the merge request
+	ReplyReviewer                  // the reader is a reviewer or another participant
+)
+
+// ReplyRoleFor decides the role of me (a username; "" when unknown) on mr.
+func ReplyRoleFor(mr forge.MR, me string) ReplyRole {
+	switch {
+	case me == "":
+		return ReplyUnknown
+	case strings.EqualFold(me, mr.Author.Username):
+		return ReplyAuthor
+	}
+	return ReplyReviewer
+}
+
+func (r ReplyRole) instruction() string {
+	switch r {
+	case ReplyAuthor:
+		return "Write the reply to the last comment, as the merge request's author."
+	case ReplyReviewer:
+		return "Write the reply to the last comment, as a reviewer of this merge request: you are not its author, so never say you will change the code; ask, answer or agree as a reviewer."
+	}
+	return "Write the reply to the last comment. It is not known whether you are the merge request's author or a reviewer, so do not promise changes to the code and do not speak for the author."
+}
+
 // ReplyJob drafts a reply to one discussion. The thread's notes and, for a
-// diff thread, that file's clipped diff are the input.
-func ReplyJob(forgeName string, mr forge.MR, disc forge.Discussion, d forge.Diff) Job {
+// diff thread, that file's clipped diff are the input; role says whose voice
+// the reply is in.
+func ReplyJob(forgeName string, mr forge.MR, disc forge.Discussion, d forge.Diff, role ReplyRole) Job {
 	var b strings.Builder
 	b.WriteString(mrHeader(mr, firstNonEmpty(d.HeadSHA, mr.HeadSHA)))
 	if p := disc.Position; p != nil {
-		fmt.Fprintf(&b, "\nThread is on %s", p.Path)
+		var pos strings.Builder
+		fmt.Fprintf(&pos, "Thread is on %s", p.Path)
 		if p.NewLine > 0 {
-			fmt.Fprintf(&b, " line %d (new file)", p.NewLine)
+			fmt.Fprintf(&pos, " line %d (new file)", p.NewLine)
 		} else if p.OldLine > 0 {
-			fmt.Fprintf(&b, " line %d (old file)", p.OldLine)
+			fmt.Fprintf(&pos, " line %d (old file)", p.OldLine)
 		}
-		b.WriteString("\n")
 		if f, ok := review.File(d, p.Path); ok && f.Diff != "" {
-			fmt.Fprintf(&b, "That file's diff:\n%s\n", clip(f.Diff, maxFileDiff))
+			fmt.Fprintf(&pos, "\nThat file's diff:\n%s", clip(f.Diff, maxFileDiff))
 		}
+		b.WriteString("\n" + untrusted("thread location and diff", pos.String()))
 	}
-	b.WriteString("\nThe thread, oldest first:\n")
 	notes := disc.Notes
 	if len(notes) > maxThreadNotes {
 		notes = notes[len(notes)-maxThreadNotes:]
 	}
+	var thread strings.Builder
+	thread.WriteString("The thread, oldest first:\n")
 	for _, n := range notes {
 		if n.System {
 			continue
 		}
-		fmt.Fprintf(&b, "- %s: %s\n", n.Author.Username, clip(strings.Join(strings.Fields(n.Body), " "), maxNoteChars))
+		fmt.Fprintf(&thread, "- %s: %s\n", n.Author.Username, clip(strings.Join(strings.Fields(n.Body), " "), maxNoteChars))
 	}
-	b.WriteString("\nWrite the reply to the last comment, as the merge request's author.\n")
+	b.WriteString("\n" + untrusted("review thread", thread.String()))
+	b.WriteString("\n" + role.instruction() + "\n")
 	return Job{
 		Feature: "draft-reply", Role: RoleDraft, PromptVersion: replyVersion,
-		System: replySystem, Prompt: b.String(),
+		System: guarded(replySystem), Prompt: b.String(),
 		Forge: forgeName, Ref: mr.Ref, Name: "reply-mr" + fmt.Sprint(mr.Ref.IID),
 		MaxTokens: 300,
 		Params:    map[string]any{"discussion": disc.ID},
 	}
+}
+
+// ReplyDraft is a draft reply as it may be edited and posted: every line that
+// would run as a forge quick action is neutralised, code fences included (the thread steered the
+// model). The text is marked as AI drafted when it is posted (aimark.Mark).
+func ReplyDraft(text string) string {
+	return strings.TrimSpace(aimark.NoQuickActions(strings.TrimSpace(text)))
 }
 
 // ReviewJob asks the review role for structured comments on the MR's diff.
@@ -180,18 +227,19 @@ func ReviewJob(forgeName string, mr forge.MR, d forge.Diff, issue *forge.Issue, 
 	b.WriteString(mrHeader(mr, firstNonEmpty(d.HeadSHA, mr.HeadSHA)))
 	b.WriteString(issueBlock(issue))
 	for _, name := range sortedKeys(guides) {
-		fmt.Fprintf(&b, "\nGuide %s:\n%s\n", name, clip(guides[name], maxDescription))
+		fmt.Fprintf(&b, "\nGuide %s:\n%s\n", name, untrusted("guide "+name, clip(guides[name], maxDescription)))
 	}
 	if open := openThreads(threads); open != "" {
-		b.WriteString("\nExisting review threads (do not repeat these):\n" + open)
+		b.WriteString("\nExisting review threads (do not repeat these):\n" + untrusted("existing review threads", open))
 	}
-	b.WriteString("\nDiff:\n" + renderDiff(d, true))
+	b.WriteString("\nDiff:\n" + untrusted("diff", renderDiff(d, true)))
 	return Job{
 		Feature: "review", Role: RoleReview, PromptVersion: reviewVersion,
-		System: reviewSystem, Prompt: b.String(),
+		System: guarded(reviewSystem), Prompt: b.String(),
 		Forge: forgeName, Ref: mr.Ref, Name: "review-mr" + fmt.Sprint(mr.Ref.IID),
 		MaxTokens: 2500,
 		Params:    map[string]any{"head": firstNonEmpty(d.HeadSHA, mr.HeadSHA)},
+		Validate:  func(text string) error { _, err := ParseReview(text); return err },
 	}
 }
 
