@@ -28,6 +28,8 @@ const (
 	OutcomeSkipped = "skipped"
 	OutcomeFailed  = "failed"
 	OutcomeWould   = "would create" // dry run
+	// OutcomeClosedMR marks an MR step that stopped at a closed MR.
+	OutcomeClosedMR = "closed MR"
 )
 
 // StepResult is what one step did.
@@ -165,7 +167,10 @@ func (e *Env) DryRun(p Plan) Result {
 	}
 	for _, s := range p.Steps {
 		out := OutcomeWould
-		if s.Done {
+		switch {
+		case s.Closed:
+			out = OutcomeClosedMR
+		case s.Done:
 			out = OutcomeExists
 		}
 		res.Steps = append(res.Steps, StepResult{Step: s, Outcome: out})
@@ -227,6 +232,8 @@ func (e *Env) Execute(ctx context.Context, p Plan) (Result, error) {
 		sr := StepResult{Step: s}
 		rt := rts[s.Repo]
 		switch {
+		case s.Closed:
+			sr.Outcome = OutcomeClosedMR
 		case s.Done:
 			sr.Outcome = OutcomeExists
 		case rt != nil && rt.failed:

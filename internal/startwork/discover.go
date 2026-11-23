@@ -306,7 +306,7 @@ func (e *Env) findChild(ctx context.Context, tracker forge.Issue, project string
 func (e *Env) findBranchAndMR(ctx context.Context, item domain.WorkItem, m *config.Manifest, ch Choices, t Target, work forge.Ref, f *Found) error {
 	withChild := useChild(m, ch, t)
 	if pin := ch.Branches[t.Name]; pin != "" {
-		return e.findPinnedBranch(ctx, t, pin, f)
+		return e.findPinnedBranch(ctx, t, ch, pin, f)
 	}
 	switch {
 	case withChild && f.Child != nil:
@@ -340,7 +340,7 @@ func (e *Env) findBranchAndMR(ctx context.Context, item domain.WorkItem, m *conf
 		if err != nil {
 			return err
 		}
-		f.MR = pickMR(mrs)
+		setMR(f, mrs, ch)
 	}
 	if f.MR == nil && (f.Child != nil || !withChild) {
 		// The branch may be gone (merged and deleted) while its MR remains.
@@ -349,7 +349,7 @@ func (e *Env) findBranchAndMR(ctx context.Context, item domain.WorkItem, m *conf
 			return err
 		}
 		mrs = slices.DeleteFunc(mrs, func(mr forge.MR) bool { return mr.Ref.Project != t.Project })
-		if f.MR = pickMR(mrs); f.MR != nil && f.Branch == "" {
+		if setMR(f, mrs, ch); f.MR != nil && f.Branch == "" {
 			f.Branch = f.MR.SourceBranch
 		}
 	}
@@ -377,7 +377,7 @@ func (e *Env) preferOpenBranch(ctx context.Context, t Target, work forge.Ref, bs
 // findPinnedBranch looks up the branch Choices.Branches names, by exact name,
 // and its MR. No other branch or MR of the issue stands in for it: the pin
 // asks for a separate set of changes.
-func (e *Env) findPinnedBranch(ctx context.Context, t Target, name string, f *Found) error {
+func (e *Env) findPinnedBranch(ctx context.Context, t Target, ch Choices, name string, f *Found) error {
 	bs, err := e.Forge.Branches(ctx, t.Project, name)
 	if err != nil {
 		return err
@@ -390,12 +390,31 @@ func (e *Env) findPinnedBranch(ctx context.Context, t Target, name string, f *Fo
 	if err != nil {
 		return err
 	}
-	f.MR = pickMR(mrs)
+	setMR(f, mrs, ch)
 	return nil
 }
 
-// pickMR prefers an open MR, then a merged one; a closed MR does not block a
-// new one.
+// setMR records the MR the work continues on, or else, unless ch.NewMR, the
+// latest closed MR of the same branch, which a new MR would shadow. A closed MR
+// of another branch of the issue is none of this branch's business.
+func setMR(f *Found, mrs []forge.MR, ch Choices) {
+	if f.MR = pickMR(mrs); f.MR == nil && !ch.NewMR && f.ClosedMR == nil && f.Branch != "" {
+		f.ClosedMR = pickClosed(mrs, f.Branch)
+	}
+}
+
+// pickClosed is the most recent closed MR (the highest number) from branch.
+func pickClosed(mrs []forge.MR, branch string) *forge.MR {
+	var best *forge.MR
+	for i := range mrs {
+		if mrs[i].State == "closed" && mrs[i].SourceBranch == branch && (best == nil || mrs[i].Ref.IID > best.Ref.IID) {
+			best = &mrs[i]
+		}
+	}
+	return best
+}
+
+// pickMR prefers an open MR, then a merged one; a closed MR is left to setMR.
 func pickMR(mrs []forge.MR) *forge.MR {
 	for _, state := range []string{"opened", "merged"} {
 		for _, mr := range mrs {
