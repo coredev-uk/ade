@@ -182,8 +182,21 @@ func TestAssembleDriftAndTriage(t *testing.T) {
 	if !got.Drift || got.WantWorkflow != "in review" || got.Workflow != "in progress" {
 		t.Errorf("drift = %v want=%q have=%q", got.Drift, got.WantWorkflow, got.Workflow)
 	}
+	if !got.Movable {
+		t.Error("a drift ADE can fix is not marked movable")
+	}
 	if len(got.Triage) != 0 {
 		t.Errorf("triage = %v, weight source none must not demand weight", got.Triage)
+	}
+	// labelled with the team's done value while an MR is still open: drift, but ADE never moves it back.
+	withDone := *m
+	withDone.Labels.Workflow.Done = "done"
+	ahead := Assemble(AssembleInput{
+		Manifest: &withDone, Me: me, Tracker: tracker(1, "x", true, "opened", "type::story", "app::api", "workflow::done"),
+		Links: []forge.Link{link(api)}, Candidates: []forge.Issue{api}, MRs: []forge.MR{mr("api", 1, nil)},
+	})
+	if !ahead.Drift || ahead.Movable {
+		t.Errorf("done label ahead of an open MR: drift %v movable %v, want drift and not movable", ahead.Drift, ahead.Movable)
 	}
 
 	// no app pattern configured: missing app is not triage.

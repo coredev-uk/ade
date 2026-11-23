@@ -119,6 +119,11 @@ func (m model) actUpdate(msg tea.Msg) (model, tea.Cmd, bool) {
 		return m, nil, true
 	case adAppliedMsg:
 		if d == nil || msg.d != d {
+			// The dialog was closed while it wrote: the change is made all
+			// the same, so read again what it moved.
+			if msg.d.plan.after != nil {
+				return m, msg.d.plan.after(m), true
+			}
 			return m, nil, true
 		}
 		d.lines = msg.lines
