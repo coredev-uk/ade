@@ -682,7 +682,11 @@ func (m model) itemDetail(it *domain.WorkItem, w int, hint bool) string {
 	if it.Workflow != "" || it.WantWorkflow != "" {
 		lbl := "label " + orDash(m.g, it.Workflow)
 		if it.Drift {
-			l = append(l, stWarn.Render(g.Warn+" "+lbl+" "+g.Sep+" stage says "+it.WantWorkflow))
+			line := stWarn.Render(g.Warn + " " + lbl + " " + g.Sep + " stage says " + it.WantWorkflow)
+			if !it.KeptOpen && it.WantWorkflow != "" && !strings.EqualFold(it.Workflow, "blocked") {
+				line += stFaint.Render(" " + g.Sep + " m moves it")
+			}
+			l = append(l, line)
 		} else {
 			l = append(l, stFaint.Render(lbl+" "+g.OK))
 		}

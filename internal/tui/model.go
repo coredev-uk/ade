@@ -121,6 +121,9 @@ type model struct {
 	cm       *commentsDialog
 	// sm is the open sprint-move dialog, nil when closed (sprintmove.go).
 	sm *sprintDialog
+	// act is the open action dialog (label move), nil when closed
+	// (actiondialog.go).
+	act *actionDialog
 
 	// agt is the open agent dialog, nil when closed (agent.go).
 	agt *agentDialog
@@ -252,6 +255,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return next, cmd
 	}
 	if next, cmd, ok := m.smUpdate(msg); ok {
+		return next, cmd
+	}
+	if next, cmd, ok := m.actUpdate(msg); ok {
 		return next, cmd
 	}
 	if next, cmd, ok := m.agentUpdate(msg); ok {
@@ -534,6 +540,9 @@ func (m model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return next, cmd
 	case ">":
 		next, cmd := m.openSprintMove()
+		return next, cmd
+	case "m":
+		next, cmd := m.openStageMove()
 		return next, cmd
 	case "o":
 		next, cmd := m.openBrowser()

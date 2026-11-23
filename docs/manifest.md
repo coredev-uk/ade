@@ -94,8 +94,9 @@ done    = "done"               # optional, see below
   it does not change a shared board on its own. Every move is recorded in the audit log.
   - `auto`: ADE moves the label when the derived stage changes (and removes the old one), on every sync and in
     `ade start`. Pass `--no-move-label` to `ade start` to skip the move once.
-  - `ask`: ADE moves the label only when you confirm. `ade start` moves it with `--move-label`, and the start
-    dialog has a checkbox (key `l`). Without that, `ade start` and `ade start --dry-run` print the label they
+  - `ask`: ADE moves the label only when you confirm. `ade issue stage <ref>` (or `m` on the item in Home) shows the
+    move and applies it on a yes, whenever a sync has reported the label as behind. `ade start` moves it with
+    `--move-label`, and the start dialog has a checkbox (key `l`). Without that, `ade start` and `ade start --dry-run` print the label they
     would set. A background sync never moves the label: it lists each stage change as a warning in `ade sync` and
     in the inbox, naming the label and the item. Set the label on the board, or set `sync = "auto"`.
   - `off`: ADE never moves the label; the board column only shows as drift.
