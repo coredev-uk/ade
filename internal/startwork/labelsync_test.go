@@ -79,11 +79,47 @@ func TestApplyMovesReportsFailuresAndContinues(t *testing.T) {
 	h := newHarness(t, fake.Free)
 	good := startwork.Move{Ref: issueRef(tracker, 2), To: "in review", Add: "workflow::in review", Remove: []string{"workflow::in progress"}}
 	bad := startwork.Move{Ref: issueRef(tracker, 999), To: "in review", Add: "workflow::in review"}
-	applied, errs := startwork.ApplyMoves(context.Background(), h.forge, h.app, "demo-gl", "user", []startwork.Move{bad, good})
+	applied, errs := startwork.ApplyMoves(context.Background(), h.forge, h.app, "demo-gl", "user", "workflow stage", []startwork.Move{bad, good})
 	if len(applied) != 1 || applied[0].Ref != good.Ref || len(errs) != 1 {
 		t.Fatalf("applied %+v, errs %v", applied, errs)
 	}
 	if !errors.Is(errs[0], forge.ErrNotFound) {
 		t.Errorf("err = %v", errs[0])
+	}
+}
+
+func TestPendingMoveJudgesTheItemAsItStandsAndSaysWhyNot(t *testing.T) {
+	m := manifest(t, manifestTOML)
+	mk := func(stage domain.Stage, wf string, labels ...string) domain.WorkItem {
+		return domain.WorkItem{
+			Ref: issueRef(tracker, 3), Stage: stage, Workflow: wf, WantWorkflow: domain.WantWorkflow(stage, m.Labels),
+			Issue: forge.Issue{Ref: issueRef(tracker, 3), Labels: labels},
+		}
+	}
+	// No earlier state is needed, and sync = "off" does not stop a move asked for.
+	m.Labels.Workflow.Sync = "off"
+	mv, why := startwork.MoveReason(mk(domain.StageReview, "in progress", "workflow::in progress"), m)
+	if why != "" || mv.To != "in review" || mv.Add != "workflow::in review" || !slices.Equal(mv.Remove, []string{"workflow::in progress"}) {
+		t.Fatalf("move = %+v, why %q", mv, why)
+	}
+	if got := mv.Writes(); got != "add workflow::in review, remove workflow::in progress" {
+		t.Errorf("writes = %q", got)
+	}
+	for _, tc := range []struct {
+		name string
+		it   domain.WorkItem
+		want string
+	}{
+		{"already there", mk(domain.StageReview, "in review", "workflow::in review"), "already says in review"},
+		{"blocked", mk(domain.StageReview, "blocked", "workflow::blocked"), "blocked"},
+		{"done label", mk(domain.StageReview, "done", "workflow::done"), "never moves it back"},
+		{"finished item", mk(domain.StageDone, "in review", "workflow::in review"), "item is done"},
+	} {
+		if _, ok := startwork.PendingMove(tc.it, m); ok {
+			t.Errorf("%s: moved", tc.name)
+		}
+		if _, why := startwork.MoveReason(tc.it, m); !strings.Contains(why, tc.want) {
+			t.Errorf("%s: why = %q, want %q", tc.name, why, tc.want)
+		}
 	}
 }

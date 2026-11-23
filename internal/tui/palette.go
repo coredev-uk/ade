@@ -161,6 +161,7 @@ func (m model) paletteEntries() []palEntry {
 		pressEntry("Comments on the tracker issue", "C", "ade item <ref>", true),
 		pressEntry("Set weight", "=", "ade issue weight <ref> <n>", true),
 		pressEntry("Move to the next sprint", ">", "ade issue move <ref>", true),
+		pressEntry("Move the workflow label to match the stage", "m", "ade issue stage <ref>", true),
 	}
 	if m.aiOn() {
 		home = append(home, pressEntry("Research the issue in the background", "R", "ade ai research <ref> --detach", true))

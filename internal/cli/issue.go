@@ -19,12 +19,13 @@ func init() { register(newIssueCmd) }
 func newIssueCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "issue",
-		Short: "Explicit writes to a tracker issue (weight, sprint, child issue, assignee)",
+		Short: "Explicit writes to a tracker issue (weight, sprint, workflow label, child issue, assignee)",
 	}
 	cmd.AddCommand(newIssueWeightCmd())
 	cmd.AddCommand(newIssueMoveCmd())
 	cmd.AddCommand(newIssueChildCmd())
 	cmd.AddCommand(newIssueAssignCmd())
+	cmd.AddCommand(newIssueStageCmd())
 	return cmd
 }
 
