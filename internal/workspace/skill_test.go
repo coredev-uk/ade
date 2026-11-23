@@ -67,6 +67,7 @@ func TestRenderSkillCarriesTheTicket(t *testing.T) {
 		"Only the first commit of the merge request starts with `GL-12` and a space",
 		"**Stop for review.**",
 		"Do not push",
+		"blank line and the trailer `Assisted-by: ADE agent`",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("skill lacks %q\n%s", want, got)

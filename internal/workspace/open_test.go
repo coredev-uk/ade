@@ -257,3 +257,38 @@ func TestOpenWrapsPanesInTheProjectShellAndBriefsTheAgentWithItsAgents(t *testin
 		t.Errorf("skill lacks the project guidance (or carries ADE's header): %+v", p.agent)
 	}
 }
+
+func TestOpenFallsBackToTheEditorLayoutWhenAIIsOff(t *testing.T) {
+	f := newFixture(t, appManifest, "api/main", "web/main")
+	a := newApp(t, f, "plain")
+	a.Config.AI.Mode = "off"
+	tree := filepath.Join(f.root, "demo", "web", "main")
+	res, err := Open(context.Background(), a, "demo", "web", tree, WithLayout(LayoutAgent))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Layout != LayoutCode || res.Notice != NoticeAIOff {
+		t.Fatalf("%+v", res)
+	}
+	// The host default asks for agent too; the rendered tab has no agent pane.
+	a.Config.Host.Layout = LayoutAgent
+	kdl, err := RenderLayout(context.Background(), a, "demo", "web", tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(kdl, `name="agent"`) || !strings.Contains(kdl, `name="editor"`) {
+		t.Fatalf("layout:\n%s", kdl)
+	}
+}
+
+func TestOpenSaysWhenOmpIsMissingForTheAgentLayout(t *testing.T) {
+	f := newFixture(t, appManifest, "api/main", "web/main")
+	a := newApp(t, f, "plain") // PATH is empty: no omp
+	res, err := Open(context.Background(), a, "demo", "web", filepath.Join(f.root, "demo", "web", "main"), WithLayout(LayoutAgent))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Layout != LayoutAgent || res.Notice != NoticeNoOmp {
+		t.Fatalf("%+v", res)
+	}
+}

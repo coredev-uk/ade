@@ -78,3 +78,12 @@ func waitGone(pid int, pstart uint64, d time.Duration) bool {
 	}
 	return !processAlive(pid, pstart)
 }
+
+// ProcessStart is the kernel start time of pid (0 where /proc is unavailable),
+// for callers that record a process and must tell it from a later one that
+// reuses the pid.
+func ProcessStart(pid int) uint64 { return processStart(pid) }
+
+// ProcessAlive reports whether pid is the live, non-zombie process recorded
+// with start time pstart (0 skips the identity check).
+func ProcessAlive(pid int, pstart uint64) bool { return processAlive(pid, pstart) }
