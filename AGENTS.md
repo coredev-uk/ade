@@ -27,7 +27,8 @@ Tools come from the flake: `nix develop -c <cmd>`, or let direnv load it (`.envr
   - Golden TUI frames: `go test ./internal/tui -run TestGolden -update` (also `./internal/overview`); review the diff before committing it.
 - Live API tests: `go test -tags live -run Live -v ./internal/forge/github` (needs a token; read the file header first).
 - Screenshots for design review: `scripts/verify/capture*.sh` (VHS, output in `.impeccable/review/`); `scripts/verify/` holds the phase evidence scripts.
-- Release config: `goreleaser check`; a local build `goreleaser build --snapshot --clean --single-target`.
+- Dependency updates: Renovate (`.renovaterc.json5`, run by `.github/workflows/renovate.yml` as the bot-cecil App) opens grouped `build(deps)` (Go modules) and `ci(deps)` (GitHub Actions) PRs, which release-please leaves out of the changelog. CI pins every action by commit SHA with the version in a comment; Renovate moves the pins.
+- Release config: `goreleaser check` (CI runs it too); a local build `goreleaser build --snapshot --clean --single-target`.
 
 ## Releases
 

@@ -1,0 +1,40 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: ["config:recommended", ":timezone(Europe/London)", ":semanticCommits"],
+  // The maintainer merges; Renovate never does.
+  automerge: false,
+  rebaseWhen: "conflicted",
+  prHourlyLimit: 4,
+  prConcurrentLimit: 10,
+  // Go modules and GitHub Actions only. The flake's inputs (flake.lock) move by hand
+  // (docs/setup.md), and a Go module bump also moves flake.nix's vendorHash, which
+  // .github/workflows/nix-vendor-hash.yml commits to the PR.
+  enabledManagers: ["gomod", "github-actions"],
+  postUpdateOptions: ["gomodTidy", "gomodUpdateImportPaths"],
+  packageRules: [
+    {
+      // release-please writes the changelog from PR titles (AGENTS.md, Releases):
+      // dependency bumps are `build(deps)` and `ci(deps)`, which it leaves out, never
+      // `fix(deps)`, which would list every bump as a user-visible fix.
+      description: "Go modules: build(deps)",
+      matchManagers: ["gomod"],
+      semanticCommitType: "build",
+      semanticCommitScope: "deps",
+    },
+    {
+      description: "GitHub Actions: ci(deps), one weekly group",
+      matchManagers: ["github-actions"],
+      semanticCommitType: "ci",
+      semanticCommitScope: "deps",
+      groupName: "GitHub Actions",
+      schedule: ["before 6am on monday"],
+    },
+    {
+      description: "Go modules: minor and patch bumps in one weekly group; majors on their own",
+      matchManagers: ["gomod"],
+      matchUpdateTypes: ["minor", "patch", "digest"],
+      groupName: "Go modules",
+      schedule: ["before 6am on monday"],
+    },
+  ],
+}
