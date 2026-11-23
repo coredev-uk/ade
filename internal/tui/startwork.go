@@ -88,9 +88,11 @@ type startDialog struct {
 
 	body *editor // the MR body being edited in the dialog (E); nil otherwise
 
-	// branchIn is the branch name being typed for the repo at cur (b); nil
-	// otherwise. The names kept are in ch.Branches.
+	// branchIn is the branch name being typed for the repo at cur (b), or its
+	// base branch (B, baseEdit); nil otherwise. The names kept are in
+	// ch.Branches and ch.Bases.
 	branchIn *textinput.Model
+	baseEdit bool
 
 	warn string // one line under the dialog body
 	err  error
@@ -467,9 +469,9 @@ func (m model) swChooseKey(d *startDialog, k tea.KeyPressMsg) (model, tea.Cmd) {
 		ls := swLayoutChoices(m.app.Config.AI.Mode == "off")
 		i := slices.IndexFunc(ls, func(x struct{ layout, label, what string }) bool { return x.layout == d.ch.Layout })
 		d.ch.Layout = ls[(i+1)%len(ls)].layout
-	case "b":
+	case "b", "B":
 		if d.cur < nr {
-			d.editBranch()
+			d.editBranch(ks == "B")
 		}
 	case "space", " ", "x":
 		switch {
@@ -487,6 +489,7 @@ func (m model) swChooseKey(d *startDialog, k tea.KeyPressMsg) (model, tea.Cmd) {
 			return m, nil
 		}
 		maps.DeleteFunc(d.ch.Branches, func(repo, _ string) bool { return !slices.Contains(d.ch.Repos, repo) })
+		maps.DeleteFunc(d.ch.Bases, func(repo, _ string) bool { return !slices.Contains(d.ch.Repos, repo) })
 		d.warn, d.stage = "", swPlanning
 		return m, m.swDiscover(d)
 	}
@@ -494,16 +497,21 @@ func (m model) swChooseKey(d *startDialog, k tea.KeyPressMsg) (model, tea.Cmd) {
 }
 
 // editBranch opens the branch input for the repo under the cursor, holding its
-// current name; empty keeps the derived default.
-func (d *startDialog) editBranch() {
+// current name; empty keeps the derived default. With base it takes the branch
+// to start from instead; empty keeps the repo's default branch.
+func (d *startDialog) editBranch(base bool) {
 	in := textinput.New()
 	in.Prompt = ""
 	in.Placeholder = "empty: the derived name"
+	names := d.ch.Branches
+	if base {
+		in.Placeholder, names = "empty: the default branch", d.ch.Bases
+	}
 	in.SetWidth(32)
 	in.SetStyles(branchInputStyles())
-	in.SetValue(d.ch.Branches[d.repos[d.cur].name])
+	in.SetValue(names[d.repos[d.cur].name])
 	_ = in.Focus() // the cursor is static: no blink command to run
-	d.branchIn, d.warn = &in, ""
+	d.branchIn, d.baseEdit, d.warn = &in, base, ""
 }
 
 // branchInputStyles is the input in the terminal's own ground, with a static
@@ -513,8 +521,8 @@ func branchInputStyles() textinput.Styles {
 	return textinput.Styles{Focused: plain, Blurred: plain, Cursor: textinput.CursorStyle{Color: lipgloss.NoColor{}, Shape: tea.CursorBlock}}
 }
 
-// branchKey is a key in the branch input: enter keeps the name (a name also
-// ticks the repo), esc drops the change.
+// branchKey is a key in the branch or base input: enter keeps the name (a name
+// also ticks the repo), esc drops the change.
 func (d *startDialog) branchKey(k tea.KeyPressMsg) {
 	switch k.String() {
 	case "esc":
@@ -522,18 +530,22 @@ func (d *startDialog) branchKey(k tea.KeyPressMsg) {
 	case "enter":
 		repo := &d.repos[d.cur]
 		name := strings.TrimSpace(d.branchIn.Value())
+		names := &d.ch.Branches
+		if d.baseEdit {
+			names = &d.ch.Bases
+		}
 		if name != "" {
 			if err := startwork.ValidBranchName(name); err != nil {
 				d.warn = err.Error()
 				return
 			}
-			if d.ch.Branches == nil {
-				d.ch.Branches = map[string]string{}
+			if *names == nil {
+				*names = map[string]string{}
 			}
-			d.ch.Branches[repo.name] = name
+			(*names)[repo.name] = name
 			repo.on = true
 		} else {
-			delete(d.ch.Branches, repo.name)
+			delete(*names, repo.name)
 		}
 		d.branchIn, d.warn = nil, ""
 	default:
@@ -797,7 +809,7 @@ func (m model) startOverlay(w, h int) string {
 		hint = keys("esc", "cancel")
 	case swChoose:
 		l = append(l, m.swChooseView(d, inner)...)
-		hint = keys("space", "select", "b", "branch", "m", "mode", "c", "child", "a", "main pane", "enter", "continue", "esc", "cancel")
+		hint = keys("space", "select", "b", "branch", "B", "base", "m", "mode", "c", "child", "a", "main pane", "enter", "continue", "esc", "cancel")
 		if d.branchIn != nil {
 			hint = keys("enter", "keep", "esc", "discard")
 		}
@@ -887,11 +899,18 @@ func (m model) swChooseView(d *startDialog, inner int) []string {
 		}
 		line := cur + " " + checkbox(g, r.on, "") + name + " " + stFaint.Render(r.path)
 		editing := d.branchIn != nil && d.cur == i
-		switch {
-		case editing:
-			line += "  " + stFaint.Render("branch ") + d.branchIn.View()
-		case d.ch.Branches[r.name] != "":
-			line += "  " + stFaint.Render("branch ") + stBold.Render(d.ch.Branches[r.name])
+		if name := d.ch.Branches[r.name]; name != "" && (!editing || d.baseEdit) {
+			line += "  " + stFaint.Render("branch ") + stBold.Render(name)
+		}
+		if name := d.ch.Bases[r.name]; name != "" && (!editing || !d.baseEdit) {
+			line += "  " + stFaint.Render("base ") + stBold.Render(name)
+		}
+		if editing {
+			label := "branch "
+			if d.baseEdit {
+				label = "base "
+			}
+			line += "  " + stFaint.Render(label) + d.branchIn.View()
 		}
 		if note != "" && !editing {
 			line += stFaint.Render("  " + g.Sep + " " + note)
@@ -1025,6 +1044,9 @@ func (m model) swStations(d *startDialog, inner int, compact bool) []string {
 				state = "existing"
 			}
 			line += stFaint.Render("  "+g.Sep+" branch ") + stBold.Render(tp.Branch) + stFaint.Render(" ("+state+")")
+		}
+		if tp.BaseChosen {
+			line += stFaint.Render("  "+g.Sep+" base ") + stBold.Render(tp.Base)
 		}
 		l = append(l, ansi.Truncate(line, inner, m.g.Ell))
 		steps := stepsOf(p, tp.Target.Name)

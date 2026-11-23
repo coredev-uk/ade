@@ -31,6 +31,7 @@ var mrExtraCmds []func() *cobra.Command
 type startFlags struct {
 	repos       []string
 	branches    []string
+	bases       []string
 	mode        string
 	child       string
 	template    string
@@ -59,6 +60,7 @@ func (f *startFlags) bind(cmd *cobra.Command, withMode bool) {
 		fl.StringVar(&f.session, "session", "", "zellij session to open the tab in (default: ade; for tests)")
 		_ = fl.MarkHidden("session")
 	}
+	fl.StringArrayVar(&f.bases, "base", nil, "start from this branch in a repo instead of its default branch: repo=branch (repeatable); the new branch is cut from it, the MR targets it and the worktree records it as ade.target; the branch must exist on the forge, and the repo is added to the work")
 	fl.BoolVar(&f.newMR, "new-mr", false, "open a new MR when the branch's latest MR is closed, instead of stopping with the command that reopens it")
 	fl.StringVar(&f.child, "child", "", "child issue: auto | always | never; default from conventions.child_issue")
 	fl.StringVar(&f.template, "template", "", "MR template name (file in .gitlab/merge_request_templates, without .md)")
@@ -79,7 +81,7 @@ func newStartCmd() *cobra.Command {
 			"It is idempotent: an existing child, branch or MR is found and reused, so a re-run creates\n" +
 			"nothing and a failed run resumes. --dry-run shows every write, and the MR body, first.\n" +
 			"<tracker-ref> is group/project#N, or N when one project is registered.",
-		Example: "  ade start acme/tracker#128\n  ade start 128 --repo api --mode branch\n  ade start 128 --repo api --branch web=fix-retry-cache\n  ade start 128 --dry-run --json",
+		Example: "  ade start acme/tracker#128\n  ade start 128 --repo api --mode branch\n  ade start 128 --repo api --branch web=fix-retry-cache\n  ade start 128 --repo api --base api=release/1.2\n  ade start 128 --dry-run --json",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			f.dryRun, _ = cmd.Flags().GetBool("dry-run")
@@ -125,6 +127,11 @@ func runStart(cmd *cobra.Command, arg string, f startFlags, onlyMR bool) error {
 	if err != nil {
 		return err
 	}
+	if onlyMR {
+		if err := mrCreateBases(f.repos[0], ch.Bases); err != nil {
+			return err
+		}
+	}
 	ch.OnlyMR, ch.OnlyChild = onlyMR, f.onlyChild
 	if onlyMR {
 		ch.Mode = startwork.ModeDraft
@@ -148,6 +155,17 @@ func runStart(cmd *cobra.Command, arg string, f startFlags, onlyMR bool) error {
 	}
 	printStart(cmd.OutOrStdout(), r, res)
 	return err
+}
+
+// mrCreateBases refuses a --base for any repo but the one `ade mr create`
+// opens the MR in.
+func mrCreateBases(repo string, bases map[string]string) error {
+	for _, r := range slices.Sorted(maps.Keys(bases)) {
+		if r != repo {
+			return fmt.Errorf("--base %s=%s: ade mr create opens the MR of --repo %s only", r, bases[r], repo)
+		}
+	}
+	return nil
 }
 
 // choices turns the flags into startwork.Choices over the manifest defaults.
@@ -181,6 +199,9 @@ func (f startFlags) choices(r *startwork.Resolved) (startwork.Choices, error) {
 	}
 	ch.MoveLabel, ch.NoMoveLabel = f.moveLabel, f.noLabel
 	if err := f.pinBranches(r.Manifest, &ch); err != nil {
+		return ch, err
+	}
+	if err := f.pinBases(r.Manifest, &ch); err != nil {
 		return ch, err
 	}
 	ch.NewMR = f.newMR
@@ -224,6 +245,33 @@ func (f startFlags) pinBranches(m *config.Manifest, ch *startwork.Choices) error
 		}
 	}
 	ch.Branches = pins
+	return nil
+}
+
+// pinBases turns --base repo=branch into ch.Bases and adds those repos to the
+// chosen ones. Whether the branch exists is checked against the forge when the
+// plan is discovered.
+func (f startFlags) pinBases(m *config.Manifest, ch *startwork.Choices) error {
+	bases, err := keyValues("--base", f.bases)
+	if err != nil || bases == nil {
+		return err
+	}
+	if ch.Mode == startwork.ModeBrowse {
+		return errors.New("--base has no effect with --mode browse")
+	}
+	for _, repo := range slices.Sorted(maps.Keys(bases)) {
+		_, known := m.Repos[repo]
+		if !known && (repo != startwork.TrackerRepo || m.Tracker.Project == "") {
+			return fmt.Errorf("--base %s=%s: unknown repo (have: %s)", repo, bases[repo], strings.Join(m.RepoNames(), ", "))
+		}
+		if err := startwork.ValidBranchName(bases[repo]); err != nil {
+			return fmt.Errorf("--base %s=%s: %w", repo, bases[repo], err)
+		}
+		if !slices.Contains(ch.Repos, repo) {
+			ch.Repos = append(ch.Repos, repo)
+		}
+	}
+	ch.Bases = bases
 	return nil
 }
 

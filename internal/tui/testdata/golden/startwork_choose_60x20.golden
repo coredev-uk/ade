@@ -14,6 +14,6 @@
 │   ● auto    a child when the repo is not the tracker's   │
 │   ○ always  always a child issue                         │
 │ … 2 more rows a taller terminal shows them               │
-│ space select   b branch   m mode   c child   a main pane │
-│ enter continue   esc cancel                              │
+│ space select   b branch   B base   m mode   c child   a  │
+│ main pane   enter continue   esc cancel                  │
 ╰──────────────────────────────────────────────────────────╯
