@@ -261,7 +261,7 @@ into the bare repository's own `config.worktree`, which git requires):
 ```
 ade.parent        = 412          # the tracker issue's iid
 ade.commitPrefix  = GL-412       # absent when commit_prefix is not set (a stale value is removed)
-ade.target        = main         # the MR's target branch; absent when not known yet
+ade.target        = main         # the MR's target branch (the default branch, or the --base chosen at start); absent when not known yet
 ```
 
 **ADE's hook.** `ade ws hook install [worktree]` writes a `commit-msg` hook for one worktree, and

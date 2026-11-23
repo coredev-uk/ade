@@ -111,6 +111,12 @@ type Choices struct {
 	// An existing branch and its MR are reused; otherwise the name is created.
 	// Entries for repos not in Repos, and Browse, ignore it.
 	Branches map[string]string `json:"branches,omitempty"`
+	// Bases names the branch to start from in a repo, instead of its default
+	// branch (a hotfix on release/1.2): the new branch is cut from it, the MR
+	// targets it and the worktree records it as ade.target. It must exist on
+	// the forge when something is created from it. Entries for repos not in
+	// Repos, and Browse, ignore it.
+	Bases map[string]string `json:"bases,omitempty"`
 	// NewMR opens a new MR for a branch whose latest MR is closed, instead of
 	// stopping with a notice that says how to reopen the closed one.
 	NewMR bool `json:"new_mr,omitempty"`
@@ -184,11 +190,15 @@ type Target struct {
 // Found is what already exists for one target; Discover fills it. Plan only
 // reads it, which keeps Plan pure and makes re-runs no-ops.
 type Found struct {
-	DefaultBranch string       `json:"default_branch,omitempty"`
-	Child         *forge.Issue `json:"child,omitempty"`
-	Linked        bool         `json:"linked,omitempty"`
-	Branch        string       `json:"branch,omitempty"`
-	MR            *forge.MR    `json:"mr,omitempty"`
+	DefaultBranch string `json:"default_branch,omitempty"`
+	// Base is the branch Branch was started from when a base other than the
+	// default was chosen (recorded in the repo's bare clone by the branch
+	// step); empty when none is on record.
+	Base   string       `json:"base,omitempty"`
+	Child  *forge.Issue `json:"child,omitempty"`
+	Linked bool         `json:"linked,omitempty"`
+	Branch string       `json:"branch,omitempty"`
+	MR     *forge.MR    `json:"mr,omitempty"`
 	// ClosedMR is the latest closed (not merged) MR of Branch when no open or
 	// merged MR exists and Choices.NewMR is unset: the MR step stops at it.
 	ClosedMR *forge.MR `json:"closed_mr,omitempty"`
@@ -333,10 +343,13 @@ type TargetPlan struct {
 	Branch string `json:"branch,omitempty"`
 	// Pinned says Choices.Branches named the branch.
 	Pinned bool      `json:"pinned,omitempty"`
-	Base   string    `json:"base,omitempty"` // branch cut from
+	Base   string    `json:"base,omitempty"` // branch cut from, and the MR's target
 	Child  ChildSpec `json:"child"`
 	MR     MRSpec    `json:"mr"`
 	Found  Found     `json:"found"`
+	// BaseChosen says Base is not the repo's default branch: it was asked for,
+	// recorded when the branch was made, or is where the branch's MR goes.
+	BaseChosen bool `json:"base_chosen,omitempty"`
 }
 
 // PinnedNote words the branch Choices.Branches chose for this repo, existing
@@ -452,9 +465,17 @@ func BuildPlan(in PlanInput) (Plan, error) {
 		if err != nil {
 			return Plan{}, err
 		}
+		if b := ch.Bases[name]; b != "" {
+			if err := ValidBranchName(b); err != nil {
+				return Plan{}, fmt.Errorf("base for %s: %w", name, err)
+			}
+		}
 		tp := planTarget(in, t)
 		p.Targets = append(p.Targets, tp)
 		p.Warnings = append(p.Warnings, tp.Found.Warnings...)
+		if b := ch.Bases[name]; b != "" && ch.Mode != ModeBrowse && tp.Found.MR != nil && tp.Found.MR.TargetBranch != b {
+			p.Warnings = append(p.Warnings, fmt.Sprintf("%s: %s already targets %s: base %s applies to new work only", name, tp.Found.MR.Ref, tp.Found.MR.TargetBranch, b))
+		}
 	}
 	if ch.OnlyChild {
 		return onlyChild(p), nil
@@ -528,6 +549,20 @@ func planTarget(in PlanInput, t Target) TargetPlan {
 	if tp.Base == "" {
 		tp.Base = "main"
 	}
+	def := tp.Base
+	asked := ch.Bases[t.Name]
+	if ch.Mode == ModeBrowse {
+		asked = ""
+	}
+	switch {
+	case f.MR != nil && f.MR.TargetBranch != "":
+		tp.Base = f.MR.TargetBranch // the MR is where the work goes, whatever was asked now
+	case asked != "":
+		tp.Base = asked
+	case f.Base != "" && ch.Mode != ModeBrowse:
+		tp.Base = f.Base // the base the branch was started from
+	}
+	tp.BaseChosen = tp.Base != def
 	tp.UseChild = useChild(m, ch, t)
 	tp.Child = childSpec(in, t)
 
@@ -857,7 +892,11 @@ func worktreeStep(in PlanInput, tp TargetPlan, exists bool) Step {
 	if exists {
 		return Step{Kind: StepWorktree, Repo: tp.Target.Name, Done: true, Path: dir, Text: "worktree " + dir + " exists"}
 	}
-	return Step{Kind: StepWorktree, Repo: tp.Target.Name, Path: dir, Text: "fetch, add worktree " + dir + " tracking origin/" + branch}
+	text := "fetch, add worktree " + dir + " tracking origin/" + branch
+	if tp.BaseChosen && in.Choices.Mode != ModeBrowse {
+		text += ", ade.target " + tp.Base
+	}
+	return Step{Kind: StepWorktree, Repo: tp.Target.Name, Path: dir, Text: text}
 }
 
 // installStep is the install step of a target whose repo declares install

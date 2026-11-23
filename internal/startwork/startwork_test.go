@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/coredev-uk/ade/internal/audit"
 	"github.com/coredev-uk/ade/internal/commitprefix"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/forge/gitlab/fake"
@@ -1222,5 +1224,181 @@ func TestFailedInstallStillOpensTheWorkspace(t *testing.T) {
 	plan, _, _ := h.start(3, draftApi())
 	if i := slices.IndexFunc(plan.Steps, func(s startwork.Step) bool { return s.Kind == startwork.StepInstall }); i < 0 || plan.Steps[i].Done {
 		t.Errorf("install step after a failure: %+v", plan.Steps)
+	}
+}
+
+func based(repo, base string) startwork.Choices {
+	ch := draftApi()
+	ch.Repos = []string{repo}
+	ch.Bases = map[string]string{repo: base}
+	return ch
+}
+
+func worktreeConfig(t *testing.T, dir, key string) string {
+	t.Helper()
+	out, err := exec.Command("git", "-C", dir, "config", "--worktree", "--get", key).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// A base carries into the branch, the MR target and ade.target, and the dry
+// run shows it.
+func TestBaseBranchIsCarriedIntoBranchMRAndWorktreeConfig(t *testing.T) {
+	h := newHarness(t, fake.Free)
+	ctx := context.Background()
+	if _, err := h.forge.CreateBranch(ctx, apiProj, "release/1.2", "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	before := h.writes()
+	_, dry, err := h.env.Start(ctx, h.resolve(3), based("api", "release/1.2"), true)
+	if err != nil || h.writes() != before {
+		t.Fatalf("dry run: %v, %d writes", err, h.writes()-before)
+	}
+	var texts []string
+	for _, s := range dry.Steps {
+		texts = append(texts, s.Text)
+	}
+	for _, want := range []string{"create branch <child iid>-retry-failed-webhook-deliveries from release/1.2", "→ release/1.2", ", ade.target release/1.2"} {
+		if !slices.ContainsFunc(texts, func(s string) bool { return strings.Contains(s, want) }) {
+			t.Errorf("dry run steps %q lack %q", texts, want)
+		}
+	}
+
+	plan, res, err := h.start(3, based("api", "release/1.2"))
+	if err != nil {
+		t.Fatalf("start: %v\n%+v", err, res.Steps)
+	}
+	if tp := plan.Targets[0]; tp.Base != "release/1.2" || !tp.BaseChosen || tp.MR.Target != "release/1.2" {
+		t.Errorf("target plan base %q chosen %v, MR target %q", tp.Base, tp.BaseChosen, tp.MR.Target)
+	}
+	api := target(t, res, "api")
+	mrs, err := h.forge.ListMRs(ctx, forge.MRQuery{Project: apiProj, SourceBranch: api.Branch, State: "all"})
+	if err != nil || len(mrs) != 1 || mrs[0].TargetBranch != "release/1.2" {
+		t.Errorf("MRs from %s = %+v (%v), want one into release/1.2", api.Branch, mrs, err)
+	}
+	if got := worktreeConfig(t, api.Worktree, "ade.target"); got != "release/1.2" {
+		t.Errorf("ade.target = %q, want release/1.2", got)
+	}
+	var from any
+	es, err := h.app.Audit.Query(audit.Filter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range es {
+		if e.Action == "forge.branch.create" && strings.HasSuffix(e.Target, api.Branch) {
+			from = e.Params["from"]
+		}
+	}
+	if from != "release/1.2" {
+		t.Errorf("forge.branch.create audited from %v, want release/1.2", from)
+	}
+}
+
+func TestBaseBranchMissingOnTheForgeIsRefusedBeforeAnyWrite(t *testing.T) {
+	h := newHarness(t, fake.Free)
+	before := h.writes()
+	for _, dry := range []bool{true, false} {
+		_, _, err := h.env.Start(context.Background(), h.resolve(3), based("api", "release/9.9"), dry)
+		if err == nil || !strings.Contains(err.Error(), `base branch "release/9.9" does not exist in `+apiProj) {
+			t.Errorf("dry=%v: err = %v, want a missing base branch", dry, err)
+		}
+	}
+	if h.writes() != before {
+		t.Errorf("%d writes before the base was refused", h.writes()-before)
+	}
+}
+
+func TestBaseBranchIsIgnoredForBrowseAndInvalidNamesAreRefused(t *testing.T) {
+	h := newHarness(t, fake.Free)
+	ch := based("api", "release/9.9")
+	ch.Mode = startwork.ModeBrowse
+	plan, _, err := h.env.Start(context.Background(), h.resolve(3), ch, true)
+	if err != nil || plan.Targets[0].BaseChosen || plan.Targets[0].Base != "main" {
+		t.Errorf("browse: err %v, base %q chosen %v, want the default branch", err, plan.Targets[0].Base, plan.Targets[0].BaseChosen)
+	}
+	if _, _, err := h.env.Start(context.Background(), h.resolve(3), based("api", "a b"), true); err == nil || !strings.Contains(err.Error(), "not a valid branch name") {
+		t.Errorf("bad name: err = %v", err)
+	}
+}
+
+func TestBaseBranchOtherRepoKeepsItsDefault(t *testing.T) {
+	h := newHarness(t, fake.Free)
+	if _, err := h.forge.CreateBranch(context.Background(), webProj, "release/2.0", "main"); err != nil {
+		t.Fatal(err)
+	}
+	ch := startwork.Choices{
+		Repos: []string{"api", "web"}, Mode: startwork.ModeDraft, Child: startwork.ChildAuto,
+		Bases: map[string]string{"web": "release/2.0"},
+	}
+	plan, _, err := h.env.Start(context.Background(), h.resolve(8), ch, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if api, web := plan.Targets[0], plan.Targets[1]; api.Base != "main" || api.BaseChosen || web.Base != "release/2.0" || !web.BaseChosen {
+		t.Errorf("bases: api %q (%v), web %q (%v)", api.Base, api.BaseChosen, web.Base, web.BaseChosen)
+	}
+}
+
+// The base is remembered: a re-run without --base, and `M` after a branch-only
+// start, still cut from, target and record the release branch.
+func TestBaseBranchSurvivesRerunsAndMRAfterBranchOnly(t *testing.T) {
+	h := newHarness(t, fake.Free)
+	ctx := context.Background()
+	if _, err := h.forge.CreateBranch(ctx, apiProj, "release/1.2", "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Branch only, with a base; then the MR with no base given.
+	ch := based("api", "release/1.2")
+	ch.Mode = startwork.ModeBranch
+	_, res, err := h.start(3, ch)
+	if err != nil {
+		t.Fatalf("branch only: %v\n%+v", err, res.Steps)
+	}
+	api := target(t, res, "api")
+	bare := filepath.Join(h.app.Root, "demo-gl", "api", ".bare")
+	if got := swtest.Git(t, bare, "config", "--get", "branch."+api.Branch+".adeBase"); got != "release/1.2" {
+		t.Errorf("recorded base = %q, want release/1.2", got)
+	}
+	only := draftApi()
+	only.OnlyMR = true
+	plan, res, err := h.start(3, only)
+	if err != nil {
+		t.Fatalf("M: %v\n%+v", err, res.Steps)
+	}
+	if plan.Targets[0].Base != "release/1.2" || plan.Targets[0].MR.Target != "release/1.2" {
+		t.Errorf("M plans base %q, MR target %q, want release/1.2", plan.Targets[0].Base, plan.Targets[0].MR.Target)
+	}
+	mrs, err := h.forge.ListMRs(ctx, forge.MRQuery{Project: apiProj, SourceBranch: api.Branch, State: "all"})
+	if err != nil || len(mrs) != 1 || mrs[0].TargetBranch != "release/1.2" {
+		t.Fatalf("MRs from %s = %+v (%v), want one into release/1.2", api.Branch, mrs, err)
+	}
+
+	// A full re-run without --base finds everything done and keeps the base.
+	before := h.writes()
+	plan, _, err = h.start(3, draftApi())
+	if err != nil || h.writes() != before || plan.Pending() != 0 {
+		t.Fatalf("re-run: %v, %d writes, %d pending", err, h.writes()-before, plan.Pending())
+	}
+	if tp := plan.Targets[0]; tp.Base != "release/1.2" || !tp.BaseChosen {
+		t.Errorf("re-run base %q (chosen %v), want release/1.2", tp.Base, tp.BaseChosen)
+	}
+
+	// With no record (another machine), the MR's target is the base.
+	swtest.Git(t, bare, "config", "--unset", "branch."+api.Branch+".adeBase")
+	plan, _, err = h.env.Start(ctx, h.resolve(3), draftApi(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tp := plan.Targets[0]; tp.Base != "release/1.2" || tp.Found.Base != "" {
+		t.Errorf("no record: base %q (found %q), want the MR target release/1.2", tp.Base, tp.Found.Base)
+	}
+	// Asking for another base for work whose MR exists warns and keeps the MR's.
+	plan, _, err = h.env.Start(ctx, h.resolve(3), based("api", "main"), true)
+	if err != nil || plan.Targets[0].Base != "release/1.2" || len(plan.Warnings) == 0 {
+		t.Errorf("--base main over an MR into release/1.2: err %v, base %q, warnings %q", err, plan.Targets[0].Base, plan.Warnings)
 	}
 }
