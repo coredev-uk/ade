@@ -22,6 +22,7 @@ Tools come from the flake: `nix develop -c <cmd>`, or let direnv load it (`.envr
 
 - CI (`.github/workflows/ci.yml`): `nix flake check` (the whole `go test ./...` in the Nix sandbox), `nix develop -c golangci-lint run ./...` (gofumpt included), `nix develop -c goreleaser check`, `nix build`.
 - Fast loop: `go test ./internal/<pkg>` and `go test ./internal/<pkg> -run '^TestName$'`; `go vet ./...`; `gofumpt -w <files>`.
+- `vendorHash` in `flake.nix` tracks `go.mod` and `go.sum`: after a Go dependency change, `nix build .#default.goModules` fails with the hash it wants; paste that into `vendorHash`. On a pull request from this repository, `.github/workflows/nix-vendor-hash.yml` does it for you (as bot-cecil, after a reviewer approves its `nix-vendor-hash` environment).
 - Generated files:
   - JSON Schemas: `go test ./internal/config -run TestCommittedSchemasAreCurrent -update-schema` (a test fails while `docs/schema/` is stale).
   - Golden TUI frames: `go test ./internal/tui -run TestGolden -update` (also `./internal/overview`); review the diff before committing it.
