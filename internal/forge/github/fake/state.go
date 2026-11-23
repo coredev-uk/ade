@@ -114,6 +114,8 @@ type pull struct {
 	AutoMerge   *autoMerge
 	MergeParams map[string]any
 	Publishes   int
+	// DescWrites counts PATCHes that rewrote the body (Description).
+	DescWrites int
 }
 
 type autoMerge struct {

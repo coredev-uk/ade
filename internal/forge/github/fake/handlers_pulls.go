@@ -15,6 +15,7 @@ func (s *Server) pullRoutes(mux *http.ServeMux) {
 	s.handle(mux, "POST "+r+"/pulls", s.createPull)
 	s.handle(mux, "GET "+r+"/pulls/{n}", s.getPull)
 	s.handle(mux, "GET "+r+"/pulls/{n}/files", s.listPullFiles)
+	s.pullTextRoutes(mux)
 	s.handle(mux, "PUT "+r+"/pulls/{n}/merge", s.mergePull)
 	s.handle(mux, "POST "+r+"/pulls/{n}/requested_reviewers", s.requestReviewers)
 }
