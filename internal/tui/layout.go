@@ -149,7 +149,7 @@ func (m model) helpMax() int {
 	if m.mr != nil {
 		l, head = mrHelpBody(m.g, m.aiOn()), 2
 	} else {
-		l = helpBody(helpWidth(w, false), h, m.g)
+		l = helpBody(helpWidth(w, false), h, m.g, m.aiOn())
 	}
 	body, room := len(l)-head, h-4-head
 	if body <= room {
