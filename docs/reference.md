@@ -91,7 +91,7 @@ Every command takes `--json`. `--debug-http` (global) logs every forge and AI HT
 
 ## Sandbox
 
-Synthetic GitLab and GitHub data for development. Nothing here touches your real config:
+Synthetic GitLab and GitHub data for development. Nothing here touches your real config. The sandbox talks to real forges and needs sandbox tokens (`GITLAB_PAT` in `.env`, a `gh` login); with none, run `nix develop -c bash scripts/demo.sh` for the fake GitLab instead ([setup.md](setup.md#6-try-it-offline)). Source `env.sh` from any directory:
 
 ```sh
 . scripts/sandbox/env.sh        # isolates state under ./.sandbox, reads GITLAB_PAT from .env

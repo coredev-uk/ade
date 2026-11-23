@@ -12,7 +12,7 @@ ADE is an agentic development environment for the terminal: a Bubble Tea dashboa
 
 ## Boundaries
 
-- Always: one change per branch and PR; run the checks before a PR; update the docs with the code; regenerate `docs/schema/` when a config or manifest struct changes; run anything that talks to a forge against the sandbox (`. scripts/sandbox/env.sh`), never your own config.
+- Always: one change per branch and PR; run the checks before a PR; update the docs with the code; regenerate `docs/schema/` when a config or manifest struct changes; run anything that talks to a forge against the sandbox (`. scripts/sandbox/env.sh`, which needs sandbox tokens in `.env`) or, with no tokens, against the fake GitLab (`nix develop -c bash scripts/demo.sh`: a seeded dashboard, isolated config and data, nothing leaves the machine), never your own config.
 - Ask first: cutting a release (merging the release PR); changing a default users already rely on (a breaking change: `feat!:` with a `BREAKING CHANGE:` footer); bumping Go, nixpkgs (`flake.lock`) or a Go dependency; editing `.github/workflows/`; anything that writes to a real forge.
 - Never: commit or push to `main`; push a `v*` tag by hand to work around the release workflow; print, log or commit tokens, `.env` or `*.local.toml`; commit captured real forge traffic, hosts or project names (fixtures are synthetic); hand-edit `docs/schema/*.json` or golden files instead of regenerating them; edit `CHANGELOG.md` or `.release-please-manifest.json` by hand.
 
@@ -25,6 +25,7 @@ Tools come from the flake: `nix develop -c <cmd>`, or let direnv load it (`.envr
 - Generated files:
   - JSON Schemas: `go test ./internal/config -run TestCommittedSchemasAreCurrent -update-schema` (a test fails while `docs/schema/` is stale).
   - Golden TUI frames: `go test ./internal/tui -run TestGolden -update` (also `./internal/overview`); review the diff before committing it.
+- Run ADE without forge tokens: `nix develop -c bash scripts/demo.sh` (the real dashboard against a seeded fake GitLab; add `--record` for the VHS tour). The sandbox (`. scripts/sandbox/env.sh`) talks to real forges and needs `GITLAB_PAT` in `.env` and a `gh` login.
 - Live API tests: `go test -tags live -run Live -v ./internal/forge/github` (needs a token; read the file header first).
 - Screenshots for design review: `scripts/verify/capture*.sh` (VHS, output in `.impeccable/review/`); `scripts/verify/` holds the phase evidence scripts.
 - Release config: `goreleaser check`; a local build `goreleaser build --snapshot --clean --single-target`.
