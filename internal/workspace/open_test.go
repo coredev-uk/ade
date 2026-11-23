@@ -28,7 +28,7 @@ func newApp(t *testing.T, f *fixture, mode string) *app.App {
 	a := &app.App{
 		Paths:  paths.Paths{CacheDir: filepath.Join(dir, "cache"), DataDir: filepath.Join(dir, "data")},
 		Config: &config.Config{Host: config.Host{Mode: mode}},
-		Root:   f.root, Audit: al, Bus: events.NewBus(),
+		Root:   f.root, RecordsDir: filepath.Join(dir, "records"), Audit: al, Bus: events.NewBus(),
 	}
 	t.Cleanup(func() { a.Close() })
 	// No `code` or `zellij` may be found: Open must never launch or touch a real host from a test.

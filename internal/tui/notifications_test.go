@@ -29,7 +29,7 @@ func repoStatus(name string) project.RepoStatus {
 // pop-up, an inbox row, the unread count, and a marker on the row it is about.
 func TestCIFailedSurfacesEverywhere(t *testing.T) {
 	cfg := config.Defaults()
-	a := &app.App{Paths: paths.Paths{CacheDir: t.TempDir()}, Config: &cfg, Bus: events.NewBus()}
+	a := &app.App{Paths: paths.Paths{CacheDir: t.TempDir()}, Config: &cfg, Bus: events.NewBus(), RecordsDir: t.TempDir()}
 	t.Cleanup(func() { a.Close() })
 	st, err := a.Cache()
 	if err != nil {

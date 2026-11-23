@@ -188,6 +188,7 @@ func (s *Server) mrJSON(m *mr, ctx *project, single bool) object {
 		"state": m.State, "draft": m.Draft, "work_in_progress": m.Draft,
 		"created_at": ts(m.Created), "updated_at": ts(m.Updated), "merged_at": tsp(m.Merged),
 		"target_branch": m.Target, "source_branch": m.Source, "sha": m.SHA,
+		"source_project_id": m.sourceProject().ID, "target_project_id": m.Project.ID,
 		"author": userJSON(m.Author), "assignees": usersJSON(m.Assignees), "reviewers": usersJSON(m.Reviewers),
 		"labels": append([]string{}, m.Labels...), "milestone": nil, "user_notes_count": 0,
 		"web_url":               s.webURL(fmt.Sprintf("%s/-/merge_requests/%d", m.Project.Path, m.IID)),
