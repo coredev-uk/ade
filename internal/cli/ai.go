@@ -432,7 +432,7 @@ func classifyInput(ctx context.Context, a *app.App, f forge.Forge, is forge.Issu
 		return ai.ClassifyInput{Issue: is}, fmt.Errorf("%w: its manifest holds the label patterns", err)
 	}
 	var parent *forge.Issue
-	if f != nil && is.Ref.Project != found.Tracker.Project {
+	if f != nil && !forge.SameProject(is.Ref.Project, found.Tracker.Project) {
 		links, _ := f.Links(ctx, is.Ref)
 		parent = startwork.TrackerParent(ctx, f, found, is, links)
 	}

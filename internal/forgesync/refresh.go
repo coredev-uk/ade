@@ -110,7 +110,7 @@ func (s *Service) RefreshItem(ctx context.Context, m *config.Manifest, f forge.F
 	var repos []repoData
 	for _, name := range m.RepoNames() {
 		path := m.Repos[name].Path
-		if path != "" && slices.ContainsFunc(refs, func(r forge.Ref) bool { return r.Project == path }) {
+		if path != "" && slices.ContainsFunc(refs, func(r forge.Ref) bool { return forge.SameProject(r.Project, path) }) {
 			repos = append(repos, repoData{path: path})
 		}
 	}
