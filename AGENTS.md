@@ -12,7 +12,7 @@ ADE is an agentic development environment for the terminal: a Bubble Tea dashboa
 
 ## Boundaries
 
-- Always: one change per branch and PR; run the checks before a PR; update the docs with the code; regenerate `docs/schema/` when a config or manifest struct changes; run anything that talks to a forge against the sandbox (`. scripts/sandbox/env.sh`), never your own config.
+- Always: one change per branch and PR; run the checks before a PR; update the docs with the code; regenerate `docs/schema/` when a config or manifest struct changes; run anything that talks to a forge against the sandbox (`. scripts/sandbox/env.sh`: the GitLab sandbox needs `GITLAB_PAT` in `.env`, the GitHub one uses `gh auth token`) or, with no tokens, against the fake GitLab (`nix develop -c bash scripts/demo.sh`: a seeded dashboard, isolated config and data, nothing leaves the machine), never your own config.
 - Ask first: cutting a release (merging the release PR); changing a default users already rely on (a breaking change: `feat!:` with a `BREAKING CHANGE:` footer); bumping Go, nixpkgs (`flake.lock`) or a Go dependency; editing `.github/workflows/`; anything that writes to a real forge.
 - Never: commit or push to `main`; push a `v*` tag by hand to work around the release workflow; print, log or commit tokens, `.env` or `*.local.toml`; commit captured real forge traffic, hosts or project names (fixtures are synthetic); hand-edit `docs/schema/*.json` or golden files instead of regenerating them; edit `CHANGELOG.md` or `.release-please-manifest.json` by hand.
 
@@ -20,14 +20,17 @@ ADE is an agentic development environment for the terminal: a Bubble Tea dashboa
 
 Tools come from the flake: `nix develop -c <cmd>`, or let direnv load it (`.envrc` is `use flake`). Go, gopls, golangci-lint, gofumpt, goreleaser, vhs, jq, ripgrep and the runtime tools (git, zellij, lazygit, delta, neovim, glab, gh) are on its PATH.
 
-- CI (`.github/workflows/ci.yml`): `nix flake check` (the whole `go test ./...` in the Nix sandbox), `nix develop -c golangci-lint run ./...` (gofumpt included), `nix build`.
+- CI (`.github/workflows/ci.yml`): `nix flake check` (the whole `go test ./...` in the Nix sandbox), `nix develop -c golangci-lint run ./...` (gofumpt included), `nix develop -c goreleaser check`, `nix build`.
 - Fast loop: `go test ./internal/<pkg>` and `go test ./internal/<pkg> -run '^TestName$'`; `go vet ./...`; `gofumpt -w <files>`.
+- `vendorHash` in `flake.nix` tracks `go.mod` and `go.sum`: after a Go dependency change, `nix build .#default.goModules` fails with the hash it wants; paste that into `vendorHash`. On a pull request from this repository, `.github/workflows/nix-vendor-hash.yml` does it for you (as bot-cecil, after a reviewer approves its `nix-vendor-hash` environment).
 - Generated files:
   - JSON Schemas: `go test ./internal/config -run TestCommittedSchemasAreCurrent -update-schema` (a test fails while `docs/schema/` is stale).
   - Golden TUI frames: `go test ./internal/tui -run TestGolden -update` (also `./internal/overview`); review the diff before committing it.
+- Run ADE without forge tokens: `nix develop -c bash scripts/demo.sh` (the real dashboard against a seeded fake GitLab; add `--record` for the VHS tour). The sandbox (`. scripts/sandbox/env.sh`) talks to real forges and needs `GITLAB_PAT` in `.env` for GitLab and a `gh` login for GitHub.
 - Live API tests: `go test -tags live -run Live -v ./internal/forge/github` (needs a token; read the file header first).
 - Screenshots for design review: `scripts/verify/capture*.sh` (VHS, output in `.impeccable/review/`); `scripts/verify/` holds the phase evidence scripts.
-- Release config: `goreleaser check`; a local build `goreleaser build --snapshot --clean --single-target`.
+- Dependency updates: Renovate (`.renovaterc.json5`, run by `.github/workflows/renovate.yml` as the bot-cecil App) opens grouped `build(deps)` (Go modules) and `ci(deps)` (GitHub Actions) PRs, which release-please leaves out of the changelog. CI pins every action by commit SHA with the version in a comment; Renovate moves the pins.
+- Release config: `goreleaser check` (CI runs it too); a local build `goreleaser build --snapshot --clean --single-target`.
 
 ## Releases
 
@@ -35,7 +38,8 @@ Releases come from [release-please](https://github.com/googleapis/release-please
 
 - The changelog is the Conventional Commit titles merged since the last tag: `feat` under Features, `fix` under Fixes, `perf` and `revert` too; `docs`, `refactor`, `test`, `build`, `ci` and `chore` are left out. Squash-merge so a PR is one line; with a merge commit every commit of the PR counts. To change or add lines after merging, put a `BEGIN_COMMIT_OVERRIDE` … `END_COMMIT_OVERRIDE` block of Conventional Commit messages in the merged PR's description; the release PR picks it up on the next merge.
 - A breaking change (a changed default included) is `feat!:` or `fix!:` with a `BREAKING CHANGE:` footer saying how to keep the old behaviour. Before 1.0 it bumps the minor version, as `feat` does; `fix` alone bumps the patch.
-- After every merge to main whose CI passes, `.github/workflows/release.yml` runs release-please, which opens or updates one release PR (`chore: release X.Y.Z`) with the next version and its `CHANGELOG.md` section. Merging it, once CI passes on main, tags the merge commit, creates the GitHub release with that section as its notes, and runs goreleaser in the same workflow to upload the archives (a tag or release made with `GITHUB_TOKEN` starts no other workflow).
+- After every merge to main whose CI passes, `.github/workflows/release.yml` runs release-please, which opens or updates one release PR (`chore: release X.Y.Z`) with the next version and its `CHANGELOG.md` section. Merging it, once CI passes on main, tags the merge commit, creates the GitHub release with that section as its notes, and runs goreleaser in the same workflow to upload the archives.
+- release-please acts as the bot-cecil GitHub App, not `GITHUB_TOKEN`: the job mints the App's token through octo-sts (`octo-sts.hera.ac`, trust policy `.github/chainguard/release-please.sts.yaml`, environment `bot-cecil`), so the release PR gets its CI run and the repository setting "Allow GitHub Actions to create and approve pull requests" is not needed. goreleaser uploads with the workflow's own `GITHUB_TOKEN` (`contents: write` on that job only).
 - A failed release: fix forward in a PR. If the release exists but goreleaser failed, run the Release workflow by hand with the tag (Actions → Release → Run workflow); do not delete or move a published tag.
 - The Nix package (`nix profile install github:coredev-uk/ade`) follows `main`, not tags; the tarballs and the version-pinned schema URLs (`raw.githubusercontent.com/coredev-uk/ade/vX.Y.Z/docs/schema/…`) follow tags.
 

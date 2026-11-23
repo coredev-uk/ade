@@ -208,11 +208,18 @@ func (m model) homeList(w, h int) string {
 	lay := layoutFor(w, refW, courtW)
 	// Gaps: ref|title|track|badge|weight|court; the badge and its gap go when
 	// they would leave the title under minTitleForBadge cells.
-	titleW := max(12, w-4-lay.refW-lay.trackW()-lay.weightW-lay.courtW-4*2-lay.badgeGap())
+	titleW := w - 4 - lay.refW - lay.trackW() - lay.weightW - lay.courtW - 4*2 - lay.badgeGap()
 	if lay.badgeW > 0 && titleW < minTitleForBadge {
 		lay.badgeW = 0
-		titleW = max(12, w-4-lay.refW-lay.trackW()-lay.weightW-lay.courtW-4*2)
+		titleW = w - 4 - lay.refW - lay.trackW() - lay.weightW - lay.courtW - 4*2
 	}
+	// The title never goes below minTitleW while the court column has room to
+	// give: a reason cut short beats a title cut to a few letters.
+	if give := min(minTitleW-titleW, lay.courtW-minCourtW); give > 0 {
+		lay.courtW -= give
+		titleW += give
+	}
+	titleW = max(12, titleW)
 	idx := 0
 	legend := false // the station names appear once, above the first project that has tracks
 	narrowed := m.narrowed()
@@ -225,7 +232,7 @@ func (m model) homeList(w, h int) string {
 			continue
 		}
 		out = append(out, m.projectRule(res, w))
-		if !legend && res.Err == "" {
+		if !legend && res.Err == "" && !m.short() { // a short screen has no row to spare for the station names
 			out = append(out, m.legend(lay, titleW))
 			legend = true
 		}
@@ -648,13 +655,23 @@ func (m model) homeDetail(w, h int) string {
 	if r.mr != nil {
 		return m.mrDetail(r.mr, w)
 	}
-	return m.itemDetail(r.item, w, true)
+	full := m.itemDetail(r.item, w, true)
+	if strings.Count(full, "\n")+1 > h { // taller than the pane: the station list loses its connector rows
+		return m.itemDetailAt(r.item, w, true, true)
+	}
+	return full
 }
 
 // itemDetail is the work item's detail block. hint adds the notes key hints
 // (`n writes one` when there are none, `n edits`); the MR page leaves them out
 // to keep its overview short.
 func (m model) itemDetail(it *domain.WorkItem, w int, hint bool) string {
+	return m.itemDetailAt(it, w, hint, false)
+}
+
+// itemDetailAt is itemDetail with the station list compact (one row a station,
+// no connector rows between) where the pane is too short for the whole.
+func (m model) itemDetailAt(it *domain.WorkItem, w int, hint, compact bool) string {
 	g := m.g
 	var l []string
 	l = append(l, stBold.Render(ansi.Truncate(it.Ref.String()+"  "+it.Issue.Title, w, m.g.Ell)))
@@ -682,7 +699,7 @@ func (m model) itemDetail(it *domain.WorkItem, w int, hint bool) string {
 	if it.Workflow != "" || it.WantWorkflow != "" {
 		lbl := "label " + orDash(m.g, it.Workflow)
 		switch {
-		case it.Drift && (it.KeptOpen || it.WantWorkflow == "" || strings.EqualFold(it.Workflow, "blocked")):
+		case it.Drift && !it.Movable:
 			l = append(l, stWarn.Render(g.Warn+" "+lbl+" "+g.Sep+" stage says "+it.WantWorkflow))
 		case it.Drift:
 			// A move is on offer: wrap the line, so the narrow pane shows what
@@ -696,7 +713,7 @@ func (m model) itemDetail(it *domain.WorkItem, w int, hint bool) string {
 		}
 	}
 	l = append(l, "")
-	l = append(l, m.stationLines(it, w)...)
+	l = append(l, m.stationLines(it, w, compact)...)
 	l = append(l, "", courtText(g, it))
 	if svc := m.serviceLines(it.Ref.String(), w); len(svc) > 0 && !m.threeRegion() { // the rail carries them at wide widths
 		l = append(l, "")
@@ -743,7 +760,7 @@ func (m model) noteLines(it *domain.WorkItem, w int, hint bool) []string {
 
 // stationLines draws the item's line vertically, each station with its
 // evidence: the child issue, the branch, the MR and its pipeline and review.
-func (m model) stationLines(it *domain.WorkItem, w int) []string {
+func (m model) stationLines(it *domain.WorkItem, w int, compact bool) []string {
 	g := m.g
 	line := ink(lineOf(it))
 	evidence := m.stationEvidence(it)
@@ -762,7 +779,7 @@ func (m model) stationLines(it *domain.WorkItem, w int) []string {
 			label = stBold.Render(label)
 		}
 		l = append(l, " "+glyph+"  "+label+" "+ansi.Truncate(evidence[i], w-14, m.g.Ell))
-		if i < len(domain.Stations)-1 {
+		if i < len(domain.Stations)-1 && !compact {
 			conn := stFaint.Render(m.g.Thin)
 			if st < it.Stage || it.Stage == domain.StageDone {
 				conn = line.Render(g.Vertical)

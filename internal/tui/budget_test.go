@@ -396,7 +396,7 @@ func TestBudgetPageBuildsOfflineThenRefreshes(t *testing.T) {
 		Driver: "omp", Models: map[string]string{"explain": "haiku-x", "draft": "sonnet-x"},
 		Billing: config.AIBilling{Source: "omp", WeeklySoftUSD: 5},
 	}}
-	a := &app.App{Paths: paths.Paths{CacheDir: t.TempDir()}, Config: &cfg}
+	a := &app.App{Paths: paths.Paths{CacheDir: t.TempDir()}, Config: &cfg, RecordsDir: t.TempDir()}
 	t.Cleanup(func() { a.Close() })
 	log, err := audit.Open(t.TempDir(), "user")
 	if err != nil {

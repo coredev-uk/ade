@@ -58,7 +58,7 @@ func newMREnv(t *testing.T, tier fake.Tier) *mrEnv {
 	ctx := context.Background()
 
 	cfg := config.Defaults()
-	a := &app.App{Paths: paths.Paths{CacheDir: t.TempDir()}, Config: &cfg, Bus: events.NewBus()}
+	a := &app.App{Paths: paths.Paths{CacheDir: t.TempDir()}, Config: &cfg, Bus: events.NewBus(), RecordsDir: t.TempDir()}
 	t.Cleanup(func() { a.Close() })
 	log, err := audit.Open(t.TempDir(), "user")
 	if err != nil {
@@ -881,4 +881,27 @@ func TestMergeCommitPrefix(t *testing.T) {
 	if params["squash_commit_message"] != title {
 		t.Errorf("squash_commit_message = %v", params["squash_commit_message"])
 	}
+}
+
+// A fork MR is marked `fork` in the status strip and Overview names the fork;
+// an MR within the repo shows neither.
+func TestForkMRIsMarked(t *testing.T) {
+	e := newMREnv(t, fake.Free)
+	ref, err := e.srv.AddForkMR(grp+"/api", "contrib/api", "fix-typo", "Fix a typo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mr, err := e.api.MR(context.Background(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := e.m.results
+	res[0].Reviews = append(res[0].Reviews, mr)
+	e.m.setResults(res)
+
+	e.open(ref.String())
+	e.want("Ready · fork", "fork", "from contrib/api")
+	e.press("esc")
+	e.open(mrRef("api", 2).String())
+	e.wantNot("from contrib/api", "· fork")
 }

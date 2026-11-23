@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/coredev-uk/ade/internal/audit"
 	"github.com/coredev-uk/ade/internal/domain"
 	"github.com/coredev-uk/ade/internal/forge/gitlab"
@@ -28,7 +30,7 @@ func newStageEnv(t *testing.T) *swEnvT {
 		t.Fatal(err)
 	}
 	it := e.item(1, "Rate-limit exports")
-	it.Stage, it.Workflow, it.WantWorkflow, it.Drift = domain.StageReview, "in progress", "in review", true
+	it.Stage, it.Workflow, it.WantWorkflow, it.Drift, it.Movable = domain.StageReview, "in progress", "in review", true, true
 	e.m.results[0].Items = append(e.m.results[0].Items, it)
 	e.m.rebuildHome("")
 	e.selectRow(trk(1).String())
@@ -97,5 +99,38 @@ func TestHomeStageMoveEscapeWritesNothingAndAMatchingLabelSaysSo(t *testing.T) {
 	e.press("enter", "esc")
 	if e.m.act != nil || e.writes() != before || len(e.labelAudit()) != 0 {
 		t.Fatalf("dialog %v, writes %d -> %d, audit %v", e.m.act, before, e.writes(), e.labelAudit())
+	}
+}
+
+func TestHomeStageMoveOffersTheKeyOnlyWhenAMoveApplies(t *testing.T) {
+	e := newStageEnv(t)
+	e.want("m moves it")
+	// Drift ADE will not fix (the label is the team's done value) shows the drift without the key.
+	for i := range e.m.results[0].Items {
+		if e.m.results[0].Items[i].Ref == trk(1) {
+			e.m.results[0].Items[i].Movable = false
+		}
+	}
+	e.m.rebuildHome("")
+	e.selectRow(trk(1).String())
+	e.want("stage says")
+	e.wantNot("m moves it")
+}
+
+func TestActionDialogClosedWhileWritingStillRefreshes(t *testing.T) {
+	e := newStageEnv(t)
+	e.press("m")
+	d := e.m.act
+	refreshed := false
+	d.plan.after = func(model) tea.Cmd { refreshed = true; return nil }
+	d.stage = adApplying
+	e.press("esc")
+	if e.m.act != nil {
+		t.Fatal("esc closes the dialog")
+	}
+	next, _ := e.m.Update(adAppliedMsg{d: d, lines: []string{"moved"}})
+	e.m = next.(model)
+	if !refreshed {
+		t.Fatal("a change made after the dialog was closed was not read again")
 	}
 }

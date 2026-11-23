@@ -196,6 +196,8 @@ func (w wirePull) mr(project string) forge.MR {
 		State:          state,
 		Draft:          w.Draft,
 		SourceBranch:   w.Head.Ref,
+		Fork:           w.forkOf(),
+		SourceProject:  w.sourceProject(),
 		TargetBranch:   w.Base.Ref,
 		HeadSHA:        w.Head.SHA,
 		WebURL:         w.HTMLURL,
@@ -392,4 +394,24 @@ func threadCounts(ds []forge.Discussion) (unresolved, resolved int) {
 		}
 	}
 	return unresolved, resolved
+}
+
+// forkOf reports whether the head branch lives in another repository than the
+// base: head.repo.full_name differs from base.repo.full_name, or head.repo is
+// null (GitHub sends null once the fork is deleted, and the head is then only
+// reachable through refs/pull/<n>/head).
+func (w wirePull) forkOf() bool {
+	if w.Head.Repo == nil {
+		return true
+	}
+	return w.Base.Repo != nil && !strings.EqualFold(w.Head.Repo.FullName, w.Base.Repo.FullName)
+}
+
+// sourceProject is the full name of the fork the head lives in; "" for a PR
+// within one repository and for a deleted fork.
+func (w wirePull) sourceProject() string {
+	if !w.forkOf() || w.Head.Repo == nil {
+		return ""
+	}
+	return w.Head.Repo.FullName
 }

@@ -24,6 +24,9 @@ type PushPlan struct {
 	Branch  string `json:"branch"`
 	Path    string `json:"path"`
 	Forge   string `json:"forge"`
+	// Head is the commit the plan was read at: Push sends exactly this commit,
+	// and refuses when the branch has moved since.
+	Head string `json:"head"`
 	// Upstream is the remote branch the push updates ("origin/42-limit").
 	Upstream string `json:"upstream"`
 	// NewBranch is true when the remote has no such branch yet: the push
@@ -73,6 +76,9 @@ func (s *Service) PushPlan(ctx context.Context, path string) (PushPlan, error) {
 		return PushPlan{}, fmt.Errorf("project %s is not cloned: %w", proj, err)
 	}
 	p := PushPlan{Project: proj, Repo: repo, Path: top, Forge: m.Forge}
+	if head, err := c.Run(ctx, top, "rev-parse", "HEAD"); err == nil {
+		p.Head = strings.TrimSpace(head)
+	}
 	bare := filepath.Join(s.App.Root, proj, repo, ".bare")
 
 	branch, err := c.Run(ctx, top, "symbolic-ref", "--short", "-q", "HEAD")
@@ -134,6 +140,8 @@ func (s *Service) PushPlan(ctx context.Context, path string) (PushPlan, error) {
 			p.Upstream, plural(p.Behind, "commit"), plural(p.Ahead, "commit"))
 	case p.Ahead == 0 && p.Behind > 0:
 		p.Refuse, p.Nothing = fmt.Sprintf("nothing to push: %s is %s ahead of this branch", p.Upstream, plural(p.Behind, "commit")), true
+	case p.Ahead == 0 && p.NewBranch:
+		p.Refuse, p.Nothing = "nothing to push: "+p.Branch+" has no commits that origin does not already have", true
 	case p.Ahead == 0:
 		p.Refuse, p.Nothing = "nothing to push: everything is on "+p.Upstream, true
 	}
@@ -179,22 +187,34 @@ func aheadBehind(ctx context.Context, c git.Client, dir, rng string) (ahead, beh
 	return ahead, behind, err
 }
 
-// Push sends the planned branch to origin, as `git push --set-upstream origin
-// HEAD:refs/heads/<branch>` with the forge's write token (the one pushes of
-// agent runs use), and audits it as git.push. It never forces. A plan with
-// Refuse set is not pushed.
+// Push sends the planned commit to origin as `git push origin
+// <sha>:refs/heads/<branch>` with the forge's write token (the one pushes of
+// agent runs use), then makes the branch track the remote one, and audits it
+// as git.push. It sends the commit the plan was read at and refuses, changing
+// nothing, when the branch has moved since the preview. It never forces. A
+// plan with Refuse set is not pushed.
 func (s *Service) Push(ctx context.Context, p PushPlan) error {
 	if !p.Pushable() {
 		return errors.New(p.Refuse)
 	}
+	var c git.Client
+	head, herr := c.Run(ctx, p.Path, "rev-parse", "HEAD")
+	branch, berr := c.Run(ctx, p.Path, "symbolic-ref", "--short", "-q", "HEAD")
+	if herr != nil || berr != nil || strings.TrimSpace(head) != p.Head || strings.TrimSpace(branch) != p.Branch {
+		return fmt.Errorf("%s changed since the preview (it was %s at %.8s): look again before pushing", p.Label(), p.Branch, p.Head)
+	}
 	bare := filepath.Join(s.App.Root, p.Project, p.Repo, ".bare")
 	gc, err := s.PushClient(ctx, p.Forge, bare)
 	if err == nil {
-		_, err = gc.Run(ctx, p.Path, "push", "--set-upstream", "origin", "HEAD:refs/heads/"+p.Branch)
+		_, err = gc.Run(ctx, p.Path, "push", "origin", p.Head+":refs/heads/"+p.Branch)
+	}
+	var upErr error
+	if err == nil && p.SetUpstream {
+		_, upErr = c.Run(ctx, p.Path, "branch", "--set-upstream-to=origin/"+p.Branch, p.Branch)
 	}
 	e := audit.Entry{
 		Action: "git.push", Target: p.Path, Project: p.Project, Outcome: outcome(err),
-		Params: map[string]any{"repo": p.Repo, "branch": p.Branch, "ahead": p.Ahead, "new_branch": p.NewBranch, "set_upstream": true},
+		Params: map[string]any{"repo": p.Repo, "branch": p.Branch, "sha": p.Head, "ahead": p.Ahead, "new_branch": p.NewBranch, "set_upstream": p.SetUpstream && upErr == nil},
 	}
 	if err != nil {
 		e.Error = git.Reason(err)
@@ -202,5 +222,8 @@ func (s *Service) Push(ctx context.Context, p PushPlan) error {
 		return fmt.Errorf("push %s: %s", p.Label(), git.Reason(err))
 	}
 	s.audit(e)
+	if upErr != nil {
+		return fmt.Errorf("pushed %s, but it does not track origin/%s: %s", p.Label(), p.Branch, git.Reason(upErr))
+	}
 	return nil
 }

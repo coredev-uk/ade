@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/coredev-uk/ade/internal/project"
 	"github.com/coredev-uk/ade/internal/workspace"
 )
 
@@ -122,5 +124,55 @@ func TestPushRefusesAgentRunsAndForeignDirectories(t *testing.T) {
 	t.Setenv(workspace.AgentRunEnv, "")
 	if _, err := e.push(t.TempDir()); err == nil {
 		t.Fatal("a directory outside ADE's layout was pushed")
+	}
+}
+
+func TestPushSendsThePlannedCommitAndRefusesABranchThatMoved(t *testing.T) {
+	e := newCLIEnv(t)
+	api, _ := e.gcLayout()
+	const apiBranch = "1-rate-limit-the-export-endpoint"
+	ps := project.New(e.app, "user")
+	gitAt(t, api, "commit", "--quiet", "--allow-empty", "-m", "first")
+	plan, err := ps.PushPlan(context.Background(), api)
+	if err != nil || !plan.Pushable() || plan.Head != gitOut(t, api, "rev-parse", "HEAD") {
+		t.Fatalf("plan = %+v, %v", plan, err)
+	}
+
+	// A commit made after the preview is not what the user looked at.
+	before := gitOut(t, e.originOf("api"), "rev-parse", apiBranch)
+	gitAt(t, api, "commit", "--quiet", "--allow-empty", "-m", "second")
+	if err := ps.Push(context.Background(), plan); err == nil || !strings.Contains(err.Error(), "changed since the preview") {
+		t.Fatalf("push of a moved branch: %v", err)
+	}
+	if got := gitOut(t, e.originOf("api"), "rev-parse", apiBranch); got != before || len(e.audited("git.push")) != 0 {
+		t.Fatalf("a refused push changed the remote (%s -> %s) or was audited", before, got)
+	}
+
+	// A fresh preview pushes exactly its commit.
+	plan, err = ps.PushPlan(context.Background(), api)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ps.Push(context.Background(), plan); err != nil {
+		t.Fatal(err)
+	}
+	if got := gitOut(t, e.originOf("api"), "rev-parse", apiBranch); got != plan.Head {
+		t.Fatalf("remote %s, planned %s", got, plan.Head)
+	}
+	es := e.audited("git.push")
+	if len(es) != 1 || es[0].Params["sha"] != plan.Head {
+		t.Fatalf("audit = %+v", es)
+	}
+}
+
+func TestPushOfABranchWithNoCommitsOfItsOwnSaysSo(t *testing.T) {
+	e := newCLIEnv(t)
+	_, web := e.gcLayout() // cut from origin/main, nothing committed, no remote branch
+	out, err := e.push(web)
+	if err != nil || !strings.Contains(out, "has no commits that origin does not already have") {
+		t.Fatalf("push: %v\n%s", err, out)
+	}
+	if len(e.audited("git.push")) != 0 {
+		t.Fatal("nothing was pushed, but it was audited")
 	}
 }
