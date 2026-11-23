@@ -5,16 +5,16 @@ ADE is an agentic development environment for the terminal: a Bubble Tea dashboa
 ## Workflow
 
 1. Work on a branch of its own, never on `main`: `<type>/<slug>` from `origin/main`, where `<type>` is the Conventional Commit type (`feat/code-server-session`). A worktree per change keeps parallel work apart.
-2. Implement, with the docs, tests and `CHANGELOG.md` bullet that describe the change in the same PR.
+2. Implement, with the docs and tests that describe the change in the same PR. Do not edit `CHANGELOG.md`: release-please writes it from the PR title (Releases below).
 3. Run the checks (Commands below) before you push: `nix flake check`, `golangci-lint run ./...` and `nix build` are what CI runs.
-4. Push and open the PR with a Conventional Commit title. The description says what changed and why, the commands you ran with their result, and anything left.
-5. Merging is the maintainer's call (@coredev-uk). A merged PR whose changelog starts with a new version heading releases on its own (Releases below).
+4. Push and open the PR with a Conventional Commit title. It becomes the changelog line, so write what the user sees (`fix(tui): notes written in the editor show in the detail pane`), not what the code does. The description says what changed and why, the commands you ran with their result, and anything left.
+5. Merging is the maintainer's call (@coredev-uk). Merging release-please's release PR releases (Releases below).
 
 ## Boundaries
 
-- Always: one change per branch and PR; run the checks before a PR; update the docs and `CHANGELOG.md` with the code; regenerate `docs/schema/` when a config or manifest struct changes; run anything that talks to a forge against the sandbox (`. scripts/sandbox/env.sh`), never your own config.
-- Ask first: cutting a release (renaming `## Unreleased`); changing a default users already rely on (it is a **Breaking** changelog entry); bumping Go, nixpkgs (`flake.lock`) or a Go dependency; editing `.github/workflows/`; anything that writes to a real forge.
-- Never: commit or push to `main`; push a `v*` tag by hand to work around the release workflow; print, log or commit tokens, `.env` or `*.local.toml`; commit captured real forge traffic, hosts or project names (fixtures are synthetic); hand-edit `docs/schema/*.json` or golden files instead of regenerating them; edit a released `CHANGELOG.md` section.
+- Always: one change per branch and PR; run the checks before a PR; update the docs with the code; regenerate `docs/schema/` when a config or manifest struct changes; run anything that talks to a forge against the sandbox (`. scripts/sandbox/env.sh`), never your own config.
+- Ask first: cutting a release (merging the release PR); changing a default users already rely on (a breaking change: `feat!:` with a `BREAKING CHANGE:` footer); bumping Go, nixpkgs (`flake.lock`) or a Go dependency; editing `.github/workflows/`; anything that writes to a real forge.
+- Never: commit or push to `main`; push a `v*` tag by hand to work around the release workflow; print, log or commit tokens, `.env` or `*.local.toml`; commit captured real forge traffic, hosts or project names (fixtures are synthetic); hand-edit `docs/schema/*.json` or golden files instead of regenerating them; edit `CHANGELOG.md` or `.release-please-manifest.json` by hand.
 
 ## Commands
 
@@ -31,13 +31,12 @@ Tools come from the flake: `nix develop -c <cmd>`, or let direnv load it (`.envr
 
 ## Releases
 
-Releases come from `CHANGELOG.md`; nothing is tagged by hand.
+Releases come from [release-please](https://github.com/googleapis/release-please) (`release-please-config.json`, `.release-please-manifest.json`); nothing is tagged by hand.
 
-- Every user-visible change adds a bullet under `## Unreleased` in its PR: bold lead-in, then what the user sees. A changed default is marked **Breaking**, with how to keep the old behaviour. Fixes start `**Fix:**`.
-- To release, a PR renames `## Unreleased` to `## vX.Y.Z` and adds a one-paragraph summary under it (see `## v0.2.0`). Before 1.0: minor for features or breaking changes, patch for fixes only.
-- When that PR is merged and CI passes on `main`, `.github/workflows/release.yml` sees a version heading on top whose tag does not exist, tags that commit, and runs goreleaser with the section as the release notes (`scripts/release/changelog.sh version | notes <tag>`). Its own tag push starts no other workflow, which is why goreleaser runs in the same job.
-- After a release, the next PR with a user-visible change opens a new `## Unreleased` above it. While `## Unreleased` is on top, merges release nothing.
-- A failed release: fix forward in a PR. If the tag was pushed but goreleaser failed, re-run the workflow's job; do not delete or move a published tag.
+- The changelog is the Conventional Commit titles merged since the last tag: `feat` under Features, `fix` under Fixes, `perf` and `revert` too; `docs`, `refactor`, `test`, `build`, `ci` and `chore` are left out. Squash-merge so a PR is one line; with a merge commit every commit of the PR counts. To change or add lines after merging, put a `BEGIN_COMMIT_OVERRIDE` … `END_COMMIT_OVERRIDE` block of Conventional Commit messages in the merged PR's description; the release PR picks it up on the next merge.
+- A breaking change (a changed default included) is `feat!:` or `fix!:` with a `BREAKING CHANGE:` footer saying how to keep the old behaviour. Before 1.0 it bumps the minor version, as `feat` does; `fix` alone bumps the patch.
+- After every merge to main whose CI passes, `.github/workflows/release.yml` runs release-please, which opens or updates one release PR (`chore: release X.Y.Z`) with the next version and its `CHANGELOG.md` section. Merging it, once CI passes on main, tags the merge commit, creates the GitHub release with that section as its notes, and runs goreleaser in the same workflow to upload the archives (a tag or release made with `GITHUB_TOKEN` starts no other workflow).
+- A failed release: fix forward in a PR. If the release exists but goreleaser failed, run the Release workflow by hand with the tag (Actions → Release → Run workflow); do not delete or move a published tag.
 - The Nix package (`nix profile install github:coredev-uk/ade`) follows `main`, not tags; the tarballs and the version-pinned schema URLs (`raw.githubusercontent.com/coredev-uk/ade/vX.Y.Z/docs/schema/…`) follow tags.
 
 ## Repo map and where to look
@@ -46,7 +45,7 @@ Releases come from `CHANGELOG.md`; nothing is tagged by hand.
 - `docs/PLAN.md`: the design and the why, with **As built** notes where the build differs; `docs/setup.md` install, tools, CDEs, troubleshooting; `docs/reference.md` every command and key; `docs/manifest.md` the team manifest; `docs/gitlab-api/` the pinned GitLab contract (endpoints, fields, tier gates, sources); `docs/billing/` spend sources.
 - `DESIGN.md` (visual system, read by the TUI theme) and `PRODUCT.md` (platform and users): read them, and use `skill://impeccable` and `skill://design-taste-frontend`, for any TUI change.
 - `editors/ade-nvim` the Neovim config the flake wraps as `packages.ade-nvim` (a separate output: about 860 MiB against 32 MiB for `ade`).
-- `scripts/sandbox` seeds and isolated config for the GitLab and GitHub sandboxes; `scripts/verify` evidence and capture scripts; `scripts/release` the changelog reader.
+- `scripts/sandbox` seeds and isolated config for the GitLab and GitHub sandboxes; `scripts/verify` evidence and capture scripts.
 
 ## Hard rules
 
