@@ -234,7 +234,12 @@ type Conventions struct {
 	Link         []string `toml:"link"`
 	ChildIssue   string   `toml:"child_issue"`   // auto | always | never
 	CommitPrefix string   `toml:"commit_prefix"` // e.g. "GL-{parent}"; see commitmsg
-	MR           MRConv   `toml:"mr"`
+	// CommitPrefixHook installs ADE's commit-msg hook into each worktree start
+	// work makes, so the developer's own first commit gets commit_prefix too
+	// (`ade ws hook install` does it for any worktree). A commit-msg hook the
+	// user already has is never replaced.
+	CommitPrefixHook bool   `toml:"commit_prefix_hook"`
+	MR               MRConv `toml:"mr"`
 }
 
 type MRConv struct {
