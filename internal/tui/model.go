@@ -110,6 +110,11 @@ type model struct {
 	// research is each listed item's research job, read with the notes
 	// (research.go), keyed by markKey(project, ref).
 	research map[string]records.Research
+	// comments are the listed items' stored tracker-issue comments, read once
+	// per refresh (loadComments), keyed by markKey(project, ref); cm is the
+	// open comments view, nil when closed (comments.go).
+	comments map[string][]records.Comment
+	cm       *commentsDialog
 	// sm is the open sprint-move dialog, nil when closed (sprintmove.go).
 	sm *sprintDialog
 
@@ -251,6 +256,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if next, cmd, ok := m.aiTextUpdate(msg); ok {
 		return next, cmd
 	}
+	if next, cmd, ok := m.commentsUpdate(msg); ok {
+		return next, cmd
+	}
 	if next, cmd, ok := m.homeUpdate(msg); ok {
 		return next, cmd
 	}
@@ -353,6 +361,7 @@ func (m *model) setResults(rs []forgesync.Result) {
 		return !empty(m.results[i]) && empty(m.results[j])
 	})
 	m.loadNotes()
+	m.loadComments()
 	m.rebuildHome(keep)
 }
 
@@ -474,6 +483,9 @@ func (m model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return next, cmd
 	case "R":
 		next, cmd := m.openResearch()
+		return next, cmd
+	case "C":
+		next, cmd := m.openComments()
 		return next, cmd
 	case "a", "A":
 		if m.page == pageHome && m.mr == nil && !m.isAgilePage() {

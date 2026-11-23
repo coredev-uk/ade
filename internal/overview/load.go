@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +37,9 @@ type Snapshot struct {
 	Notes    string
 	// NotesPath is the record file ("e" opens it); empty when there is none.
 	NotesPath string
+	// Comments are the tracker issue's human comments the last sync kept,
+	// oldest first.
+	Comments []records.Comment
 }
 
 // Find returns the cached work item that owns ref: its tracker issue, one of
@@ -84,14 +88,15 @@ type Loader struct {
 }
 
 // fingerprint is what a Poll compares: the cache's data version and the size
-// and modification time of the item's record (notes edits). The version moves
-// on every commit by another connection, in this process or another. The
-// database files' stamps would not do: a commit writes the write-ahead log
-// before readers can see it, so a read in between sees the old rows under the
-// new stamps, and no later change of the files says the rows moved.
+// and modification time of the item's record (notes edits) and of its comments
+// file. The version moves on every commit by another connection, in this
+// process or another. The database files' stamps would not do: a commit writes
+// the write-ahead log before readers can see it, so a read in between sees the
+// old rows under the new stamps, and no later change of the files says the
+// rows moved.
 type fingerprint struct {
-	data   int64
-	record stamp
+	data             int64
+	record, comments stamp
 }
 
 type stamp struct {
@@ -113,7 +118,7 @@ func stampOf(path string) stamp {
 // fingerprint must be called with l.mu held. ok is false when the data
 // version cannot be read: the caller then reads the cache regardless.
 func (l *Loader) fingerprint() (fp fingerprint, ok bool) {
-	fp.record = stampOf(l.recordPath)
+	fp.record, fp.comments = stampOf(l.recordPath), stampOf(commentsPath(l.recordPath))
 	if l.conn == nil {
 		c, err := l.Cache.DB.Conn(context.Background())
 		if err != nil {
@@ -137,6 +142,14 @@ func (l *Loader) Close() error {
 	err := l.conn.Close()
 	l.conn = nil
 	return err
+}
+
+// commentsPath is the comments file beside a record file.
+func commentsPath(record string) string {
+	if record == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(record), records.CommentsFile)
 }
 
 // Load reads the cache and the record now.
@@ -166,7 +179,7 @@ func (l *Loader) load() (Snapshot, error) {
 	if err == nil || errors.Is(err, ErrNotCached) {
 		if snap.NotesPath != "" && snap.NotesPath != l.recordPath {
 			l.recordPath = snap.NotesPath
-			fp.record = stampOf(l.recordPath)
+			fp.record, fp.comments = stampOf(l.recordPath), stampOf(commentsPath(l.recordPath))
 		}
 		l.fp, l.loaded = fp, ok
 	}
@@ -193,6 +206,9 @@ func (l *Loader) read() (Snapshot, error) {
 			snap.NotesPath = rec.Path // the file may appear later; watch it
 		default:
 			return snap, fmt.Errorf("read notes: %w", err)
+		}
+		if snap.Comments, err = l.Records.ReadComments(res.Forge, it.Ref); err != nil {
+			return snap, fmt.Errorf("read comments: %w", err)
 		}
 	}
 	return snap, nil

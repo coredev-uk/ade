@@ -74,7 +74,7 @@ func newSWEnvWith(t *testing.T, edit func(string) string) *swEnvT {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := &app.App{Paths: paths.Paths{CacheDir: t.TempDir()}, Config: &cfg, Root: filepath.Join(dir, "root"), Audit: al, Bus: events.NewBus()}
+	a := &app.App{Paths: paths.Paths{CacheDir: t.TempDir()}, Config: &cfg, Root: filepath.Join(dir, "root"), RecordsDir: filepath.Join(dir, "records"), Audit: al, Bus: events.NewBus()}
 	t.Cleanup(func() { a.Close() })
 	st, err := a.Cache()
 	if err != nil {

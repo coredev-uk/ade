@@ -170,7 +170,7 @@ func (m model) viewport() int {
 }
 
 func (m model) lines() []string {
-	return body(m.snap, m.g, max(m.w, minWidth), m.gone)
+	return body(m.snap, m.g, max(m.w, minWidth), m.gone, m.opts.Now())
 }
 
 func (m model) clamp(off int) int {

@@ -701,6 +701,7 @@ func (m model) itemDetail(it *domain.WorkItem, w int, hint bool) string {
 		l = append(l, "")
 		l = append(l, m.mdPreview(d, w, 8)...)
 	}
+	l = append(l, m.commentLines(it, w, hint)...)
 	return strings.Join(l, "\n")
 }
 

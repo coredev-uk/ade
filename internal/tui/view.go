@@ -50,7 +50,7 @@ func (m model) render() string {
 		layers = append(layers, lipgloss.NewLayer(fit(m.g, d, dw, h-2)).X(w-dw).Y(1).Z(1))
 	}
 	mrDialog := m.mr != nil && (m.mr.modal != nil || m.help)
-	if ts := m.nc.toastStack(m.g, toastWidth(w)); ts != "" && !m.nc.open && !m.help && m.agt == nil && m.ait == nil && m.sw == nil && m.cl == nil && m.nt == nil && m.wt == nil && m.sm == nil && m.hs.pal == nil && !mrDialog { // a dialog owns the screen: toasts must not cover its keys
+	if ts := m.nc.toastStack(m.g, toastWidth(w)); ts != "" && !m.nc.open && !m.help && m.agt == nil && m.ait == nil && m.sw == nil && m.cl == nil && m.nt == nil && m.wt == nil && m.sm == nil && m.cm == nil && m.hs.pal == nil && !mrDialog { // a dialog owns the screen: toasts must not cover its keys
 		layers = append(layers, lipgloss.NewLayer(ts).X(w-lipgloss.Width(ts)-1).Y(max(1, h-1-lipgloss.Height(ts))).Z(3))
 	}
 	switch {
@@ -92,6 +92,9 @@ func (m model) render() string {
 		layers = append(layers, l)
 	}
 	if l := m.aiTextOverlayLayer(w, h); l != nil {
+		layers = append(layers, l)
+	}
+	if l := m.commentsOverlayLayer(w, h); l != nil {
 		layers = append(layers, l)
 	}
 	return lipgloss.NewCompositor(layers...).Render()
@@ -173,7 +176,7 @@ func (m model) activity() string {
 func (m model) footer(w int) string {
 	narrow := w < twoPaneMinW
 	switch {
-	case m.hs.pal != nil, m.sm != nil, m.nt != nil, m.wt != nil, m.cl != nil, m.ait != nil:
+	case m.hs.pal != nil, m.sm != nil, m.nt != nil, m.wt != nil, m.cl != nil, m.ait != nil, m.cm != nil:
 		return "" // the dialog carries its own key row
 	case m.agt != nil:
 		return " " + keys("esc", "back/close", "ctrl+c", "quit") + stFaint.Render("   the agent dialog has its own keys")
@@ -551,7 +554,7 @@ func helpGroups(full bool) []helpGroup {
 			{"Selected item", [][2]string{
 				{"enter", "open: the item's MR page"},
 				{"s M", "start work; create the MR for started work"},
-				{"c", "classify: suggest missing type/app labels"},
+				{"c C", "classify: suggest missing type/app labels; the issue's comments"},
 				{"R", "research the issue in the background (AI)"},
 				{"a A", "agent runs for the item; all runs"},
 				{"w v", "open workspace (zellij); VS Code workspace of all repos"},
@@ -586,6 +589,7 @@ func helpGroups(full bool) []helpGroup {
 			{"M", "create the MR for work already started"},
 			{"c", "classify: suggest missing type/app labels (added on confirm)"},
 			{"R", "research: a stored, background AI research of the issue (cost shown first; the answer is kept in the item's record and never bought twice)"},
+			{"C", "comments: every comment on the tracker issue, oldest first (read-only; o opens the issue)"},
 			{"a", "agents: plan or address review for this item"},
 			{"A", "agents: every run"},
 			{"w", "open the workspace (needs the ade zellij session)"},
