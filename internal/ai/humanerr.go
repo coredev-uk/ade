@@ -5,6 +5,9 @@ import (
 	"errors"
 	"net"
 	"os/exec"
+	"regexp"
+
+	"github.com/coredev-uk/ade/internal/config"
 )
 
 // NotInstalledError is a driver whose command is not on PATH. Its text is
@@ -39,6 +42,16 @@ func Human(err error) string {
 	var ni *NotInstalledError
 	var ne net.Error
 	switch stop, isStop := AsStop(err); {
+	case errors.Is(err, ErrDisabled):
+		return "AI is off · set ai.mode to ask or auto to use it"
+	case errors.Is(err, config.ErrNoProfile):
+		return "no AI profile is selected · set ai.profile in the config"
+	case errors.Is(err, config.ErrProfileUndefined):
+		return "the selected AI profile is not defined · check ai.profile in the config"
+	case errors.Is(err, config.ErrNoSecret):
+		return "the AI profile has no API key · set key_env or key_cmd on it"
+	case errors.Is(err, ErrAutoPaused):
+		return "automatic AI calls are paused until tomorrow (the budget was reached) · ask by hand to go on"
 	case errors.As(err, &ni), errors.Is(err, exec.ErrNotFound):
 		name := "the AI command"
 		if ni != nil {
@@ -57,8 +70,28 @@ func Human(err error) string {
 		return "cancelled · nothing was sent"
 	case errors.Is(err, ErrCancelled):
 		return "cancelled at the pre-flight prompt · nothing was sent"
+	case httpStatus(err) == 401 || httpStatus(err) == 403:
+		return "the AI service refused the key · check key_env or key_cmd on the profile"
+	case httpStatus(err) == 429:
+		return "the AI service is rate limiting · wait a moment and try again"
 	case errors.As(err, &ne):
 		return "the AI service could not be reached · check the network and try again"
 	}
 	return "the AI call failed · the Log page has the details"
+}
+
+var httpStatusRe = regexp.MustCompile(`HTTP (\d{3})\b`)
+
+// httpStatus is the status code of a driver's "HTTP 401: ..." error text, 0
+// when err carries none. The drivers word every non-2xx answer that way.
+func httpStatus(err error) int {
+	m := httpStatusRe.FindStringSubmatch(err.Error())
+	if m == nil {
+		return 0
+	}
+	n := 0
+	for _, c := range m[1] {
+		n = n*10 + int(c-'0')
+	}
+	return n
 }

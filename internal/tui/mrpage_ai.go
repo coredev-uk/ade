@@ -80,17 +80,11 @@ type aiAnswer struct {
 	draft    string // describe: the text that enter writes to the MR
 }
 
-// aiOn reports whether the page offers AI at all: ai.mode is not off and a
-// profile is configured. A machine without AI sees none of it.
+// aiOn reports whether the page offers AI at all: ai.mode is not off and the
+// selected profile is defined (config.AI.Available). A machine without AI sees
+// none of it.
 func (m model) aiOn() bool {
-	if m.app == nil || m.app.Config == nil {
-		return false
-	}
-	c := m.app.Config.AI
-	if c.Mode == "off" || c.Profile == "" {
-		return false
-	}
-	_, ok := c.Profiles[c.Profile]
+	ok, _ := m.aiAvail()
 	return ok
 }
 
@@ -305,19 +299,13 @@ func (m *model) onAI(d *mrData, msg mrResultMsg) tea.Cmd {
 
 // aiCause words why a call failed for the screen.
 func aiCause(err error) string {
-	var nc *ai.NotInstalledError
 	if stop, ok := ai.AsStop(err); ok {
 		return "budget stop: " + stop.Message
 	}
-	switch {
-	case errors.Is(err, ai.ErrAutoPaused):
+	if errors.Is(err, ai.ErrAutoPaused) {
 		return "AI budget reached today; s asks anyway"
-	case errors.Is(err, ai.ErrDisabled):
-		return "AI is off (ai.mode = off)"
-	case errors.As(err, &nc):
-		return nc.Error()
 	}
-	return oneLine(err.Error())
+	return ai.Human(err)
 }
 
 // deliverReply puts a finished draft reply in the editor when the page still

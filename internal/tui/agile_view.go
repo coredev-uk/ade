@@ -33,17 +33,21 @@ func (m model) agileFooter(w int) string {
 	if len(m.sprintProjects()) > 1 {
 		proj = []string{"p", "project"} // the review opens on one project; this picks another
 	}
+	var narr []string // the AI narrative key: only offered while AI is available
+	if m.aiOn() {
+		narr = []string{"n", "AI narrative"}
+	}
 	switch {
 	case m.ag.kind == agileStandup && narrow:
-		return " " + keys("j/k", "scroll", "r", "reload", "n", "narrative", "y", "copy", "esc", "back", "?", "keys")
+		return " " + keys(append([]string{"j/k", "scroll", "r", "reload"}, append(narr, "y", "copy", "esc", "back", "?", "keys")...)...)
 	case m.ag.kind == agileStandup:
-		return " " + keys("j/k", "scroll", "r", "reload", "n", "AI narrative", "y", "copy as Markdown", "esc", "back", "t", "home", "i", "notifications", "?", "keys", "q", "quit")
+		return " " + keys(append([]string{"j/k", "scroll", "r", "reload"}, append(narr, "y", "copy as Markdown", "esc", "back", "t", "home", "i", "notifications", "?", "keys", "q", "quit")...)...)
 	case w < 150: // the review's keys no longer fit whole below this
 		kv := append([]string{"j/k", "scroll", "[ ]", "sprint", "m", reviewToggle(m.ag.team), "J/K", "item", ">", "move", "M", "move mine"}, proj...)
 		return " " + keys(append(kv, "esc", "back", "?", "keys")...)
 	}
 	kv := append([]string{"j/k", "scroll", "[ ]", "sprint", "m", reviewToggle(m.ag.team), "J/K", "unfinished item", ">", "move to next sprint", "M", "move mine"}, proj...)
-	return " " + keys(append(kv, "r", "reload", "n", "AI narrative", "y", "copy", "esc", "back", "?", "keys", "q", "quit")...)
+	return " " + keys(append(kv, append(append([]string{"r", "reload"}, narr...), "y", "copy", "esc", "back", "?", "keys", "q", "quit")...)...)
 }
 
 // reviewToggle names what `m` switches to.

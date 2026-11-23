@@ -13,6 +13,8 @@ import (
 
 	"github.com/coredev-uk/ade/internal/agile"
 	"github.com/coredev-uk/ade/internal/ai"
+	"github.com/coredev-uk/ade/internal/app"
+	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/domain"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/forgesync"
@@ -392,8 +394,18 @@ func TestNarrativeAnswerAndRefusal(t *testing.T) {
 	}
 }
 
+// aiAgileModel is agileModel with a usable AI profile: `n` is offered.
+func aiAgileModel(g glyphs) model {
+	m := agileModel(g)
+	cfg := config.Defaults()
+	cfg.AI.Mode, cfg.AI.Profile = "ask", "sub"
+	cfg.AI.Profiles = map[string]config.AIProfile{"sub": {Driver: "omp"}}
+	m.app = &app.App{Config: &cfg}
+	return m
+}
+
 func TestNarrateNeedsLoadedPage(t *testing.T) {
-	m := agileModel(unicodeGlyphs)
+	m := aiAgileModel(unicodeGlyphs)
 	m.ag = agileUI{kind: agileStandup}
 	if _, cmd := press(m, "n"); cmd != nil {
 		t.Fatal("n with nothing loaded must not call the AI")
@@ -493,5 +505,73 @@ func TestReviewWithSeveralProjectsOpensOnTheFirstWithSprints(t *testing.T) {
 	single.ag.kind = agileReview
 	if foot := ansi.Strip(single.agileFooter(80)); strings.Contains(foot, "p project") {
 		t.Errorf("one project needs no picker: %q", foot)
+	}
+}
+
+// Without AI the page neither advertises `n` nor leaves it silent: the key
+// says why, and the footer has no AI narrative hint.
+func TestNarrativeKeyIsHiddenWithoutAIAndSaysWhy(t *testing.T) {
+	for _, mode := range []string{"off", "none"} {
+		m := agileModel(unicodeGlyphs)
+		cfg := config.Defaults()
+		if mode == "off" {
+			cfg.AI.Mode = "off"
+			cfg.AI.Profiles = map[string]config.AIProfile{"sub": {Driver: "omp"}}
+		}
+		m.app = &app.App{Config: &cfg}
+		for _, kind := range []agileKind{agileStandup, agileReview} {
+			m.ag = agileUI{kind: kind, standup: standupFixture(), review: reviewFixture()}
+			for _, w := range []int{80, 160} {
+				if got := ansi.Strip(m.agileFooter(w)); strings.Contains(got, "narrative") {
+					t.Errorf("%s: footer at %d offers a narrative with AI unavailable: %s", mode, w, got)
+				}
+			}
+			next, cmd := press(m, "n")
+			if cmd != nil || next.ag.narrating {
+				t.Fatalf("%s: n must not start a call", mode)
+			}
+			if last := next.nc.toasts[len(next.nc.toasts)-1].ev.Title; !strings.Contains(last, "no AI narrative") {
+				t.Errorf("%s: toast = %q", mode, last)
+			}
+		}
+	}
+	m := aiAgileModel(unicodeGlyphs)
+	m.ag = agileUI{kind: agileStandup, standup: standupFixture()}
+	if got := ansi.Strip(m.agileFooter(160)); !strings.Contains(got, "AI narrative") {
+		t.Errorf("footer lacks the narrative hint with AI on: %s", got)
+	}
+}
+
+// In ask mode a narrative that needs a yes asks inline, like every other AI
+// surface, instead of sending the user to the CLI.
+func TestNarrativeAsksInlineBeforeASpendingCall(t *testing.T) {
+	m := aiAgileModel(unicodeGlyphs)
+	m.ag = agileUI{kind: agileStandup, standup: standupFixture(), narrating: true}
+	pf := ai.Preflight{Profile: "sub", Driver: "omp", Model: "m", Priced: true, EstimateUSD: 0.2, Confirm: []string{"the estimate is over the $0.10 you set to be asked first"}}
+	next, cmd := m.narrativeDone(narrativeMsg{kind: agileStandup, err: &ai.ErrNeedsConfirm{Preflight: pf}})
+	m = next.(model)
+	if cmd != nil || m.ag.pf == nil || m.ag.narrating {
+		t.Fatalf("expected the pre-flight prompt: %+v", m.ag)
+	}
+	for _, toast := range m.nc.toasts {
+		if strings.Contains(toast.ev.Title, "ade standup") || strings.Contains(toast.ev.Subject, "ade standup") {
+			t.Fatalf("the prompt must not send the user to the CLI: %+v", toast.ev)
+		}
+	}
+	screen := ansi.Strip(m.render())
+	for _, want := range []string{"AI narrative", "this asks the model first", "set to be asked first", "y send"} {
+		if !strings.Contains(screen, want) {
+			t.Errorf("the prompt lacks %q:\n%s", want, screen)
+		}
+	}
+	// Any other key sends nothing and closes it.
+	n, cmd := press(m, "n")
+	if cmd != nil || n.ag.pf != nil || n.ag.narrating {
+		t.Fatalf("n declines: %+v", n.ag)
+	}
+	// y sends the call, now assumed.
+	y, cmd := press(m, "y")
+	if cmd == nil || y.ag.pf != nil || !y.ag.narrating {
+		t.Fatalf("y starts the call: %+v", y.ag)
 	}
 }

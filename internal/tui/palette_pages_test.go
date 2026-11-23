@@ -70,7 +70,7 @@ func TestWorktreesPaletteHasWorkspaceAndCopyEntries(t *testing.T) {
 			t.Errorf("Worktrees palette lacks %q", k)
 		}
 	}
-	for _, g := range helpGroups(true) {
+	for _, g := range helpGroups(true, true) {
 		for _, k := range helpKeys(g.rows) {
 			switch k {
 			case "w", "W", "v", "y":
@@ -79,5 +79,48 @@ func TestWorktreesPaletteHasWorkspaceAndCopyEntries(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// Without AI the Home help and palette stop offering what only a model does;
+// what has a non-AI form (digest as a list, classify by keywords) stays.
+func TestHomeHelpAndPaletteHideDeadAIEntriesWithoutAI(t *testing.T) {
+	rows := func(ai bool) string {
+		var b strings.Builder
+		for _, full := range []bool{true, false} {
+			for _, g := range helpGroups(full, ai) {
+				for _, r := range g.rows {
+					b.WriteString(r[0] + " " + r[1] + "\n")
+				}
+			}
+		}
+		return b.String()
+	}
+	if !strings.Contains(rows(true), "research") {
+		t.Error("the help lists R with AI on")
+	}
+	if got := rows(false); strings.Contains(got, "research") || strings.Contains(got, "(AI)") {
+		t.Errorf("the help lists a model-only key with AI off:\n%s", got)
+	}
+	if !strings.Contains(rows(false), "classify") {
+		t.Error("classify has a keyword form and stays in the help")
+	}
+
+	e := newMREnv(t, fake.Free)
+	e.m.mr = nil
+	names := func() string {
+		var b strings.Builder
+		for _, en := range e.m.paletteEntries() {
+			b.WriteString(en.name + "\n")
+		}
+		return b.String()
+	}
+	if got := names(); strings.Contains(got, "stand-in") || strings.Contains(got, "Research") || strings.Contains(got, "AI digest") ||
+		!strings.Contains(got, "New comments since you last looked") || !strings.Contains(got, "Classify") {
+		t.Errorf("palette with AI off:\n%s", got)
+	}
+	e.aiTextStub("auto")
+	if got := names(); !strings.Contains(got, "stand-in") || !strings.Contains(got, "Research") || !strings.Contains(got, "AI digest") {
+		t.Errorf("palette with AI on:\n%s", got)
 	}
 }
