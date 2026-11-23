@@ -644,6 +644,8 @@ In a terminal it asks about what it cannot settle (which repo is the tracker, wh
   or when its root has `go.mod`, `package.json`, a `Makefile`, `Procfile`, `flake.nix` or compose file. A tracker
   with none of those, next to other repos, stays only the tracker. With `child_issue = "auto"`, start work then
   makes no child issue for such a repo: the tracker issue is the work item and the merge request closes it.
+  A manifest with exactly one repo also needs no `--repo`: `ade start` and the dashboard's start dialog use it
+  when no app label routes the issue elsewhere.
 - **Tracker:** `--tracker`, else the repo whose recent issues carry the most app-like labels, else the one named
   `tracker`, `issues` or `planning`. When these disagree or tie it asks, or fails under `--yes`.
 - **Label patterns:** scoped labels with `::`, `:` or `/` separators. The facet is read from the scope name:

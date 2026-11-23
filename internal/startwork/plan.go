@@ -133,9 +133,13 @@ func ValidBranchName(name string) error {
 
 // DefaultChoices preselects what the manifest and the issue say: the repos the
 // app labels route to, the mode from conventions.mr.create, the child policy
-// from conventions.child_issue.
+// from conventions.child_issue. A manifest with exactly one repo needs no
+// routing: that repo is the default when no app label picks one.
 func DefaultChoices(m *config.Manifest, item domain.WorkItem) Choices {
 	c := Choices{Repos: slices.Clone(item.Repos), Mode: ModeDraft, Child: ChildAuto}
+	if names := m.RepoNames(); len(c.Repos) == 0 && len(names) == 1 {
+		c.Repos = names
+	}
 	if p, err := ParseChildPolicy(m.Conventions.ChildIssue); err == nil {
 		c.Child = p
 	}

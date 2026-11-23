@@ -64,3 +64,21 @@ func TestTrackerThatIsAlsoTheCodeRepoGetsNoChild(t *testing.T) {
 		})
 	}
 }
+
+func TestDefaultChoicesPicksTheOnlyRepo(t *testing.T) {
+	h := newHarness(t, tiers[0])
+	item := h.resolve(4).Item
+	item.Repos = nil
+	if got := startwork.DefaultChoices(h.m, item).Repos; len(got) != 0 {
+		t.Errorf("two repos, no routing: repos = %v, want none", got)
+	}
+	one := *h.m
+	one.Repos = map[string]config.Repo{"mono": {Path: tracker}}
+	if got := startwork.DefaultChoices(&one, item).Repos; len(got) != 1 || got[0] != "mono" {
+		t.Errorf("one repo: repos = %v, want [mono]", got)
+	}
+	item.Repos = []string{"mono"}
+	if got := startwork.DefaultChoices(&one, item).Repos; len(got) != 1 {
+		t.Errorf("routed repo kept: %v", got)
+	}
+}
