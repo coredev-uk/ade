@@ -52,7 +52,7 @@ func (m *model) mrKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 		next, cmd := m.openWorkspace(ks == "W")
 		*m = next
 		return cmd, true
-	case "u":
+	case "p":
 		next, cmd := m.openPush()
 		*m = next
 		return cmd, true
@@ -375,6 +375,9 @@ func (m model) mrFooter(w int) string {
 		return " " + m.modalHint(p.modal)
 	}
 	if m.help {
+		if m.helpMax() > 0 {
+			return " " + keys("j/k", "scroll", "esc", "close")
+		}
 		return " " + keys("esc", "close", "?", "close")
 	}
 	var tabKeys []string
@@ -419,7 +422,7 @@ func (m model) mrFooter(w int) string {
 	if p.tab == tabOverview && p.item != nil {
 		tabKeys = append(tabKeys, "n", "edit notes")
 	}
-	act := []string{"a", "approve", "R", "ready/draft", "m", "merge", "u", "push", "S", "submit review"}
+	act := []string{"a", "approve", "R", "ready/draft", "m", "merge", "p", "push", "S", "submit review"}
 	if m.aiOn() {
 		act = append(act, "A", "agent review", "B", "AI description")
 	}
@@ -446,7 +449,7 @@ func fitKeys(w int, keep []string, groups ...[]string) string {
 			all = append(all, g...)
 		}
 		line := " " + keys(append(all, keep...)...)
-		if lipgloss.Width(line) < w {
+		if lipgloss.Width(line) <= w {
 			return line
 		}
 		trimmed := false
@@ -481,7 +484,7 @@ func mrHelpRows(ai bool) [][2]string {
 		{"S", "submit the review as one batch"},
 		{"a R m", "approve, ready/draft, merge"},
 		{"w W", "open this MR's worktree (W: other main pane)"},
-		{"u", "push this MR's branch (shows the commits first)"},
+		{"p", "push this MR's branch (shows the commits first)"},
 		{"P", "agent menu: plan, address comments"},
 		{"l", "CI: job log (full screen, / searches)"},
 		{"U", "reload from the forge"},
@@ -497,14 +500,19 @@ func mrHelpRows(ai bool) [][2]string {
 	return rows
 }
 
-// mrHelpView is terse on purpose: each row fits one line even at 60 columns,
-// and rows that do not fit the height are left out.
-func mrHelpView(w, h int, g glyphs, ai bool) string {
-	rows := mrHelpRows(ai)
+// mrHelpBody is the MR page help's rows, the title and a blank first. Each row
+// fits one line even at 60 columns.
+func mrHelpBody(g glyphs, ai bool) []string {
 	l := []string{stBold.Render("Merge request page"), ""}
-	for _, r := range rows[:min(len(rows), max(1, h-6))] {
+	for _, r := range mrHelpRows(ai) {
 		l = append(l, stRule.Render(g.Vertical)+" "+stBold.Render(pad(g, r[0], 8))+r[1])
 	}
+	return l
+}
+
+// mrHelpView is the MR page's help dialog; on a short screen the rows scroll
+// (j/k) under the title.
+func mrHelpView(w, h int, g glyphs, ai bool, top int) string {
 	return lipgloss.NewStyle().Border(g.Border).BorderForeground(lipgloss.Color(colRule)).
-		Padding(0, 1).Width(w).Render(strings.Join(l, "\n"))
+		Padding(0, 1).Width(w).Render(strings.Join(scrollBody(g, mrHelpBody(g, ai), 2, h, top), "\n"))
 }

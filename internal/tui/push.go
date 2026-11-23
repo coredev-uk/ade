@@ -10,8 +10,9 @@ import (
 	"github.com/coredev-uk/ade/internal/workspace"
 )
 
-// openPush is `u` on a Home item (every worktree of the item) and on the MR
-// page (the worktree of the MR's source branch): push the branch to origin.
+// openPush is `u` on a Home item (every worktree of the item) and `p` on the MR
+// page (the worktree of the MR's source branch; `u` there is another action):
+// push the branch to origin.
 // The dialog first lists, per worktree, the remote branch, how many commits
 // are ahead (read from the last fetch) and their subjects; `enter` pushes
 // with the forge's write token and sets the upstream, audited as git.push,
@@ -67,11 +68,15 @@ func (m model) openPush() (model, tea.Cmd) {
 			return paths, "", nil
 		}
 	}
+	retry := "u"
+	if m.mr != nil {
+		retry = "p"
+	}
 	return m.openAction(actionSpec{
 		title:   "Push your branch",
 		heading: heading,
 		reading: "reading the branch…",
-		retry:   "u",
+		retry:   retry,
 		resolve: func(ctx context.Context) (actionPlan, error) {
 			paths, why, err := trees(ctx)
 			if err != nil {

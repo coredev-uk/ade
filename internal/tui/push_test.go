@@ -103,7 +103,7 @@ func TestMRPagePushesTheShownMRsBranch(t *testing.T) {
 	e, _ := pushEnv(t)
 	mr := forge.MR{Ref: forge.Ref{Project: grp + "/api", IID: 9, Kind: forge.KindMR}, Title: "Retry failed webhook deliveries", SourceBranch: "3-retry", State: "opened"}
 	e.m.mr = &mrPage{project: "demo-gl", mrs: []forge.MR{mr}, cur: 0}
-	e.press("u")
+	e.press("p")
 	if e.m.act == nil || e.m.act.stage != adConfirm || len(e.m.act.plan.lines) == 0 || !strings.Contains(strings.Join(e.m.act.plan.lines, "\n"), "demo-gl/api/3-retry → origin/3-retry (new branch)") {
 		t.Fatalf("dialog = %+v", e.m.act)
 	}

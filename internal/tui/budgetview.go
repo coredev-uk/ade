@@ -152,13 +152,13 @@ func (m model) budgetFooter(w int) string {
 	if m.bud.refreshing {
 		r = m.g.T("refreshing…")
 	}
-	if w < twoPaneMinW {
+	if narrowW(w) {
 		if m.showDetail {
-			return " " + keys("j/k", "move", "J/K", "scroll", "tab", "list", "r", "refresh", "b", "back", "L", "log", "?", "keys")
+			return fitKeys(w, []string{"tab", "list", "b", "back", "?", "keys"}, []string{"j/k", "move", "J/K", "scroll", "r", "refresh", "L", "log"})
 		}
-		return " " + keys("j/k", "move", "tab", "details", "r", "refresh", "b", "back", "L", "log", "?", "keys")
+		return fitKeys(w, []string{"tab", "details", "b", "back", "?", "keys"}, []string{"j/k", "move", "r", "refresh", "L", "log"})
 	}
-	return " " + keys("j/k", "move", "J/K", "detail", "enter", "open item", "r", r, "b", "back", "L", "log", "i", "inbox", "?", "keys", "q", "quit")
+	return fitKeys(w, []string{"b", "back", "?", "keys", "q", "quit"}, []string{"j/k", "move", "J/K", "detail", "enter", "open item", "r", r, "L", "log", "i", "inbox"})
 }
 
 // budgetBody draws the page to exactly w×h cells: the list on the left and
