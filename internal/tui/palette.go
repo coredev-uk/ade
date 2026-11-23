@@ -165,6 +165,7 @@ func (m model) paletteEntries() []palEntry {
 		pressEntry("Set weight", "=", "ade issue weight <ref> <n>", true),
 		pressEntry("Move to the next sprint", ">", "ade issue move <ref>", true),
 		pressEntry("Move the workflow label to match the stage", "m", "ade issue stage <ref>", true),
+		pressEntry("Push the item's branches", "u", "ade push", true),
 	}
 	if m.aiOn() { // these have no list or keyword form: without AI they are not offered
 		home = append(home,

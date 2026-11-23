@@ -9,9 +9,9 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// The action dialog is Home's one confirm-then-write dialog for actions that
-// make a single change the user should see first: moving a workflow label
-// (`m`), cleaning up merged work (`x`), pushing a branch (`P`). It reads what
+// The action dialog is the confirm-then-write dialog of Home and the MR page
+// for actions that make a single change the user should see first: moving a
+// workflow label (`m`), pushing a branch (`u` on Home, `p` on the MR page). It reads what
 // it needs in a command (the list never waits), lists the exact change, and
 // does it on enter. Every action behind it is the same code as its CLI command
 // (`ade issue stage`, `ade cleanup`, `ade push`), so it is audited the same.
@@ -84,9 +84,10 @@ func (m model) anyHomeDialogOpen() bool {
 }
 
 // openAction starts the dialog for spec and reads its inputs in a command. It
-// does nothing off Home or while another dialog is open.
+// does nothing off Home and the MR page, or while another dialog is open.
 func (m model) openAction(spec actionSpec) (model, tea.Cmd) {
-	if !m.onHomePage() || m.anyHomeDialogOpen() {
+	onMR := m.mr != nil && m.mr.modal == nil && !m.help
+	if (!m.onHomePage() && !onMR) || m.anyHomeDialogOpen() {
 		return m, nil
 	}
 	d := &actionDialog{spec: spec, stage: adResolving}

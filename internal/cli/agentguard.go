@@ -77,6 +77,7 @@ var agentRefused = map[string]string{
 	"agent accept":  "takes an agent's work into the branch: that is the user's yes",
 	"agent discard": "throws an agent's work away: that is the user's call",
 	"agent push":    "pushes to the forge",
+	"push":          "pushes to the forge",
 	"agent cancel":  "stops a run: that is the user's call",
 
 	"ws hook install": "changes the user's git hooks: an agent must not rewire how the user's commits are made",

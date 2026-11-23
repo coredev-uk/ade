@@ -52,6 +52,10 @@ func (m *model) mrKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 		next, cmd := m.openWorkspace(ks == "W")
 		*m = next
 		return cmd, true
+	case "p":
+		next, cmd := m.openPush()
+		*m = next
+		return cmd, true
 	case "[", "]":
 		if n := len(p.mrs); n > 1 {
 			step := 1
@@ -531,6 +535,7 @@ func mrHelpRows(ai bool) [][2]string {
 		{"u", "update the branch from the target (rebase or merge)"},
 		{"E", "edit the MR description by hand (no AI)"},
 		{"w W", "open this MR's worktree (W: other main pane)"},
+		{"p", "push this MR's branch (shows the commits first)"},
 		{"P", "agent menu: plan, address comments"},
 		{"l", "CI: job log (full screen, / searches)"},
 		{"U", "reload from the forge"},
