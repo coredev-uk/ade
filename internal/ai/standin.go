@@ -11,7 +11,7 @@ import (
 )
 
 // standInVersion keys the result cache: change the prompt, bump it.
-const standInVersion = "standin-v1"
+const standInVersion = "standin-v2"
 
 //go:embed prompts/standin.md
 var standInSystem string
@@ -89,7 +89,7 @@ func StandInJob(forgeName string, in StandInInput) (Job, error) {
 	}
 	return Job{
 		Feature: "standin", Role: RoleExplain, PromptVersion: standInVersion,
-		System: standInSystem, Prompt: b.String(),
+		System: guarded(standInSystem), Prompt: untrusted("issue and related issues", b.String()),
 		Forge: forgeName, Ref: is.Ref, Name: fmt.Sprintf("standin-issue%d", is.Ref.IID),
 		MaxTokens: 350,
 	}, nil

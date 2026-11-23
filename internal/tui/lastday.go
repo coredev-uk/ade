@@ -125,12 +125,27 @@ func (m *model) onLastDay(msg lastDayMsg) {
 	}
 }
 
-// lastDayMaxEntries caps the plain list shown when there is no AI summary.
-const lastDayMaxEntries = 5
+// lastDayMaxEntries caps the plain list shown when there is no AI summary;
+// lastDayMidEntries and lastDayMidNarrative cap the list and the summary on a
+// screen shorter than tallH rows. Below shortH the block does not show at all:
+// it yields its rows to the list, and S (standup) has the same facts.
+const (
+	lastDayMaxEntries   = 5
+	lastDayMidEntries   = 2
+	lastDayMidNarrative = 3
+)
 
 // lastDayLines is the block at the top of Home: the day's facts, or the AI
 // summary of them when there is one, with the reason faint underneath.
 func (m model) lastDayLines(w int) []string {
+	_, h := m.dims()
+	if shortScreen(h) {
+		return nil
+	}
+	entries, narrative := lastDayMaxEntries, 1<<30
+	if h < tallH {
+		entries, narrative = lastDayMidEntries, lastDayMidNarrative
+	}
 	l := m.ld.day
 	if l == nil || l.Date == "" {
 		if m.ld.busy {
@@ -144,12 +159,17 @@ func (m model) lastDayLines(w int) []string {
 	}
 	out := []string{section("Last working day", guide, w, m.g)}
 	if l.Narrative != "" {
-		for _, ln := range m.mdLines(l.Narrative, w-4) {
+		lines := m.mdLines(l.Narrative, w-4)
+		for i, ln := range lines {
+			if i == narrative {
+				out = append(out, "   "+stFaint.Render(fmt.Sprintf("… %d more lines · S shows the day", len(lines)-i)))
+				break
+			}
 			out = append(out, "   "+ln)
 		}
 	} else {
 		for i, e := range l.Done {
-			if i == lastDayMaxEntries {
+			if i == entries {
 				out = append(out, "   "+stFaint.Render(fmt.Sprintf("+ %d more", len(l.Done)-i)))
 				break
 			}

@@ -158,7 +158,8 @@ type AIProfile struct {
 	// ExtraHeaders are sent on every request of an HTTP driver, e.g. a
 	// gateway's team or tag headers. Authorization is the key's job.
 	ExtraHeaders map[string]string `toml:"extra_headers"`
-	// Timeout caps one request of an HTTP driver (default 5m).
+	// Timeout caps one request of an HTTP driver (default 5m) or one omp call
+	// (default 10m).
 	Timeout Duration `toml:"timeout"`
 	// Prices maps a model id to its list prices, for pre-flight estimates and
 	// for drivers whose responses carry no cost.

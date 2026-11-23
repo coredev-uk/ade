@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/coredev-uk/ade/internal/audit"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/joblog"
 )
@@ -18,7 +19,7 @@ import (
 // joblog.Clean), so the model sees what the user would. Nothing is written to
 // the forge.
 
-const citriageVersion = "ci-triage-v1"
+const citriageVersion = "ci-triage-v2"
 
 //go:embed prompts/citriage.md
 var citriageSystem string
@@ -115,22 +116,26 @@ func tailChars(s string, n int) string {
 func CITriageJob(forgeName string, in CITriageInput) Job {
 	mr := in.MR
 	var b strings.Builder
-	fmt.Fprintf(&b, "Merge request: %s\nBranches: %s -> %s\n", mr.Title, mr.SourceBranch, mr.TargetBranch)
+	b.WriteString(untrusted("merge request", fmt.Sprintf("Merge request: %s\nBranches: %s -> %s", mr.Title, mr.SourceBranch, mr.TargetBranch)))
 	fmt.Fprintf(&b, "\n%d failed job(s):\n", len(in.Failures)+in.Omitted)
 	for _, f := range in.Failures {
-		fmt.Fprintf(&b, "\n### Job %s (stage %s)\n", f.Job.Name, f.Job.Stage)
+		job := fmt.Sprintf("### Job %s (stage %s)\n", f.Job.Name, f.Job.Stage)
 		if f.Log == "" {
-			b.WriteString("(the job has no log)\n")
-			continue
+			job += "(the job has no log)"
+		} else {
+			// A failing job may print a token (an Authorization header, a
+			// glpat-… in a clone URL), and the prompt leaves the machine: mask
+			// credentials as the audit log does before the model sees them.
+			job += "Log, last lines:\n" + audit.Redact(f.Log)
 		}
-		b.WriteString("Log, last lines:\n```\n" + f.Log + "\n```\n")
+		b.WriteString("\n" + untrusted("CI job and its log", job))
 	}
 	if in.Omitted > 0 {
 		fmt.Fprintf(&b, "\n(%d more failed jobs not shown)\n", in.Omitted)
 	}
 	return Job{
 		Feature: "ci-triage", Role: RoleExplain, PromptVersion: citriageVersion,
-		System: citriageSystem, Prompt: b.String(),
+		System: guarded(citriageSystem), Prompt: b.String(),
 		Forge: forgeName, Ref: mr.Ref, Name: "citriage-mr" + fmt.Sprint(mr.Ref.IID),
 		MaxTokens: 900,
 		Params:    map[string]any{"failed": len(in.Failures) + in.Omitted},

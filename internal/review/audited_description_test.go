@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/coredev-uk/ade/internal/aimark"
 	"github.com/coredev-uk/ade/internal/audit"
 	"github.com/coredev-uk/ade/internal/forge"
 )
@@ -33,7 +34,8 @@ func TestSetDescriptionIsAuditedWithoutTheText(t *testing.T) {
 		t.Fatal(err)
 	}
 	es, _ := log.Query(audit.Filter{Action: "forge.mr.description"})
-	if len(w.set) != 1 || len(es) != 1 || es[0].Item != mr.String() || es[0].Params["chars"] != float64(len("secret-ish body")) || es[0].Params["source"] != "ai-describe" {
+	marked := "secret-ish body\n\n" + aimark.Marker // text a model drafted goes out marked, whatever the editor did
+	if len(w.set) != 1 || w.set[0] != marked || len(es) != 1 || es[0].Item != mr.String() || es[0].Params["chars"] != float64(len(marked)) || es[0].Params["source"] != "ai-describe" {
 		t.Fatalf("writes=%v audit=%+v", w.set, es)
 	}
 	if strings.Contains(es[0].Error, "secret") || es[0].Outcome != "ok" {

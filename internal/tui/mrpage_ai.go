@@ -151,6 +151,7 @@ func (m *model) aiAsk(d *mrData, k aiKey, refresh, assume bool) tea.Cmd {
 
 	app, reviews := m.app, m.reviews
 	mr, diff, haveDiff, ref, forgeName := d.mr, d.diff, d.diffL.st == loadOK, d.ref, d.forgeKey
+	me := m.me().Username // whose voice a draft reply is in
 	jobs := slices.Clone(d.jobs)
 	disc, haveDisc := d.discussion(k.id)
 	fn := func(ctx context.Context, be review.Backend) (any, error) {
@@ -183,13 +184,15 @@ func (m *model) aiAsk(d *mrData, k aiKey, refresh, assume bool) tea.Cmd {
 		case aiThreadSum:
 			job = ai.ThreadSummaryJob(forgeName, mr, disc, diff)
 		case aiReply:
-			job = ai.ReplyJob(forgeName, mr, disc, diff)
+			job = ai.ReplyJob(forgeName, mr, disc, diff, ai.ReplyRoleFor(mr, me))
 		case aiReview:
 			threads, err := be.Discussions(ctx, ref)
 			if err != nil {
 				return nil, forgeRead(fmt.Errorf("read the threads of %s: %w", ref, err))
 			}
-			job = ai.ReviewJob(forgeName, mr, diff, issue, threads, nil)
+			// The repo's AGENTS.md is part of the review's input (PLAN §6.9), as
+			// `ade ai review` reads it.
+			job = ai.ReviewJob(forgeName, mr, diff, issue, threads, ai.RepoGuides(ctx, be, mr))
 		}
 		if k.kind != aiThreadSum { // the user's own notes on the MR, its issue and the tracker parent
 			notes, err := svc.NotesFor(forgeName, ai.NoteRefs(mr, issue)...)
@@ -275,6 +278,9 @@ func (m *model) onAI(d *mrData, msg mrResultMsg) tea.Cmd {
 	st.l = load{st: loadOK}
 	st.text, st.profile, st.model, st.cost, st.cached, st.notes = strings.TrimSpace(ans.res.Text), ans.res.Profile, ans.res.Model, ans.res.CostUSD, ans.res.CacheHit, ans.notes
 	st.cut = ans.res.CutShort()
+	if k.kind == aiReply { // the thread steered the model: no line of the draft may run as a quick action
+		st.text = ai.ReplyDraft(st.text)
+	}
 	switch k.kind {
 	case aiDescribe:
 		m.deliverDescription(d, st, ans.draft)
@@ -349,7 +355,7 @@ func (m *model) openReply(d *mrData, id string, st *aiText) {
 	if st != nil && st.l.st == loadOK && st.text != "" && !st.shown {
 		st.shown = true
 		md.ed = newEditor(st.text)
-		md.aiNote = fmt.Sprintf(m.g.T("AI draft · %s · %s · edit it: enter posts, esc throws it away"), st.model, costWord(st))
+		md.aiNote = fmt.Sprintf(m.g.T("AI draft · %s · %s · edit it: enter posts it marked as AI-drafted, esc throws it away"), st.model, costWord(st))
 		if st.cut != "" {
 			md.aiCut = m.g.Warn + " " + st.cut + m.g.T(": finish it before posting")
 		}
@@ -380,7 +386,10 @@ func (m *model) aiReviewKey() tea.Cmd {
 		m.notice(events.Info, "The agent is already reviewing "+d.ref.String())
 		return nil
 	}
-	return m.aiAsk(d, aiKey{kind: aiReview}, false, false)
+	// After a failure the same prompt may be what is cached (or recently cut
+	// short): a retry asks past the cache.
+	st := d.ai[aiKey{kind: aiReview}]
+	return m.aiAsk(d, aiKey{kind: aiReview}, st != nil && st.l.st == loadFailed, false)
 }
 
 // aiConfirmKey answers the pre-flight dialog.
@@ -438,7 +447,9 @@ func (m *model) threadAIKey(ks string, sel thread) tea.Cmd {
 	if st := d.ai[k]; st != nil && st.l.busy() {
 		return nil
 	}
-	return m.aiAsk(d, k, false, false) // reads the file's diff itself when the tab has not yet
+	// A retry after a failure asks past the cache (a cut-short answer blocks the same prompt for a while).
+	st := d.ai[k]
+	return m.aiAsk(d, k, st != nil && st.l.st == loadFailed, false) // reads the file's diff itself when the tab has not yet
 }
 
 // --- drawing ---------------------------------------------------------------------

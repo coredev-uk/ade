@@ -46,6 +46,14 @@ const cutShortTTL = 30 * time.Minute
 // ErrCancelled is returned when the user declined the pre-flight prompt.
 var ErrCancelled = errors.New("cancelled at the pre-flight prompt; nothing was sent")
 
+// unusableAnswer is a finished call whose text the job's Validate (or the
+// basic "there is some text" check) refused. It matches ErrBadAnswer.
+type unusableAnswer struct{ err error }
+
+func (e *unusableAnswer) Error() string        { return e.err.Error() }
+func (e *unusableAnswer) Unwrap() error        { return e.err }
+func (e *unusableAnswer) Is(target error) bool { return target == ErrBadAnswer }
+
 // Service runs AI jobs: cache lookup, pre-flight, caps, the driver call,
 // the artifact and the audit entry.
 type Service struct {
@@ -133,6 +141,13 @@ type Job struct {
 	Schema *Schema
 	// Params are extra audit params (no prompt bodies, never secrets).
 	Params map[string]any
+	// Validate reads the answer the way the caller will, and says why it is
+	// unusable. An answer it refuses is still paid for, audited and kept in
+	// the record, but is never cached (and one found in the cache is dropped
+	// and bought again): asking again must be able to recover, not serve the
+	// same unusable text for ever. Run then returns the error, which matches
+	// ErrBadAnswer. nil accepts any non-empty text.
+	Validate func(text string) error
 
 	// Refresh skips the cache lookup and buys a new answer.
 	Refresh bool
@@ -182,29 +197,65 @@ func (r Result) CutShort() string {
 // written to the artifact only, never to Result.Text.
 const TruncatedNote = "\n… (cut short: the model reached its output limit)"
 
-// resolve picks the profile, driver and model for a job.
-func (s *Service) resolve(ctx context.Context, j Job) (name string, p config.AIProfile, d Driver, model string, err error) {
+// profileFor picks the profile and model for a job. It opens nothing: a
+// cached answer needs neither the driver nor its key.
+func (s *Service) profileFor(j Job) (name string, p config.AIProfile, model string, err error) {
 	if s.Cfg.AI.Mode == "off" {
-		return "", p, nil, "", ErrDisabled
+		return "", p, "", ErrDisabled
 	}
 	name, p, err = s.Cfg.Profile(j.Profile)
 	if err != nil {
-		return "", p, nil, "", err
+		return "", p, "", err
 	}
 	model, err = p.Model(string(j.Role))
 	if err != nil {
-		return name, p, nil, "", fmt.Errorf("profile %s: %w", name, err)
+		return name, p, "", fmt.Errorf("profile %s: %w", name, err)
 	}
-	d, err = s.Open(ctx, p)
-	if err != nil {
-		return name, p, nil, model, fmt.Errorf("profile %s: %w", name, err)
-	}
-	return name, p, d, model, nil
+	return name, p, model, nil
 }
 
-// Run executes j. A cache hit costs nothing and is audited at $0.
+// driverFor opens the profile's driver (running its key command or reading its
+// key variable): only a call that goes out needs it.
+func (s *Service) driverFor(ctx context.Context, name string, p config.AIProfile) (Driver, error) {
+	d, err := s.Open(ctx, p)
+	if err != nil {
+		return nil, fmt.Errorf("profile %s: %w", name, err)
+	}
+	return d, nil
+}
+
+// cached looks hash up in the result cache. An answer the job's Validate
+// refuses (one cached by an older version, or before the answer could be
+// read) is dropped from the index and counts as a miss.
+func (s *Service) cached(j Job, hash string) (records.Artifact, bool, error) {
+	a, ok, err := s.Cache.Get(hash)
+	if err != nil || !ok {
+		return a, false, err
+	}
+	if s.unusable(j, a.Body) != nil {
+		return records.Artifact{}, false, s.Cache.Evict(hash)
+	}
+	return a, true, nil
+}
+
+// unusable reports why an answer cannot be used: no text at all, or the job's
+// own reader refuses it.
+func (s *Service) unusable(j Job, text string) error {
+	if strings.TrimSpace(text) == "" {
+		return &unusableAnswer{err: errors.New("the model's answer was empty")}
+	}
+	if j.Validate != nil {
+		if err := j.Validate(text); err != nil {
+			return &unusableAnswer{err: err}
+		}
+	}
+	return nil
+}
+
+// Run executes j. A cache hit costs nothing and is audited at $0; it needs
+// neither the driver nor the API key.
 func (s *Service) Run(ctx context.Context, j Job) (Result, error) {
-	name, p, d, model, err := s.resolve(ctx, j)
+	name, p, model, err := s.profileFor(j)
 	if err != nil {
 		return Result{}, err
 	}
@@ -212,7 +263,7 @@ func (s *Service) Run(ctx context.Context, j Job) (Result, error) {
 	item := j.Ref.String()
 
 	if !j.Refresh {
-		if a, ok, err := s.Cache.Get(hash); err != nil {
+		if a, ok, err := s.cached(j, hash); err != nil {
 			return Result{}, err
 		} else if ok {
 			return s.hit(j, name, p, model, item, a)
@@ -223,6 +274,10 @@ func (s *Service) Run(ctx context.Context, j Job) (Result, error) {
 	}
 	if j.Auto && s.stoppedToday(name) {
 		return Result{}, ErrAutoPaused
+	}
+	d, err := s.driverFor(ctx, name, p)
+	if err != nil {
+		return Result{}, err
 	}
 
 	pf, err := s.preflight(ctx, j, name, p, d, model)
@@ -258,7 +313,9 @@ func (s *Service) Run(ctx context.Context, j Job) (Result, error) {
 		}
 	}
 
-	call := Call{Model: model, System: j.System, Prompt: j.Prompt, MaxTokens: j.MaxTokens, Schema: j.Schema, Thinking: thinkingFor(p.Driver, j.Role)}
+	// The price the pre-flight used goes with the call: the driver books the
+	// cost from it, so what was estimated is what the ledger and the caps see.
+	call := Call{Model: model, System: j.System, Prompt: j.Prompt, MaxTokens: j.MaxTokens, Schema: j.Schema, Thinking: thinkingFor(p.Driver, j.Role), Price: pf.price}
 	if s.Cfg.Budget.CallUSD > 0 {
 		call.MaxCostUSD = s.Cfg.Budget.CallUSD
 	}
@@ -276,19 +333,28 @@ func (s *Service) Run(ctx context.Context, j Job) (Result, error) {
 }
 
 // Preview reports what Run would do without sending anything or writing an
-// audit entry: the pre-flight estimate, and whether the answer is cached.
+// audit entry: the pre-flight estimate, and whether the answer is cached. A
+// cached answer needs no driver: when the driver cannot be opened the
+// estimate is left empty.
 func (s *Service) Preview(ctx context.Context, j Job) (pf Preflight, cached bool, err error) {
-	name, p, d, model, err := s.resolve(ctx, j)
+	name, p, model, err := s.profileFor(j)
 	if err != nil {
 		return Preflight{}, false, err
 	}
 	if !j.Refresh {
 		hash := InputHash(j.PromptVersion, string(j.Role), model, j.System, j.Prompt)
-		if _, ok, err := s.Cache.Get(hash); err != nil {
+		if _, ok, err := s.cached(j, hash); err != nil {
 			return Preflight{}, false, err
 		} else if ok {
 			cached = true
 		}
+	}
+	d, err := s.driverFor(ctx, name, p)
+	if err != nil {
+		if cached {
+			return Preflight{Profile: name, Driver: p.Driver, Model: model, Role: string(j.Role), Dest: destOf(p), Notes: j.Notes}, true, nil
+		}
+		return Preflight{}, false, err
 	}
 	pf, err = s.preflight(ctx, j, name, p, d, model)
 	return pf, cached, err
@@ -333,6 +399,13 @@ func (s *Service) hit(j Job, profile string, p config.AIProfile, model, item str
 func (s *Service) finish(j Job, name string, p config.AIProfile, model, item, hash string, resp Response, pf Preflight) (Result, error) {
 	now := s.Now()
 	id := ulid.Make().String()
+	// A model that echoes a token from the input (a CI log, a description)
+	// must not store or show it: the answer is masked like the audit log is.
+	redacted := false
+	if r := audit.Redact(resp.Text); r != resp.Text {
+		resp.Text, redacted = r, true
+	}
+	var bad error
 	if resp.Truncated {
 		// Kept in the record like any paid output, but with no input hash:
 		// neither Cache.Put nor Reindex will serve it for the same prompt.
@@ -341,6 +414,8 @@ func (s *Service) finish(j Job, name string, p config.AIProfile, model, item, ha
 		}
 		hash = ""
 		resp.Text = strings.TrimRight(resp.Text, "\n ")
+	} else if bad = s.unusable(j, resp.Text); bad != nil {
+		hash = "" // paid for and kept, but never served again for this prompt
 	}
 	art := records.Artifact{
 		Feature: j.Feature, Profile: name, Model: firstNonEmpty(resp.Model, model), PromptVersion: j.PromptVersion,
@@ -362,6 +437,12 @@ func (s *Service) finish(j Job, name string, p config.AIProfile, model, item, ha
 	if resp.Truncated {
 		params["truncated"] = true
 	}
+	if redacted {
+		params["redacted"] = true
+	}
+	if bad != nil {
+		params["unusable"] = oneLine(bad.Error())
+	}
 	if resp.Gateway != nil {
 		if resp.Gateway.KeySpend != nil {
 			params["key_spend"] = *resp.Gateway.KeySpend
@@ -379,14 +460,21 @@ func (s *Service) finish(j Job, name string, p config.AIProfile, model, item, ha
 			DestHost: resp.DestHost, Bytes: resp.Bytes,
 		},
 	}
-	if werr != nil {
+	switch {
+	case werr != nil:
 		e.Outcome, e.Error = "error", "write artifact: "+werr.Error()
+	case bad != nil:
+		e.Outcome, e.Error = "error", "unusable answer: "+oneLine(bad.Error())
 	}
 	aerr := s.Audit.Append(e)
+	// The provider's own figure for the key, now that the call is in the
+	// ledger: the snapshot restarts from it (after the entry, so the call is
+	// not counted both in the figure and in the ledger since it).
+	s.noteGateway(name, p, resp.Gateway)
 	if werr != nil {
 		return Result{Text: resp.Text, CostUSD: resp.CostUSD}, werr
 	}
-	if !resp.Truncated {
+	if bad == nil && !resp.Truncated {
 		if err := s.Cache.Put(hash, path, j.Feature, art.Model, now); err != nil {
 			return Result{Text: resp.Text, CostUSD: resp.CostUSD, Artifact: path}, err
 		}
@@ -394,26 +482,64 @@ func (s *Service) finish(j Job, name string, p config.AIProfile, model, item, ha
 	if aerr != nil {
 		return Result{Text: resp.Text, CostUSD: resp.CostUSD, Artifact: path, Truncated: resp.Truncated}, fmt.Errorf("audit: %w", aerr)
 	}
-	return Result{
+	res := Result{
 		Text: resp.Text, Artifact: path, AuditID: id, Profile: name, Model: art.Model,
 		CostUSD: resp.CostUSD, Preflight: pf, Truncated: resp.Truncated,
-	}, nil
+	}
+	if bad != nil {
+		return res, bad
+	}
+	return res, nil
+}
+
+// noteGateway keeps the provider-side snapshot of a LiteLLM key current from
+// the key's own spend, which every response carries (x-litellm-key-spend). A
+// snapshot that describes another scope (a team's or user's budget binds when
+// the key has none) is left alone: the key's spend says nothing about it.
+func (s *Service) noteGateway(name string, p config.AIProfile, g *GatewayInfo) {
+	if s.Billing == nil || g == nil || g.KeySpend == nil || p.Billing.Source != billing.SourceLiteLLM {
+		return
+	}
+	snap, _, ok, err := s.Billing.Get(name)
+	if err != nil {
+		return
+	}
+	switch {
+	case ok && snap.Scope != "key":
+		return
+	case !ok && g.KeyMaxBudget == nil:
+		return // no cap known: nothing to refuse on
+	}
+	snap.Source, snap.Scope, snap.AsOf = billing.SourceLiteLLM, "key", s.Now().UTC()
+	snap.Spend = g.KeySpend
+	if g.KeyMaxBudget != nil {
+		snap.Limit = g.KeyMaxBudget
+	}
+	snap.Remaining = nil
+	if snap.Limit != nil {
+		snap.Remaining = new(*snap.Limit - *snap.Spend)
+	}
+	_ = s.Billing.Put(name, snap)
 }
 
 // failed audits a driver error. A budget stop becomes a budget.stop entry
 // (and, once a day, a notification); anything else an ai.* entry with outcome
-// error, with whatever cost the driver did report.
+// error, with whatever cost the driver did report and where the request went
+// and how many bytes of it were sent: a failed call may have left the machine
+// all the same.
 func (s *Service) failed(j Job, name string, p config.AIProfile, model, item string, resp Response, err error, pf Preflight) (Result, error) {
+	info := &audit.AIInfo{
+		Profile: name, Driver: p.Driver, Model: model, TokensIn: resp.Usage.In, TokensOut: resp.Usage.Out,
+		CostUSD: resp.CostUSD, CostSource: firstNonEmpty(resp.CostSource, CostReported),
+		DestHost: resp.DestHost, Bytes: resp.Bytes,
+	}
 	if stop, ok := AsStop(err); ok {
 		// A stop on the retry follows a first call that was paid for: the
 		// ledger counts cost from ai.* entries only, so book it.
 		if resp.CostUSD > 0 {
 			s.record(audit.Entry{
 				Action: "ai." + j.Feature, Target: item, Item: item, Params: j.Params, Outcome: "error", Error: err.Error(),
-				AI: &audit.AIInfo{
-					Profile: name, Driver: p.Driver, Model: model, TokensIn: resp.Usage.In, TokensOut: resp.Usage.Out,
-					CostUSD: resp.CostUSD, CostSource: firstNonEmpty(resp.CostSource, CostReported),
-				},
+				AI: info,
 			})
 		}
 		s.recordStop(j, name, model, item, stop)
@@ -421,10 +547,7 @@ func (s *Service) failed(j Job, name string, p config.AIProfile, model, item str
 	}
 	s.record(audit.Entry{
 		Action: "ai." + j.Feature, Target: item, Item: item, Params: j.Params, Outcome: "error", Error: err.Error(),
-		AI: &audit.AIInfo{
-			Profile: name, Driver: p.Driver, Model: model, TokensIn: resp.Usage.In, TokensOut: resp.Usage.Out,
-			CostUSD: resp.CostUSD, CostSource: firstNonEmpty(resp.CostSource, CostReported),
-		},
+		AI: info,
 	})
 	return Result{Preflight: pf, CostUSD: resp.CostUSD}, err
 }
@@ -453,9 +576,12 @@ func (s *Service) preflight(ctx context.Context, j Job, name string, p config.AI
 		InTokens: estimateTokens(j.System) + estimateTokens(j.Prompt), OutTokens: out,
 		Dest: destOf(p), Notes: j.Notes,
 		Retry: p.Driver != "omp" && j.MaxTokens > 0, // see retryTruncated
+		// omp takes no output cap, and thinks at --thinking low for review and
+		// plan: the estimate assumes MaxTokens but nothing enforces it.
+		EstimateOnly: p.Driver == "omp",
 	}
 	if price, ok := s.priceFor(ctx, name, p, d, model); ok {
-		pf.Priced = true
+		pf.Priced, pf.price = true, &price
 		in, outTok := pf.InTokens, pf.OutTokens
 		if pf.Retry {
 			in, outTok = 2*in, 3*outTok
@@ -484,15 +610,31 @@ func destOf(p config.AIProfile) string {
 	return hostOf(p.BaseURL)
 }
 
+// headroomMaxAge is how old a provider snapshot may be and still refuse a
+// call. The pre-flight never waits on a billing endpoint, so a snapshot that
+// nothing has refreshed (the budget page polls every minute while it is open;
+// every LiteLLM response refreshes it) must not keep deciding for long: the
+// provider's budget may have been raised or reset since.
+const headroomMaxAge = time.Hour
+
 // headroom is the provider's own remaining budget from the last snapshot,
 // merged with local spend since it. It is read from cache.db only: the
-// pre-flight never waits on a billing endpoint.
+// pre-flight never waits on a billing endpoint. A snapshot whose budget
+// window has reset since, or that is older than headroomMaxAge, says nothing
+// about now and is ignored (the provider still refuses a call it must).
 func (s *Service) headroom(_ context.Context, name string, p config.AIProfile) *float64 {
 	if s.Billing == nil || p.Billing.Source != billing.SourceLiteLLM {
 		return nil
 	}
 	snap, _, ok, err := s.Billing.Get(name)
 	if err != nil || !ok {
+		return nil
+	}
+	now := s.Now()
+	if snap.ResetAt != nil && !now.Before(*snap.ResetAt) {
+		return nil
+	}
+	if now.Sub(snap.AsOf) > headroomMaxAge {
 		return nil
 	}
 	local, err := s.Ledger.Spend(name, snap.AsOf, time.Time{})

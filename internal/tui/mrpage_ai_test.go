@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/coredev-uk/ade/internal/ai"
+	"github.com/coredev-uk/ade/internal/aimark"
 	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/domain"
 	"github.com/coredev-uk/ade/internal/forge"
@@ -327,10 +328,13 @@ func TestThreadSummaryAndDraftReplyLandInTheEditorAndNeverPostBySelf(t *testing.
 	e.press("enter")
 	var posted bool
 	for _, n := range e.discussions(ref)[0].Notes {
-		posted = posted || n.Body == stubReply+" Thanks."
+		posted = posted || n.Body == stubReply+" Thanks.\n\n"+aimark.Marker // an AI draft goes out marked, edits and all
 	}
 	if !posted {
-		t.Fatalf("the edited draft is not on the forge: %+v", e.discussions(ref)[0].Notes)
+		t.Fatalf("the edited draft is not on the forge, marked as AI drafted: %+v", e.discussions(ref)[0].Notes)
+	}
+	if es := e.audited("forge.thread.reply"); len(es) != 1 || es[0].Params["source"] != "ai-draft" {
+		t.Errorf("the post is audited as an AI draft: %+v", es)
 	}
 	if es := e.audited("ai.draft-reply"); len(es) != 2 {
 		t.Errorf("ai.draft-reply audit entries = %d, want 2 (one paid, one cached)", len(es))
