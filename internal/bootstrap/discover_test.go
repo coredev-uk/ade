@@ -560,3 +560,105 @@ func TestManifestStartsWithSchemaDirective(t *testing.T) {
 		}
 	}
 }
+
+func TestDiscoverTrackerOnlyIsTheCodeRepo(t *testing.T) {
+	c, srv := gitlabFake(t, fake.Free)
+	srv.AddFile("ade-demo-env/tracker", "go.mod", "module example.com/mono\n")
+	srv.AddFile("ade-demo-env/tracker", "main.go", "package main\n")
+
+	d, err := bootstrap.Discover(context.Background(), c, opts(func(o *bootstrap.Options) {
+		o.Match, o.Tracker = "tracker", "ade-demo-env/tracker"
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := roundTrip(t, d)
+	r, ok := m.Repos["tracker"]
+	if len(m.Repos) != 1 || !ok || r.Path != "ade-demo-env/tracker" || r.Path != m.Tracker.Project {
+		t.Fatalf("repos = %+v: the tracker is the one code repo", m.Repos)
+	}
+	if r.Tasks["dev"].Cmd != "go run ." || r.Tasks["test"].Cmd != "go test ./..." {
+		t.Errorf("tasks = %+v", r.Tasks)
+	}
+	if strings.Contains(d.TOML, "No code repositories") || !strings.Contains(d.TOML, "no child issue") {
+		t.Errorf("the manifest still says there are no repos:\n%s", d.TOML)
+	}
+	if m.Conventions.ChildIssue != "auto" {
+		t.Errorf("child_issue = %q", m.Conventions.ChildIssue)
+	}
+}
+
+// A tracker with nothing recognisable at its root still becomes a repo when no
+// other repository is included: the issues and the code are in one place.
+func TestDiscoverTrackerOnlyWithoutRecognisedFiles(t *testing.T) {
+	c, _ := gitlabFake(t, fake.Free)
+	d, err := bootstrap.Discover(context.Background(), c, opts(func(o *bootstrap.Options) { o.Match = "tracker" }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := roundTrip(t, d)
+	if len(m.Repos) != 1 || m.Repos["tracker"].Path != "ade-demo-env/tracker" {
+		t.Fatalf("repos = %+v", m.Repos)
+	}
+}
+
+func TestDiscoverTrackerWithCodeAndSiblings(t *testing.T) {
+	c, srv := gitlabFake(t, fake.Free)
+	seedRoots(srv)
+	srv.AddFile("ade-demo-env/tracker", "package.json", `{"scripts":{"test":"vitest"}}`)
+
+	d, err := bootstrap.Discover(context.Background(), c, opts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := roundTrip(t, d)
+	if len(m.Repos) != 3 || m.Repos["tracker"].Path != "ade-demo-env/tracker" || m.Repos["api"].Path == "" || m.Repos["web"].Path == "" {
+		t.Fatalf("repos = %+v: the tracker has code, so it is a repo beside api and web", m.Repos)
+	}
+	if m.Repos["tracker"].Tasks["test"].Cmd != "npm run test" {
+		t.Errorf("tracker tasks = %+v", m.Repos["tracker"].Tasks)
+	}
+}
+
+func TestDiscoverTrackerWithoutCodeStaysOnlyTheTracker(t *testing.T) {
+	c, srv := gitlabFake(t, fake.Free)
+	seedRoots(srv)
+	srv.AddFile("ade-demo-env/tracker", "README.md", "# planning\n")
+
+	d, err := bootstrap.Discover(context.Background(), c, opts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := roundTrip(t, d)
+	if _, ok := m.Repos["tracker"]; ok || len(m.Repos) != 2 {
+		t.Fatalf("repos = %+v: a tracker with no code is not a code repo", m.Repos)
+	}
+	if !strings.Contains(d.TOML, "The tracker repository is not listed") {
+		t.Errorf("missing the note about the tracker:\n%s", d.TOML)
+	}
+}
+
+func TestDiscoverGitHubSingleRepo(t *testing.T) {
+	srv := ghfake.New()
+	t.Cleanup(srv.Close)
+	srv.AddFile("tracker", "go.mod", "module x\n")
+	srv.AddFile("tracker", "main.go", "package main\n")
+	c := github.New(srv.URL, ghfake.Token)
+
+	d, err := bootstrap.Discover(context.Background(), c, bootstrap.Options{
+		ForgeName: userForge, Group: "ade-demo", Match: "tracker", Tracker: "ade-demo/tracker", Now: func() time.Time { return fakeNow },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := userConfig()
+	cfg.Forges[userForge] = config.Forge{Kind: "github"}
+	issues, err := d.Check(cfg)
+	if err != nil || config.HasErrors(issues) {
+		t.Fatalf("check: %v %v\n%s", issues, err, d.TOML)
+	}
+	m, _ := config.ParseManifest([]byte(d.TOML), "x")
+	if r := m.Repos["tracker"]; len(m.Repos) != 1 || r.Path != "ade-demo/tracker" || r.Tasks["dev"].Cmd != "go run ." {
+		t.Errorf("repos = %+v", m.Repos)
+	}
+}
