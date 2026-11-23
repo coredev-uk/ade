@@ -79,6 +79,9 @@ var agentRefused = map[string]string{
 	"agent push":    "pushes to the forge",
 	"push":          "pushes to the forge",
 	"agent cancel":  "stops a run: that is the user's call",
+
+	"ws hook install": "changes the user's git hooks: an agent must not rewire how the user's commits are made",
+	"ws hook remove":  "changes the user's git hooks: an agent must not rewire how the user's commits are made",
 }
 
 // annAgentAllowed marks a command that was looked at and is fine for an agent

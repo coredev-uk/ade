@@ -593,6 +593,42 @@ func TestNoChildPrefixUsesBranchNumber(t *testing.T) {
 	}
 }
 
+func TestStartInstallsTheCommitHookOnlyWhenTheManifestOptsIn(t *testing.T) {
+	for _, optIn := range []bool{false, true} {
+		h := newHarness(t, fake.Free)
+		h.m.Conventions.CommitPrefix = "GL-{parent}"
+		h.m.Conventions.CommitPrefixHook = optIn
+		_, res, err := h.start(3, draftApi())
+		if err != nil {
+			t.Fatal(err)
+		}
+		api := target(t, res, "api")
+		out, cfgErr := (git.Client{}).Run(context.Background(), api.Worktree, "config", "--worktree", "--get", "core.hooksPath")
+		hooks := filepath.Join(strings.TrimSpace(out), "commit-msg")
+		if !optIn {
+			if cfgErr == nil || slices.Contains(h.auditActions(), "git.hook.install") {
+				t.Errorf("hook installed although the manifest did not ask: %q %v", out, h.auditActions())
+			}
+			continue
+		}
+		if cfgErr != nil {
+			t.Fatalf("core.hooksPath not set in %s: %v", api.Worktree, cfgErr)
+		}
+		if fi, err := os.Stat(hooks); err != nil || fi.Mode()&0o111 == 0 {
+			t.Errorf("commit-msg hook at %s: %v", hooks, err)
+		}
+		if !slices.Contains(h.auditActions(), "git.hook.install") {
+			t.Errorf("install not audited: %v", h.auditActions())
+		}
+		if _, _, err := h.start(3, draftApi()); err != nil {
+			t.Fatal(err)
+		}
+		if n := strings.Count(strings.Join(h.auditActions(), " "), "git.hook.install"); n != 1 {
+			t.Errorf("git.hook.install audited %d times across two starts: %v", n, h.auditActions())
+		}
+	}
+}
+
 // draftRecorder keeps the MR drafts start work hands to the forge.
 type draftRecorder struct {
 	*swtest.Mirror

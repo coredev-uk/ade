@@ -346,7 +346,7 @@ when    = true
 
 ### Commit prefix
 
-If your team prefixes the first commit of an MR with the ticket (e.g. `GL-412 Fix export`), set `conventions.commit_prefix = "GL-{parent}"` in the manifest. ADE applies it to its own first commit and to squash messages and records `ade.commitPrefix` and `ade.target` per worktree. A sample `commit-msg` hook for your own commits is in [manifest.md](manifest.md#commit-prefix).
+If your team prefixes the first commit of an MR with the ticket (e.g. `GL-412 Fix export`), set `conventions.commit_prefix = "GL-{parent}"` in the manifest. ADE applies it to its own first commit and to squash messages and records `ade.commitPrefix` and `ade.target` per worktree. For your own commits, `ade ws hook install [worktree]` installs a `commit-msg` hook that prefixes the MR's first commit (`conventions.commit_prefix_hook = true` does it on start work); it never replaces a `commit-msg` hook you already have, and `ade ws hook remove` takes it out. Details and a sample hook to write yourself: [manifest.md](manifest.md#commit-prefix).
 
 ## Coder / CDE
 

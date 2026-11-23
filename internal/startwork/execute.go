@@ -536,7 +536,28 @@ func (e *Env) recordWorktree(ctx context.Context, p Plan, m *config.Manifest, rt
 	prefix := commitprefix.ForBranch(m, p.Item.IID, rt.child.IID, rt.branch)
 	if err := commitprefix.WriteWorktreeConfig(ctx, rt.worktree, p.Item.IID, prefix, rt.tp.Base); err != nil {
 		e.audit(p, "git.worktree.config", rt.worktree, nil, "", err)
+		return
 	}
+	if prefix != "" && m.Conventions.CommitPrefixHook {
+		e.installCommitHook(ctx, p, rt.worktree)
+	}
+}
+
+// installCommitHook installs the commit-prefix hook the manifest opts in to. A
+// commit-msg hook of the user's is left alone and said so: a warning, since
+// the tree is usable without it.
+func (e *Env) installCommitHook(ctx context.Context, p Plan, dir string) {
+	if cur, err := commitprefix.PlanHook(ctx, dir); err == nil && cur.Installed {
+		return // an earlier start installed it: nothing changed, nothing to audit
+	}
+	plan, err := commitprefix.InstallHook(ctx, dir)
+	e.audit(p, "git.hook.install", dir, map[string]any{"hook": "commit-msg", "hooks_dir": plan.Dir, "forwarded": plan.Forward}, "", err)
+	if err == nil {
+		return
+	}
+	ev := events.New("git.hook.failed", events.Warn, "commit-prefix hook not installed in "+filepath.Base(dir))
+	ev.Project, ev.Subject, ev.Detail = p.Project, filepath.Base(dir), err.Error()
+	e.App.Bus.Publish(ev)
 }
 
 // runHooks runs post_worktree hooks; a failing hook raises a warning but

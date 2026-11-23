@@ -505,11 +505,23 @@ func (d *Draft) pickCadence(ctx context.Context, f Forge, o Options, cadences []
 
 // fillRepos reads each code repo's root and templates and adds it to the
 // manifest. A repo that cannot be read still gets its [repos] table; the
-// problem is a note.
+// problem is a note. The tracker is a code repo too when no other repo is
+// included (issues and merge requests in one repo) or its root shows code
+// (go.mod, package.json, ...); otherwise it is only the tracker.
 func (d *Draft) fillRepos(ctx context.Context, f Forge, tracker forge.Repo, code []forge.Repo, facets Facets) {
 	all := append([]forge.Repo{tracker}, code...)
 	keys, prefix := repoKeys(all)
 	d.KeyPrefix = prefix
+
+	notes := len(d.Notes)
+	probe := RepoFinding{Key: keys[tracker.Path], Path: tracker.Path, DefaultBranch: tracker.DefaultBranch}
+	d.inspectRepo(ctx, f, &probe)
+	if len(code) == 0 || probe.HasCode {
+		d.TrackerIsRepo = true
+		code = append([]forge.Repo{tracker}, code...)
+	} else {
+		d.Notes = d.Notes[:notes] // only the tracker: its root is not a code repo's
+	}
 
 	var appValues []string
 	if facets.App != nil {
@@ -526,7 +538,12 @@ func (d *Draft) fillRepos(ctx context.Context, f Forge, tracker forge.Repo, code
 	for _, r := range code {
 		key := keys[r.Path]
 		rf := RepoFinding{Key: key, Path: r.Path, DefaultBranch: r.DefaultBranch, Apps: apps[key], AppMatched: matched[key]}
-		d.inspectRepo(ctx, f, &rf)
+		if r.Path == tracker.Path {
+			rf = probe
+			rf.Apps, rf.AppMatched = apps[key], matched[key]
+		} else {
+			d.inspectRepo(ctx, f, &rf)
+		}
 		d.Repos = append(d.Repos, rf)
 
 		repo := config.Repo{Path: r.Path, App: rf.Apps}
@@ -581,6 +598,7 @@ func (d *Draft) inspectRepo(ctx context.Context, f Forge, rf *RepoFinding) {
 		}
 		content[name] = string(b)
 	}
+	rf.HasCode = len(present) > 0
 	rf.Detected = DetectTasks(present, content)
 
 	names, _, err := startwork.TemplateNames(ctx, f, rf.Path, branch)
