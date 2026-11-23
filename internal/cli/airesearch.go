@@ -238,7 +238,8 @@ func researchCancel(cmd *cobra.Command, ref forge.Ref, forgeFlag string) error {
 		return err
 	}
 	svc := &ai.Service{Records: records.New(a.RecordsDir), Audit: a.Audit, Now: time.Now}
-	if err := svc.CancelResearch(name, ref); err != nil {
+	c, err := svc.CancelResearch(name, ref)
+	if err != nil {
 		if errors.Is(err, ai.ErrNotRunning) {
 			fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", ref, err)
 			return nil
@@ -246,8 +247,12 @@ func researchCancel(cmd *cobra.Command, ref forge.Ref, forgeFlag string) error {
 		return err
 	}
 	if jsonOut {
-		return printJSON(cmd.OutOrStdout(), map[string]any{"ref": ref.String(), "cancelled": true})
+		return printJSON(cmd.OutOrStdout(), map[string]any{"ref": ref.String(), "cancelled": true, "pid": c.PID, "signalled": c.Signalled})
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "%s: research cancelled\n", ref)
+	w := cmd.OutOrStdout()
+	fmt.Fprintf(w, "%s: research cancelled\n", ref)
+	if c.PID > 0 && !c.Signalled {
+		fmt.Fprintf(w, "  worker pid %d may still be running: this system cannot verify it is the worker, so it was not signalled; stop it yourself (kill %d)\n", c.PID, c.PID)
+	}
 	return nil
 }

@@ -323,48 +323,75 @@ func (s *Service) checkInput(j Job, want string) error {
 	return nil
 }
 
+// Cancelled is the outcome of CancelResearch.
+type Cancelled struct {
+	// PID is the worker's pid (0 when it never started).
+	PID int
+	// Signalled is true when the worker was sent SIGTERM. False with a PID means
+	// the job is filed as cancelled but the process was left alone: it could not
+	// be verified as this job's worker (no /proc to read its command line), and
+	// signalling a pid on trust could hit a stranger.
+	Signalled bool
+}
+
 // CancelResearch stops the detached worker of the item's research job and files
-// the job as failed ("cancelled"). It signals the worker's process group (the
-// worker is its own session leader, so omp, its child, goes with it). Nothing
-// is signalled unless the job is running, its worker is alive and that process
-// is this job's worker (read from /proc where there is one): a stale pid that
-// something else has since taken is left alone. ErrNotRunning when there is
-// nothing to cancel.
-func (s *Service) CancelResearch(forgeName string, ref forge.Ref) error {
+// the job as failed ("cancelled by you"). It signals the worker's process group
+// (the worker is its own session leader, so omp, its child, goes with it). A pid
+// is signalled only when it is alive and its command line (/proc) says it is
+// this job's worker: a stale pid something else has taken is refused with an
+// error, and one that cannot be verified (no /proc, as on macOS) is not signalled
+// but the job is still filed as cancelled, and the caller is told the pid.
+// ErrNotRunning when there is nothing to cancel.
+func (s *Service) CancelResearch(forgeName string, ref forge.Ref) (Cancelled, error) {
 	r, err := s.Records.ReadResearch(forgeName, ref)
-	if err != nil {
-		return ErrNotRunning
+	if err != nil || r.State != records.ResearchRunning {
+		return Cancelled{}, ErrNotRunning
 	}
-	if r.State != records.ResearchRunning {
-		return ErrNotRunning
-	}
+	out := Cancelled{PID: r.PID}
 	if r.PID > 0 && s.workerAlive(r) {
-		if !isWorkerOf(r.PID, r.ID) {
-			return fmt.Errorf("pid %d is not this research job's worker any more: not signalling it", r.PID)
-		}
-		if err := syscall.Kill(-r.PID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
-			if err := syscall.Kill(r.PID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
-				return fmt.Errorf("stop the worker (pid %d): %w", r.PID, err)
+		switch isWorkerOf(r.PID, r.ID) {
+		case workerNo:
+			return out, fmt.Errorf("pid %d is not this research job's worker any more: not signalling it", r.PID)
+		case workerYes:
+			if err := syscall.Kill(-r.PID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+				if err := syscall.Kill(r.PID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+					return out, fmt.Errorf("stop the worker (pid %d): %w", r.PID, err)
+				}
 			}
+			out.Signalled = true
 		}
 	}
 	r.State, r.Finished, r.Error = records.ResearchFailed, s.Now().UTC(), "cancelled by you"
 	if err := s.Records.WriteResearch(forgeName, ref, r); err != nil {
-		return err
+		return out, err
 	}
-	s.record(audit.Entry{Action: "research.cancel", Item: ref.String(), Target: ref.String(), Params: map[string]any{"job": r.ID, "pid": r.PID}})
-	return nil
+	s.record(audit.Entry{Action: "research.cancel", Item: ref.String(), Target: ref.String(), Params: map[string]any{"job": r.ID, "pid": r.PID, "signalled": out.Signalled}})
+	return out, nil
 }
 
 // ErrNotRunning is returned by CancelResearch for an item with no running job.
 var ErrNotRunning = errors.New("no research is running for this issue")
 
-// isWorkerOf reports whether pid is the worker of job id. Where /proc is
-// unavailable it cannot say and trusts the pid.
-func isWorkerOf(pid int, id string) bool {
-	cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
-	if err != nil {
-		return true
+// procCmdline reads a process's command line; tests replace it.
+var procCmdline = func(pid int) ([]byte, error) { return os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid)) }
+
+type workerCheck int
+
+const (
+	workerUnknown workerCheck = iota // the command line cannot be read
+	workerYes
+	workerNo
+)
+
+// isWorkerOf reports whether pid is the worker of job id, from its command
+// line. Without /proc it cannot say: workerUnknown, never a guess.
+func isWorkerOf(pid int, id string) workerCheck {
+	cmdline, err := procCmdline(pid)
+	switch {
+	case err != nil:
+		return workerUnknown
+	case strings.Contains(string(cmdline), "--worker\x00"+id):
+		return workerYes
 	}
-	return strings.Contains(string(cmdline), "--worker\x00"+id)
+	return workerNo
 }

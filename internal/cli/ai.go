@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/coredev-uk/ade/internal/ai"
+	"github.com/coredev-uk/ade/internal/aimark"
 	"github.com/coredev-uk/ade/internal/app"
 	"github.com/coredev-uk/ade/internal/budget"
 	"github.com/coredev-uk/ade/internal/config"
@@ -478,8 +479,8 @@ func newAIReplyCmd() *cobra.Command {
 		Long: "<discussion> is a discussion id, or any unique prefix of one. Without a match the\n" +
 			"threads of the MR are listed. The reply is written in your voice as the MR's author or as a\n" +
 			"reviewer, whichever you are on this MR. Lines that would run as forge quick actions\n" +
-			"(\"/approve\") are neutralised in the printed text. Post it with `ade mr reply <ref>\n" +
-			"<discussion> <body> --ai-drafted`, which adds the \"Drafted with AI in ADE\" mark.",
+			"(\"/approve\") are neutralised and the text ends with the \"Drafted with AI in ADE\" mark, as\n" +
+			"it will be posted. Post it with `ade mr reply <ref> <discussion> <body> --ai-drafted`.",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ref, err := parseMRRef(args[0])
@@ -515,7 +516,7 @@ func newAIReplyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			out.Text = ai.ReplyDraft(out.Text)
+			out.Text = aimark.Mark(ai.ReplyDraft(out.Text)) // as it will be posted; Mark is idempotent
 			return emit(cmd, out)
 		},
 	}

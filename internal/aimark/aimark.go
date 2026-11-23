@@ -52,88 +52,28 @@ func Marked(body string) bool {
 // generic: no list of action names to go out of date, so "/spend_time",
 // "/unlock" and whatever GitLab adds next are covered. A file path at the start
 // of a line ("/usr/bin/env") is escaped as well, which renders the same.
-var quickAction = regexp.MustCompile(`^([ \t]*)/(\w)`)
+var quickAction = regexp.MustCompile(`^([\s\p{Zs}\x{200b}\x{feff}]*)/(\w)`)
 
 // NoQuickActions makes every line of body that starts with "/command"
 // harmless by putting a backslash before the slash: Markdown renders
-// "\/approve" as "/approve", and the forge no longer sees a command. Lines
-// inside a closed fenced code block are code, not commands, and are left as
-// they are. A fence that is never closed protects nothing: the forge may not
-// treat it as code either.
+// "\/approve" as "/approve", and the forge no longer sees a command.
+//
+// Every such line is escaped, code fences included. Which lines the forge
+// treats as code depends on its version and on Markdown nesting: GitLab 16.9
+// and later reads commands from top-level paragraphs of the parsed Markdown
+// (so an indented fence inside a list item, an HTML comment or a <div> block
+// can hide a fence line that is not one, and a "/approve" at column 0 after it
+// is live), while older versions matched fenced blocks with a regular
+// expression that knew only backtick fences. No reading of fences is right for
+// both, so none is attempted. The cost is cosmetic: a code line that starts
+// with a slash and a letter inside a code block shows a backslash.
 func NoQuickActions(body string) string {
 	if !strings.Contains(body, "/") {
 		return body
 	}
 	lines := strings.Split(body, "\n")
-	code := fencedLines(lines)
 	for i, l := range lines {
-		if !code[i] {
-			lines[i] = quickAction.ReplaceAllString(l, `$1\/$2`)
-		}
+		lines[i] = quickAction.ReplaceAllString(l, `$1\/$2`)
 	}
 	return strings.Join(lines, "\n")
-}
-
-// fencedLines marks the lines of every closed fenced code block, fences
-// included.
-func fencedLines(lines []string) []bool {
-	code := make([]bool, len(lines))
-	for i := 0; i < len(lines); {
-		ch, n, ok := fenceOpen(lines[i])
-		if !ok {
-			i++
-			continue
-		}
-		j := i + 1
-		for ; j < len(lines); j++ {
-			if fenceClose(lines[j], ch, n) {
-				break
-			}
-		}
-		if j == len(lines) { // never closed
-			i++
-			continue
-		}
-		for k := i; k <= j; k++ {
-			code[k] = true
-		}
-		i = j + 1
-	}
-	return code
-}
-
-// fenceOpen reads a code fence opener: three or more backticks or tildes, up
-// to three spaces of indentation (CommonMark).
-func fenceOpen(line string) (ch byte, n int, ok bool) {
-	t := strings.TrimLeft(line, " ")
-	if len(line)-len(t) > 3 || len(t) < 3 || (t[0] != '`' && t[0] != '~') {
-		return 0, 0, false
-	}
-	ch = t[0]
-	for n < len(t) && t[n] == ch {
-		n++
-	}
-	if n < 3 || (ch == '`' && strings.IndexByte(t[n:], '`') >= 0) { // a backtick fence's info string has none
-		return 0, 0, false
-	}
-	return ch, n, true
-}
-
-// fenceClose reports whether line closes a fence opened with n of ch: at
-// least as many of the same character and nothing else.
-func fenceClose(line string, ch byte, n int) bool {
-	t := strings.TrimLeft(line, " ")
-	if len(line)-len(t) > 3 {
-		return false
-	}
-	t = strings.TrimRight(t, " \t\r")
-	if len(t) < n {
-		return false
-	}
-	for i := range len(t) {
-		if t[i] != ch {
-			return false
-		}
-	}
-	return true
 }

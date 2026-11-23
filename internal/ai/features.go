@@ -212,7 +212,7 @@ func ReplyJob(forgeName string, mr forge.MR, disc forge.Discussion, d forge.Diff
 }
 
 // ReplyDraft is a draft reply as it may be edited and posted: every line that
-// would run as a forge quick action is neutralised (the thread steered the
+// would run as a forge quick action is neutralised, code fences included (the thread steered the
 // model). The text is marked as AI drafted when it is posted (aimark.Mark).
 func ReplyDraft(text string) string {
 	return strings.TrimSpace(aimark.NoQuickActions(strings.TrimSpace(text)))

@@ -43,8 +43,8 @@ func TestAIReviewDraftsReachTheForgeMarkedAndWithoutQuickActions(t *testing.T) {
 			t.Fatalf("a quick action reached the forge as a command line: %q\n%s", line, all)
 		}
 	}
-	if !strings.Contains(all, "\\/approve") || !strings.Contains(all, "\n/keep inside a code fence\n") {
-		t.Fatalf("quick actions are escaped, code fences are left alone:\n%s", all)
+	if !strings.Contains(all, "\\/approve") || !strings.Contains(all, "\n\\/keep inside a code fence\n") {
+		t.Fatalf("quick actions are escaped, code fences included:\n%s", all)
 	}
 	// Both agent drafts carry the mark; the fixture's own comment does not.
 	if got := strings.Count(all, aimark.Marker); got != 2 {

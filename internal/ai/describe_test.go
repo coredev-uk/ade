@@ -78,7 +78,7 @@ func TestPrepareDescription(t *testing.T) {
 		{"a wrapping code fence goes", "```markdown\n## What\nx\n```", "", "## What\nx" + mark},
 		{"a fence inside stays", "## What\n```go\nx := 1\n```", "", "## What\n```go\nx := 1\n```" + mark},
 		{"quick actions are stripped", "## What\nx\n/assign_reviewer @bob\n/label ~bug", "", "## What\nx" + mark},
-		{"actions outside any list are neutralised", "## What\nx\n/run_pipeline\n/spend_time 1h\n```\n/code\n```", "", "## What\nx\n\\/run_pipeline\n\\/spend_time 1h\n```\n/code\n```" + mark},
+		{"actions outside any list are neutralised, fences or not", "## What\nx\n/run_pipeline\n/spend_time 1h\n```\n/code\n```", "", "## What\nx\n\\/run_pipeline\n\\/spend_time 1h\n```\n\\/code\n```" + mark},
 		{"dropped links are put back", "## What\nx", "Closes grp/tracker#9\nParent: grp/tracker#3\nprose", "## What\nx\n\nCloses grp/tracker#9\nParent: grp/tracker#3" + mark},
 		{"a kept line that is a command is neutralised", "## What\nx", "/approve Closes grp/tracker#9", "## What\nx\n\n\\/approve Closes grp/tracker#9" + mark},
 		{"kept links are not doubled", "## What\nx\nCloses grp/tracker#9", "Closes grp/tracker#9", "## What\nx\nCloses grp/tracker#9" + mark},

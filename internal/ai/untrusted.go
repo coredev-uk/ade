@@ -29,12 +29,12 @@ var closingTag = regexp.MustCompile(`(?i)</\s*untrusted`)
 // untrusted wraps forge text in a labelled block. source says what the text is
 // ("merge request", "diff", "CI log"); it is written by ADE, never taken from
 // the forge. A closing tag inside the text is broken so it cannot end the block
-// early. Empty text gives no block.
+// early (the slash is escaped: "<\/untrusted" is not a tag). Empty text gives no block.
 func untrusted(source, text string) string {
 	text = strings.TrimRight(text, "\n")
 	if strings.TrimSpace(text) == "" {
 		return ""
 	}
-	text = closingTag.ReplaceAllString(text, "</ untrusted")
+	text = closingTag.ReplaceAllString(text, `<\/untrusted`)
 	return "<untrusted source=\"" + source + "\">\n" + text + "\n</untrusted>\n"
 }

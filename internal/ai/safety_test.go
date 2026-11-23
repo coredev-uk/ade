@@ -379,9 +379,9 @@ func TestReplyDraftRoleFollowsWhoYouAre(t *testing.T) {
 	}
 }
 
-func TestReplyDraftNeutralisesQuickActionsOutsideCodeFences(t *testing.T) {
+func TestReplyDraftNeutralisesQuickActionsEvenInsideCodeFences(t *testing.T) {
 	got := ReplyDraft("Will do.\n/approve\n/run_pipeline\n```\n/keep\n```\n")
-	want := "Will do.\n\\/approve\n\\/run_pipeline\n```\n/keep\n```"
+	want := "Will do.\n\\/approve\n\\/run_pipeline\n```\n\\/keep\n```"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
@@ -622,7 +622,7 @@ func TestDetachedResearchHonoursNoNotesAndRefusesAChangedInput(t *testing.T) {
 func TestCancelResearchStopsAHungWorkerAndFreesTheIssue(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
-	if err := e.svc.CancelResearch("sandbox", researchRef); !errors.Is(err, ErrNotRunning) {
+	if _, err := e.svc.CancelResearch("sandbox", researchRef); !errors.Is(err, ErrNotRunning) {
 		t.Fatalf("nothing to cancel: %v", err)
 	}
 	id := "01JOBCANCEL"
@@ -643,8 +643,8 @@ func TestCancelResearchStopsAHungWorkerAndFreesTheIssue(t *testing.T) {
 	if _, err := e.svc.StartResearch(ctx, "sandbox", ResearchJob("sandbox", researchInput()), ResearchOpts{Assume: true}); !errors.Is(err, ErrResearchRunning) {
 		t.Fatalf("a live worker locks research: %v", err)
 	}
-	if err := e.svc.CancelResearch("sandbox", researchRef); err != nil {
-		t.Fatal(err)
+	if c, err := e.svc.CancelResearch("sandbox", researchRef); err != nil || !c.Signalled || c.PID != w.Process.Pid {
+		t.Fatalf("cancel = %+v %v", c, err)
 	}
 	select {
 	case <-waited:
@@ -677,10 +677,37 @@ func TestCancelResearchLeavesAPidThatIsNotItsWorkerAlone(t *testing.T) {
 	if err := e.svc.Records.WriteResearch("sandbox", researchRef, st); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.svc.CancelResearch("sandbox", researchRef); err == nil || !strings.Contains(err.Error(), "not signalling") {
+	if _, err := e.svc.CancelResearch("sandbox", researchRef); err == nil || !strings.Contains(err.Error(), "not signalling") {
 		t.Fatalf("must refuse to signal a stranger: %v", err)
 	}
 	if err := syscall.Kill(w.Process.Pid, 0); err != nil {
 		t.Fatalf("the stranger was signalled: %v", err)
+	}
+}
+
+func TestCancelResearchDoesNotSignalAPidItCannotVerify(t *testing.T) {
+	e := newEnv(t)
+	w := exec.Command("sleep", "60")
+	if err := w.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = w.Process.Kill(); _ = w.Wait() })
+	old := procCmdline
+	t.Cleanup(func() { procCmdline = old })
+	procCmdline = func(int) ([]byte, error) { return nil, errors.New("no /proc here") }
+	st := records.Research{ID: "01JOB", Ref: researchRef.String(), State: records.ResearchRunning, PID: w.Process.Pid, Started: time.Now()}
+	if err := e.svc.Records.WriteResearch("sandbox", researchRef, st); err != nil {
+		t.Fatal(err)
+	}
+	c, err := e.svc.CancelResearch("sandbox", researchRef)
+	if err != nil || c.Signalled || c.PID != w.Process.Pid {
+		t.Fatalf("an unverifiable pid is reported, not signalled: %+v %v", c, err)
+	}
+	if err := syscall.Kill(w.Process.Pid, 0); err != nil {
+		t.Fatalf("the process was signalled: %v", err)
+	}
+	got, _ := e.svc.Records.ReadResearch("sandbox", researchRef)
+	if got.State != records.ResearchFailed || got.Error != "cancelled by you" {
+		t.Fatalf("the job is still filed as cancelled: %+v", got)
 	}
 }
