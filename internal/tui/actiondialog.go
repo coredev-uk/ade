@@ -84,9 +84,10 @@ func (m model) anyHomeDialogOpen() bool {
 }
 
 // openAction starts the dialog for spec and reads its inputs in a command. It
-// does nothing off Home or while another dialog is open.
+// does nothing off Home and the MR page, or while another dialog is open.
 func (m model) openAction(spec actionSpec) (model, tea.Cmd) {
-	if !m.onHomePage() || m.anyHomeDialogOpen() {
+	onMR := m.mr != nil && m.mr.modal == nil && !m.help
+	if (!m.onHomePage() && !onMR) || m.anyHomeDialogOpen() {
 		return m, nil
 	}
 	d := &actionDialog{spec: spec, stage: adResolving}
