@@ -1305,3 +1305,64 @@ func TestBaseBranchOtherRepoKeepsItsDefault(t *testing.T) {
 		t.Errorf("bases: api %q (%v), web %q (%v)", api.Base, api.BaseChosen, web.Base, web.BaseChosen)
 	}
 }
+
+// The base is remembered: a re-run without --base, and `M` after a branch-only
+// start, still cut from, target and record the release branch.
+func TestBaseBranchSurvivesRerunsAndMRAfterBranchOnly(t *testing.T) {
+	h := newHarness(t, fake.Free)
+	ctx := context.Background()
+	if _, err := h.forge.CreateBranch(ctx, apiProj, "release/1.2", "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Branch only, with a base; then the MR with no base given.
+	ch := based("api", "release/1.2")
+	ch.Mode = startwork.ModeBranch
+	_, res, err := h.start(3, ch)
+	if err != nil {
+		t.Fatalf("branch only: %v\n%+v", err, res.Steps)
+	}
+	api := target(t, res, "api")
+	bare := filepath.Join(h.app.Root, "demo-gl", "api", ".bare")
+	if got := swtest.Git(t, bare, "config", "--get", "branch."+api.Branch+".adeBase"); got != "release/1.2" {
+		t.Errorf("recorded base = %q, want release/1.2", got)
+	}
+	only := draftApi()
+	only.OnlyMR = true
+	plan, res, err := h.start(3, only)
+	if err != nil {
+		t.Fatalf("M: %v\n%+v", err, res.Steps)
+	}
+	if plan.Targets[0].Base != "release/1.2" || plan.Targets[0].MR.Target != "release/1.2" {
+		t.Errorf("M plans base %q, MR target %q, want release/1.2", plan.Targets[0].Base, plan.Targets[0].MR.Target)
+	}
+	mrs, err := h.forge.ListMRs(ctx, forge.MRQuery{Project: apiProj, SourceBranch: api.Branch, State: "all"})
+	if err != nil || len(mrs) != 1 || mrs[0].TargetBranch != "release/1.2" {
+		t.Fatalf("MRs from %s = %+v (%v), want one into release/1.2", api.Branch, mrs, err)
+	}
+
+	// A full re-run without --base finds everything done and keeps the base.
+	before := h.writes()
+	plan, _, err = h.start(3, draftApi())
+	if err != nil || h.writes() != before || plan.Pending() != 0 {
+		t.Fatalf("re-run: %v, %d writes, %d pending", err, h.writes()-before, plan.Pending())
+	}
+	if tp := plan.Targets[0]; tp.Base != "release/1.2" || !tp.BaseChosen {
+		t.Errorf("re-run base %q (chosen %v), want release/1.2", tp.Base, tp.BaseChosen)
+	}
+
+	// With no record (another machine), the MR's target is the base.
+	swtest.Git(t, bare, "config", "--unset", "branch."+api.Branch+".adeBase")
+	plan, _, err = h.env.Start(ctx, h.resolve(3), draftApi(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tp := plan.Targets[0]; tp.Base != "release/1.2" || tp.Found.Base != "" {
+		t.Errorf("no record: base %q (found %q), want the MR target release/1.2", tp.Base, tp.Found.Base)
+	}
+	// Asking for another base for work whose MR exists warns and keeps the MR's.
+	plan, _, err = h.env.Start(ctx, h.resolve(3), based("api", "main"), true)
+	if err != nil || plan.Targets[0].Base != "release/1.2" || len(plan.Warnings) == 0 {
+		t.Errorf("--base main over an MR into release/1.2: err %v, base %q, warnings %q", err, plan.Targets[0].Base, plan.Warnings)
+	}
+}

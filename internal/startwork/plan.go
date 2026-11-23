@@ -117,6 +117,9 @@ type Choices struct {
 	// the forge when something is created from it. Entries for repos not in
 	// Repos, and Browse, ignore it.
 	Bases map[string]string `json:"bases,omitempty"`
+	// NewMR opens a new MR for a branch whose latest MR is closed, instead of
+	// stopping with a notice that says how to reopen the closed one.
+	NewMR bool `json:"new_mr,omitempty"`
 }
 
 // ValidBranchName rejects a name git would refuse; the forge has the last word
@@ -183,11 +186,18 @@ type Target struct {
 // Found is what already exists for one target; Discover fills it. Plan only
 // reads it, which keeps Plan pure and makes re-runs no-ops.
 type Found struct {
-	DefaultBranch string       `json:"default_branch,omitempty"`
-	Child         *forge.Issue `json:"child,omitempty"`
-	Linked        bool         `json:"linked,omitempty"`
-	Branch        string       `json:"branch,omitempty"`
-	MR            *forge.MR    `json:"mr,omitempty"`
+	DefaultBranch string `json:"default_branch,omitempty"`
+	// Base is the branch Branch was started from when a base other than the
+	// default was chosen (recorded in the repo's bare clone by the branch
+	// step); empty when none is on record.
+	Base   string       `json:"base,omitempty"`
+	Child  *forge.Issue `json:"child,omitempty"`
+	Linked bool         `json:"linked,omitempty"`
+	Branch string       `json:"branch,omitempty"`
+	MR     *forge.MR    `json:"mr,omitempty"`
+	// ClosedMR is the latest closed (not merged) MR of Branch when no open or
+	// merged MR exists and Choices.NewMR is unset: the MR step stops at it.
+	ClosedMR *forge.MR `json:"closed_mr,omitempty"`
 	// Cloned reports the repo's bare clone exists under the project root.
 	Cloned bool `json:"cloned"`
 	// Worktree is the existing local tree of Branch (of the default branch
@@ -249,6 +259,9 @@ type Step struct {
 	Path string `json:"path,omitempty"`
 	// Done marks a step whose result already exists; Execute skips it.
 	Done bool `json:"done,omitempty"`
+	// Closed marks an MR step that stopped because the branch's latest MR is
+	// closed; Text says how to reopen it. Not an error, and Done too.
+	Closed bool `json:"closed,omitempty"`
 	// Write marks a forge write (as opposed to local git).
 	Write bool `json:"write,omitempty"`
 }
@@ -330,7 +343,8 @@ type TargetPlan struct {
 	Child  ChildSpec `json:"child"`
 	MR     MRSpec    `json:"mr"`
 	Found  Found     `json:"found"`
-	// BaseChosen says Choices.Bases named Base, not the repo's default branch.
+	// BaseChosen says Base is not the repo's default branch: it was asked for,
+	// recorded when the branch was made, or is where the branch's MR goes.
 	BaseChosen bool `json:"base_chosen,omitempty"`
 }
 
@@ -455,8 +469,8 @@ func BuildPlan(in PlanInput) (Plan, error) {
 		tp := planTarget(in, t)
 		p.Targets = append(p.Targets, tp)
 		p.Warnings = append(p.Warnings, tp.Found.Warnings...)
-		if tp.BaseChosen && tp.Found.MR != nil && tp.Found.MR.TargetBranch != tp.Base {
-			p.Warnings = append(p.Warnings, fmt.Sprintf("%s: %s already targets %s: base %s applies to new work only", name, tp.Found.MR.Ref, tp.Found.MR.TargetBranch, tp.Base))
+		if b := ch.Bases[name]; b != "" && ch.Mode != ModeBrowse && tp.Found.MR != nil && tp.Found.MR.TargetBranch != b {
+			p.Warnings = append(p.Warnings, fmt.Sprintf("%s: %s already targets %s: base %s applies to new work only", name, tp.Found.MR.Ref, tp.Found.MR.TargetBranch, b))
 		}
 	}
 	if ch.OnlyChild {
@@ -531,9 +545,20 @@ func planTarget(in PlanInput, t Target) TargetPlan {
 	if tp.Base == "" {
 		tp.Base = "main"
 	}
-	if b := ch.Bases[t.Name]; b != "" && ch.Mode != ModeBrowse {
-		tp.Base, tp.BaseChosen = b, true
+	def := tp.Base
+	asked := ch.Bases[t.Name]
+	if ch.Mode == ModeBrowse {
+		asked = ""
 	}
+	switch {
+	case f.MR != nil && f.MR.TargetBranch != "":
+		tp.Base = f.MR.TargetBranch // the MR is where the work goes, whatever was asked now
+	case asked != "":
+		tp.Base = asked
+	case f.Base != "" && ch.Mode != ModeBrowse:
+		tp.Base = f.Base // the base the branch was started from
+	}
+	tp.BaseChosen = tp.Base != def
 	tp.UseChild = useChild(m, ch, t)
 	tp.Child = childSpec(in, t)
 
@@ -832,6 +857,12 @@ func mrStep(tp TargetPlan) Step {
 	f := tp.Found
 	if f.MR != nil {
 		return Step{Kind: StepMR, Repo: tp.Target.Name, Done: true, Text: fmt.Sprintf("MR %s exists", f.MR.Ref)}
+	}
+	if c := f.ClosedMR; c != nil {
+		return Step{
+			Kind: StepMR, Repo: tp.Target.Name, Done: true, Closed: true,
+			Text: fmt.Sprintf("closed MR exists: reopen it with `ade mr reopen %s`; `ade start --new-mr` opens a new one", c.Ref),
+		}
 	}
 	kind := "MR"
 	if tp.MR.Draft {

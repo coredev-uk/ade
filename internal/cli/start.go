@@ -42,6 +42,7 @@ type startFlags struct {
 	noWorkspace bool
 	layout      string
 	dryRun      bool
+	newMR       bool
 	session     string // zellij session for the tab; verify scripts only
 	onlyChild   bool   // `ade issue child`: just the child issue and its links
 }
@@ -60,6 +61,7 @@ func (f *startFlags) bind(cmd *cobra.Command, withMode bool) {
 		_ = fl.MarkHidden("session")
 	}
 	fl.StringArrayVar(&f.bases, "base", nil, "start from this branch in a repo instead of its default branch: repo=branch (repeatable); the new branch is cut from it, the MR targets it and the worktree records it as ade.target; the branch must exist on the forge, and the repo is added to the work")
+	fl.BoolVar(&f.newMR, "new-mr", false, "open a new MR when the branch's latest MR is closed, instead of stopping with the command that reopens it")
 	fl.StringVar(&f.child, "child", "", "child issue: auto | always | never; default from conventions.child_issue")
 	fl.StringVar(&f.template, "template", "", "MR template name (file in .gitlab/merge_request_templates, without .md)")
 	fl.StringSliceVar(&f.strip, "strip-actions", nil, "remove quick actions from the MR body: names (assign_reviewer,label) or all when given without a value")
@@ -125,8 +127,10 @@ func runStart(cmd *cobra.Command, arg string, f startFlags, onlyMR bool) error {
 	if err != nil {
 		return err
 	}
-	if onlyMR && len(ch.Repos) != 1 {
-		return errors.New("--base must name the --repo of `ade mr create`")
+	if onlyMR {
+		if err := mrCreateBases(f.repos[0], ch.Bases); err != nil {
+			return err
+		}
 	}
 	ch.OnlyMR, ch.OnlyChild = onlyMR, f.onlyChild
 	if onlyMR {
@@ -151,6 +155,17 @@ func runStart(cmd *cobra.Command, arg string, f startFlags, onlyMR bool) error {
 	}
 	printStart(cmd.OutOrStdout(), r, res)
 	return err
+}
+
+// mrCreateBases refuses a --base for any repo but the one `ade mr create`
+// opens the MR in.
+func mrCreateBases(repo string, bases map[string]string) error {
+	for _, r := range slices.Sorted(maps.Keys(bases)) {
+		if r != repo {
+			return fmt.Errorf("--base %s=%s: ade mr create opens the MR of --repo %s only", r, bases[r], repo)
+		}
+	}
+	return nil
 }
 
 // choices turns the flags into startwork.Choices over the manifest defaults.
@@ -189,6 +204,7 @@ func (f startFlags) choices(r *startwork.Resolved) (startwork.Choices, error) {
 	if err := f.pinBases(r.Manifest, &ch); err != nil {
 		return ch, err
 	}
+	ch.NewMR = f.newMR
 	ch.Template = f.template
 	for _, s := range f.strip {
 		if s == "all" {

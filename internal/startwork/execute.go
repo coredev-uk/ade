@@ -28,6 +28,8 @@ const (
 	OutcomeSkipped = "skipped"
 	OutcomeFailed  = "failed"
 	OutcomeWould   = "would create" // dry run
+	// OutcomeClosedMR marks an MR step that stopped at a closed MR.
+	OutcomeClosedMR = "closed MR"
 )
 
 // StepResult is what one step did.
@@ -165,7 +167,10 @@ func (e *Env) DryRun(p Plan) Result {
 	}
 	for _, s := range p.Steps {
 		out := OutcomeWould
-		if s.Done {
+		switch {
+		case s.Closed:
+			out = OutcomeClosedMR
+		case s.Done:
 			out = OutcomeExists
 		}
 		res.Steps = append(res.Steps, StepResult{Step: s, Outcome: out})
@@ -227,6 +232,8 @@ func (e *Env) Execute(ctx context.Context, p Plan) (Result, error) {
 		sr := StepResult{Step: s}
 		rt := rts[s.Repo]
 		switch {
+		case s.Closed:
+			sr.Outcome = OutcomeClosedMR
 		case s.Done:
 			sr.Outcome = OutcomeExists
 		case rt != nil && rt.failed:
@@ -403,7 +410,22 @@ func (e *Env) createBranch(ctx context.Context, p Plan, m *config.Manifest, rt *
 	e.audit(p, "forge.branch.create", rt.tp.Target.Project+":"+rt.branch, map[string]any{"from": rt.tp.Base, "outcome": sr.Outcome}, b.WebURL, err)
 	rt.result.Branch = rt.branch
 	sr.Ref, sr.URL = rt.branch, b.WebURL
+	if err == nil && sr.Outcome != OutcomeExists && rt.tp.BaseChosen && !rt.tp.Target.Tracker {
+		e.recordBase(ctx, p, m, rt)
+	}
 	return err
+}
+
+// recordBase remembers in the repo's bare clone the base the branch was cut
+// from, for the re-runs and `ade mr create` that follow. Without a clone or on
+// a failure the next run falls back to the MR's target or the default branch.
+func (e *Env) recordBase(ctx context.Context, p Plan, m *config.Manifest, rt *runtime) {
+	bare := e.bare(m, rt.tp.Target.Name)
+	if !exists(filepath.Join(bare, "HEAD")) {
+		return
+	}
+	_, err := (git.Client{}).Run(ctx, bare, "config", baseKey(rt.branch), rt.tp.Base)
+	e.audit(p, "git.branch.base", bare, map[string]any{"branch": rt.branch, "base": rt.tp.Base}, "", err)
 }
 
 func (e *Env) createMR(ctx context.Context, p Plan, m *config.Manifest, rt *runtime, sr *StepResult, res *Result) error {

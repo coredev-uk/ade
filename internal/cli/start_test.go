@@ -140,3 +140,13 @@ func TestStartBaseFlagErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestMRCreateBaseMustNameTheRepo(t *testing.T) {
+	if err := mrCreateBases("api", map[string]string{"api": "release/1.2"}); err != nil {
+		t.Errorf("base for the repo: %v", err)
+	}
+	err := mrCreateBases("api", map[string]string{"web": "release/2.0"})
+	if err == nil || !strings.Contains(err.Error(), "--base web=release/2.0") || !strings.Contains(err.Error(), "--repo api") {
+		t.Errorf("err = %v, want it to name --base web=… and --repo api", err)
+	}
+}
