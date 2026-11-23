@@ -163,6 +163,8 @@ func (m model) paletteEntries() []palEntry {
 		pressEntry("Move to the next sprint", ">", "ade issue move <ref>", true),
 		pressEntry("Move the workflow label to match the stage", "m", "ade issue stage <ref>", true),
 		pressEntry("Push the item's branches", "u", "ade push", true),
+		pressEntry("Clean up the item's merged work", "x", "ade cleanup <ref>", true),
+		{name: "Clean up merged work everywhere", cli: "ade gc", needHome: true, run: func(m model) (model, tea.Cmd) { return m.openGC() }},
 	}
 	if m.aiOn() {
 		home = append(home, pressEntry("Research the issue in the background", "R", "ade ai research <ref> --detach", true))

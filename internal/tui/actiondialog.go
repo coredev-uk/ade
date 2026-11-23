@@ -208,22 +208,38 @@ func (m model) actionOverlay(w int) string {
 		l = append(l, stFaint.Render(g.Sync+" writing…"))
 		hint = keys("esc", "hide")
 	case adDone:
-		for _, r := range wrapRows(d.lines, inner-2) {
-			l = append(l, stOK.Render(g.OK)+" "+r)
-		}
+		l = append(l, m.resultRows(d.lines, inner)...)
 		hint = keys("enter", "close")
 	case adFailed:
 		l = append(l, stBad.Render(ansi.Wrap(g.Bad+" "+popupText(d.err), inner, "")))
 		if d.spec.retry != "" {
 			l = append(l, stFaint.Render(ansi.Wrap("  press "+d.spec.retry+" to try again; the cause is in the audit log (L)", inner, "")))
 		}
-		for _, r := range wrapRows(d.lines, inner-2) {
-			l = append(l, stOK.Render(g.OK)+" "+r)
-		}
+		l = append(l, m.resultRows(d.lines, inner)...)
 		hint = keys("esc", "close")
 	}
 	l = append(l, "", hint)
 	return m.dialog(g.T(d.spec.title), l, dw)
+}
+
+// resultRows marks each result row with a check, its wrapped lines hanging
+// under the first. A row that starts "failed" is marked with a cross.
+func (m model) resultRows(rows []string, inner int) []string {
+	var out []string
+	for _, r := range rows {
+		mark, st := m.g.OK, stOK
+		if strings.HasPrefix(r, "failed") {
+			mark, st = m.g.Bad, stBad
+		}
+		for i, ln := range wrapRows([]string{r}, inner-2) {
+			if i == 0 {
+				out = append(out, st.Render(mark)+" "+ln)
+			} else {
+				out = append(out, "  "+ln)
+			}
+		}
+	}
+	return out
 }
 
 // wrapRows wraps each row to w cells.
