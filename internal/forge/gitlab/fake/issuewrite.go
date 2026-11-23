@@ -52,7 +52,7 @@ func (s *Server) repos() *repos {
 		}
 		// Seeded MRs have their source branches.
 		for _, m := range s.st.mrs {
-			if !slices.Contains(r.branches[m.Project.Path], m.Source) {
+			if m.SourceProject == nil && !slices.Contains(r.branches[m.Project.Path], m.Source) {
 				r.branches[m.Project.Path] = append(r.branches[m.Project.Path], m.Source)
 			}
 		}

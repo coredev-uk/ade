@@ -249,23 +249,29 @@ func ThreadStates(ds []Discussion) []ThreadState {
 }
 
 type MR struct {
-	Ref          Ref       `json:"ref"`
-	ID           int64     `json:"id"`
-	Title        string    `json:"title"`
-	Description  string    `json:"description,omitempty"`
-	State        string    `json:"state"` // opened | merged | closed
-	Draft        bool      `json:"draft"`
-	SourceBranch string    `json:"source_branch"`
-	TargetBranch string    `json:"target_branch"`
-	HeadSHA      string    `json:"head_sha,omitempty"`
-	WebURL       string    `json:"web_url,omitempty"`
-	Author       User      `json:"author"`
-	Assignees    []User    `json:"assignees,omitempty"`
-	Reviewers    []User    `json:"reviewers,omitempty"`
-	Pipeline     *Pipeline `json:"pipeline,omitempty"`
-	Approvals    Approvals `json:"approvals"`
-	Unresolved   int       `json:"unresolved"` // unresolved resolvable threads
-	Resolved     int       `json:"resolved"`
+	Ref          Ref    `json:"ref"`
+	ID           int64  `json:"id"`
+	Title        string `json:"title"`
+	Description  string `json:"description,omitempty"`
+	State        string `json:"state"` // opened | merged | closed
+	Draft        bool   `json:"draft"`
+	SourceBranch string `json:"source_branch"`
+	TargetBranch string `json:"target_branch"`
+	HeadSHA      string `json:"head_sha,omitempty"`
+	// Fork is true when the source branch lives in another project than the
+	// target (a fork MR); SourceProject is that project's full path ("" when
+	// the forge no longer says, e.g. a deleted fork on GitHub). Cached MR data
+	// from before these fields reads as a same-project MR.
+	Fork          bool      `json:"fork,omitempty"`
+	SourceProject string    `json:"source_project,omitempty"`
+	WebURL        string    `json:"web_url,omitempty"`
+	Author        User      `json:"author"`
+	Assignees     []User    `json:"assignees,omitempty"`
+	Reviewers     []User    `json:"reviewers,omitempty"`
+	Pipeline      *Pipeline `json:"pipeline,omitempty"`
+	Approvals     Approvals `json:"approvals"`
+	Unresolved    int       `json:"unresolved"` // unresolved resolvable threads
+	Resolved      int       `json:"resolved"`
 	// Threads lists every conversation with its note authors; nil when the
 	// forge's list view did not read discussions (see ThreadStates).
 	Threads []ThreadState `json:"threads"`
