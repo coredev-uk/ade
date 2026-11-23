@@ -110,7 +110,8 @@ func orArgs(who, args string) string {
 
 // StripQuickActions removes the quick-action lines named in names (every
 // action when names contains "*"). Stripping only changes this MR's body; the
-// template in the repo is untouched.
+// template in the repo is untouched. It matches template lines by action name;
+// aimark.NoQuickActions (and forge.QuickActions) catch every "/word" line.
 func StripQuickActions(body string, names []string) string {
 	if len(names) == 0 {
 		return body

@@ -556,3 +556,30 @@ func TestDiscardRefusesWhatIsNotTheAgents(t *testing.T) {
 		t.Errorf("legacy run: %v", err)
 	}
 }
+
+// A config without a usable profile refuses the same way the dialog says: with
+// config.AI.Available's reason, wrapping the sentinel the AI layer words.
+func TestManagerRefusesWithoutAUsableProfileWithTheAvailabilityReason(t *testing.T) {
+	for name, tc := range map[string]struct {
+		set  func(*config.AI)
+		want error
+	}{
+		"off":        {func(a *config.AI) { a.Mode = "off" }, ai.ErrDisabled},
+		"none":       {func(a *config.AI) { a.Profile, a.Profiles = "", nil }, config.ErrNoProfile},
+		"unselected": {func(a *config.AI) { a.Profile = "" }, config.ErrNoProfile},
+		"undefined":  {func(a *config.AI) { a.Profile = "gone" }, config.ErrProfileUndefined},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t)
+			tc.set(&e.m.Cfg.AI)
+			_, why := e.m.Cfg.AI.Available()
+			_, _, err := e.m.New(context.Background(), Request{Kind: KindPlan, Target: e.tgt, Context: e.ctx()})
+			if err == nil || err.Error() != why || !errors.Is(err, tc.want) {
+				t.Errorf("New = %v, want %q wrapping %v", err, why, tc.want)
+			}
+			if rs, _ := e.st.List(); len(rs) != 0 {
+				t.Errorf("a refused run must not be created: %+v", rs)
+			}
+		})
+	}
+}

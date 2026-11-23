@@ -89,9 +89,14 @@ func WithItems(items []ItemRef) OpenOption { return func(c *openConfig) { c.item
 
 // The notices OpenResult.Notice carries.
 const (
-	NoticeAIOff = "AI is off: opened the editor layout instead of agent"
 	NoticeNoOmp = "omp not on PATH: the agent pane is a shell"
 )
+
+// NoticeAIUnavailable is the notice for the agent layout that fell back to the
+// editor because config.AI.Available said no; reason is its reason.
+func NoticeAIUnavailable(reason string) string {
+	return reason + ": opened the editor layout instead of agent"
+}
 
 // OpenResult says what Open did.
 type OpenResult struct {
@@ -237,9 +242,10 @@ func prepare(ctx context.Context, a *app.App, project, repo, worktree string, op
 		return nil, fmt.Errorf("unknown layout %q (want code, agent, review or manual)", layout)
 	}
 	var notice string
+	aiOK, aiWhy := a.Config.AI.Available()
 	switch {
-	case layout == LayoutAgent && a.Config.AI.Mode == "off":
-		layout, notice = LayoutCode, NoticeAIOff
+	case layout == LayoutAgent && !aiOK:
+		layout, notice = LayoutCode, NoticeAIUnavailable(aiWhy)
 	case layout == LayoutAgent:
 		if _, err := exec.LookPath("omp"); err != nil {
 			notice = NoticeNoOmp

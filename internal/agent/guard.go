@@ -13,6 +13,7 @@ import (
 
 	"github.com/coredev-uk/ade/internal/ai"
 	"github.com/coredev-uk/ade/internal/audit"
+	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/workspace"
 )
 
@@ -32,13 +33,36 @@ func uncappedError(capUSD float64) error {
 	return fmt.Errorf("%w: codex reports cost per turn and one turn covers the whole edit, so ADE would only see the spend after the work is done (%s). Pass --allow-uncapped (TUI: confirm) to run it anyway, or use the omp or claude agent, which are stopped at the cap", ErrUncapped, what)
 }
 
-// aiOff reports that ai.mode is "off": no agent process may start, whatever
-// state an approved plan or queued run was left in.
+// aiUnavailable is the refusal when config.AI.Available says no. Its text is
+// that reason, the one the dialogs show; it unwraps to the sentinel the AI
+// layer words for a person (ai.Human).
+type aiUnavailable struct {
+	reason string
+	cause  error
+}
+
+func (e *aiUnavailable) Error() string { return e.reason }
+func (e *aiUnavailable) Unwrap() error { return e.cause }
+
+// aiOff reports that AI cannot be used (ai.mode "off", no profile selected,
+// the profile undefined; config.AI.Available): no agent process may start,
+// whatever state an approved plan or queued run was left in.
 func (m *Manager) aiOff() error {
-	if m.Cfg != nil && m.Cfg.AI.Mode == "off" {
-		return ai.ErrDisabled
+	if m.Cfg == nil {
+		return nil
 	}
-	return nil
+	ok, reason := m.Cfg.AI.Available()
+	if ok {
+		return nil
+	}
+	cause := config.ErrNoProfile
+	switch m.Cfg.AI.State() {
+	case config.AIOff:
+		cause = ai.ErrDisabled
+	case config.AIUnknown:
+		cause = config.ErrProfileUndefined
+	}
+	return &aiUnavailable{reason: reason, cause: cause}
 }
 
 // capApplies reports whether any cost cap is in force: the run's own, or a

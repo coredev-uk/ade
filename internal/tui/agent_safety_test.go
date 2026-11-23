@@ -12,6 +12,7 @@ import (
 
 	"github.com/coredev-uk/ade/internal/agent"
 	"github.com/coredev-uk/ade/internal/ai"
+	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/forge"
 )
 
@@ -21,7 +22,7 @@ func TestAgentDialogWithAIOffHidesTheStartRowsAndKeepsTheRuns(t *testing.T) {
 	e.seed("20261111-100000-aaa", agent.StateReview, 0.04)
 	e.press("a")
 	out := e.view()
-	if !strings.Contains(out, `AI is off (ai.mode = "off")`) {
+	if !strings.Contains(out, "AI is off (ai.mode = off)") {
 		t.Errorf("one line must say why there is nothing to start:\n%s", out)
 	}
 	for _, gone := range []string{"p plan", "c address comments", "p  plan"} {
@@ -33,12 +34,49 @@ func TestAgentDialogWithAIOffHidesTheStartRowsAndKeepsTheRuns(t *testing.T) {
 		t.Errorf("the run list keeps working with AI off:\n%s", out)
 	}
 	e.press("p")
-	if e.m.agt.busy != "" || !strings.Contains(e.view(), "plans and replies to comments need it") || e.m.agt.stage != agList {
+	if e.m.agt.busy != "" || !strings.Contains(e.view(), "AI is off (ai.mode = off)") || e.m.agt.stage != agList {
 		t.Errorf("p with AI off starts nothing and says why: busy %q\n%s", e.m.agt.busy, e.view())
 	}
 	e.press("c")
 	if e.m.agt.busy != "" {
 		t.Error("c with AI off starts nothing")
+	}
+}
+
+// The default config (mode ask, no profiles) and an unselected or undefined
+// profile cannot run an agent: the dialog says why before any forge read, and
+// the Manager refuses with the same words.
+func TestAgentDialogWithoutAUsableProfileHidesTheStartRowsAndSaysWhy(t *testing.T) {
+	for name, set := range map[string]func(*config.AI){
+		"no profiles":        func(a *config.AI) { a.Profile, a.Profiles = "", nil },
+		"profile unselected": func(a *config.AI) { a.Profile = "" },
+		"profile undefined":  func(a *config.AI) { a.Profile = "gone" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newAgEnv(t, unicodeGlyphs, 120)
+			set(&e.m.app.Config.AI)
+			_, why := e.m.app.Config.AI.Available()
+			if why == "" {
+				t.Fatal("the config must be unavailable")
+			}
+			e.seed("20261111-100000-aaa", agent.StateReview, 0.04)
+			e.press("a")
+			out := e.view()
+			if !strings.Contains(out, why[:20]) {
+				t.Errorf("the dialog must say why (%q):\n%s", why, out)
+			}
+			for _, gone := range []string{"p plan", "c address comments", "p  plan"} {
+				if strings.Contains(out, gone) {
+					t.Errorf("no start rows without usable AI, found %q:\n%s", gone, out)
+				}
+			}
+			for _, k := range []string{"p", "c"} {
+				e.press(k)
+				if e.m.agt.busy != "" || e.m.agt.warn != why {
+					t.Errorf("%s starts nothing and warns %q, got busy %q warn %q", k, why, e.m.agt.busy, e.m.agt.warn)
+				}
+			}
+		})
 	}
 }
 

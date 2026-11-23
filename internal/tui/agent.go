@@ -76,9 +76,10 @@ type agentDialog struct {
 	notes   string
 	noNotes bool
 
-	// aiOff is ai.mode = "off": the start rows give way to a line saying why;
+	// aiWhy is why AI cannot be used (config.AI.Available), empty when it can:
+	// the start rows give way to a line saying so;
 	// the run list keeps working (a run in review can still be pushed or discarded).
-	aiOff bool
+	aiWhy string
 	// pend is the start the dialog asks about (stage agStartConfirm).
 	pend *agPending
 	// wantDiscard opens the run on its discard question, not its page.
@@ -219,7 +220,7 @@ func (m model) openAgent(item *domain.WorkItem, all bool) (model, tea.Cmd) {
 		return m, nil
 	}
 	mgr, err := agentOpen(m.app)
-	d := &agentDialog{stage: agList, mgr: mgr, item: item, aiOff: m.agAIOff()}
+	d := &agentDialog{stage: agList, mgr: mgr, item: item, aiWhy: m.agAIOff()}
 	m.agt = d
 	if err != nil {
 		d.err = err
@@ -269,9 +270,13 @@ func (m model) agLoad(d *agentDialog) tea.Cmd {
 	}
 }
 
-// agAIOff reports ai.mode = "off": no agent can be started.
-func (m model) agAIOff() bool {
-	return m.app != nil && m.app.Config != nil && m.app.Config.AI.Mode == "off"
+// agAIOff says why no agent can be started (AI off, no profile selected, the
+// profile undefined: config.AI.Available), or "" when one can.
+func (m model) agAIOff() string {
+	if ok, why := m.aiAvail(); !ok {
+		return why
+	}
+	return ""
 }
 
 // agentSteps counts the agent steps in flight (plan, implement, address): quitting
@@ -579,16 +584,16 @@ func (m model) agListKey(d *agentDialog, ks string) (model, tea.Cmd) {
 		if d.item == nil || d.busy != "" {
 			return m, nil
 		}
-		if d.aiOff {
-			d.warn = agAIOffReason
+		if d.aiWhy != "" {
+			d.warn = d.aiWhy
 			return m, nil
 		}
 		return m, m.agStart(d, agent.KindPlan)
 	case "c":
 		switch {
 		case d.item == nil || d.busy != "":
-		case d.aiOff:
-			d.warn = agAIOffReason
+		case d.aiWhy != "":
+			d.warn = d.aiWhy
 		case d.mr == nil:
 			d.warn = "no open MR with unresolved threads to address"
 		default:
@@ -737,9 +742,6 @@ func (m model) agDetailKey(d *agentDialog, ks string) (model, tea.Cmd) {
 	}
 	return m, nil
 }
-
-// agAIOffReason is the one line that replaces the start rows with ai.mode = "off".
-const agAIOffReason = `AI is off (ai.mode = "off"): plans and replies to comments need it`
 
 // agImplement implements the approved plan of run id (in the worktree, or on a
 // -ai branch). A codex run that a cap cannot stop first asks the user.

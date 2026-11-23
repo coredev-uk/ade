@@ -89,9 +89,9 @@ func (m model) agListView(d *agentDialog, inner, h int) ([]string, string) {
 	g := m.g
 	var l []string
 	hint := keys("enter", "open", "x", "cancel run", "esc", "close")
-	if d.item != nil && d.aiOff {
+	if d.item != nil && d.aiWhy != "" {
 		// No start rows without AI: one line says why, the runs below still work.
-		l = append(l, ansi.Wrap(stFaint.Render(g.Info+" "+agAIOffReason), inner, ""), "")
+		l = append(l, ansi.Wrap(stFaint.Render(g.Info+" "+d.aiWhy), inner, ""), "")
 	} else if d.item != nil {
 		l = append(l, section("Start", "work in the item's worktree", inner, g))
 		if len(d.repos) > 1 {

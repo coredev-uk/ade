@@ -15,6 +15,7 @@ package aimark
 import (
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 // Marker is the line appended to AI-drafted text. It is HTML, so the forge
@@ -53,6 +54,22 @@ func Marked(body string) bool {
 // "/unlock" and whatever GitLab adds next are covered. A file path at the start
 // of a line ("/usr/bin/env") is escaped as well, which renders the same.
 var quickAction = regexp.MustCompile(`^([\s\p{Zs}\x{200b}\x{feff}]*)/(\w)`)
+
+// QuickActionName reports whether line is a quick-action line by the rule
+// NoQuickActions applies (indentation, a slash, a word character) and returns
+// its command: the slash and the text up to the first whitespace. Callers that
+// warn about quick actions use this, so the warning and the escaping agree.
+func QuickActionName(line string) (string, bool) {
+	m := quickAction.FindStringSubmatchIndex(line)
+	if m == nil {
+		return "", false
+	}
+	cmd := line[m[4]-1:]
+	if i := strings.IndexFunc(cmd, unicode.IsSpace); i >= 0 {
+		cmd = cmd[:i]
+	}
+	return cmd, true
+}
 
 // NoQuickActions makes every line of body that starts with "/command"
 // harmless by putting a backslash before the slash: Markdown renders
