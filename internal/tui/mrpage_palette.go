@@ -50,6 +50,7 @@ func (m model) mrEntries() []palEntry {
 		any("Submit the review as one batch", "S", "ade review submit"),
 		any("Agents for this item", "P", "ade agent"),
 		any("Open this MR's workspace", "w", "ade ws up"),
+		any("Push this MR's branch", "u", "ade push"),
 		any("Open this MR's workspace with the other main pane (omp or editor)", "W", "ade ws up --layout agent"),
 		at("Threads: open the thread", "", tabThreads, "enter"),
 		at("Threads: reply", "ade mr reply", tabThreads, "r"),

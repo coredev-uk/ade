@@ -52,6 +52,10 @@ func (m *model) mrKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 		next, cmd := m.openWorkspace(ks == "W")
 		*m = next
 		return cmd, true
+	case "u":
+		next, cmd := m.openPush()
+		*m = next
+		return cmd, true
 	case "[", "]":
 		if n := len(p.mrs); n > 1 {
 			step := 1
@@ -415,7 +419,7 @@ func (m model) mrFooter(w int) string {
 	if p.tab == tabOverview && p.item != nil {
 		tabKeys = append(tabKeys, "n", "edit notes")
 	}
-	act := []string{"a", "approve", "R", "ready/draft", "m", "merge", "S", "submit review"}
+	act := []string{"a", "approve", "R", "ready/draft", "m", "merge", "u", "push", "S", "submit review"}
 	if m.aiOn() {
 		act = append(act, "A", "agent review", "B", "AI description")
 	}
@@ -477,6 +481,7 @@ func mrHelpRows(ai bool) [][2]string {
 		{"S", "submit the review as one batch"},
 		{"a R m", "approve, ready/draft, merge"},
 		{"w W", "open this MR's worktree (W: other main pane)"},
+		{"u", "push this MR's branch (shows the commits first)"},
 		{"P", "agent menu: plan, address comments"},
 		{"l", "CI: job log (full screen, / searches)"},
 		{"U", "reload from the forge"},
