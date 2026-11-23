@@ -615,7 +615,7 @@ func TestThreeRegionLayoutAtWideWidths(t *testing.T) {
 		}
 	}
 	// The preview no longer carries the strip, and Activity is not also a list section.
-	if strings.Contains(ansi.Strip(h.m.homeDetail(40)), "services  api.dev") {
+	if strings.Contains(ansi.Strip(h.m.homeDetail(40, 40)), "services  api.dev") {
 		t.Error("services shown in both the preview and the rail")
 	}
 	if strings.Count(out, "Activity") != 1 {

@@ -105,7 +105,7 @@ type commentsMsg struct {
 // openComments is Home's `C`: the stored comments at once, and a read of the
 // issue's discussions from the forge in a command.
 func (m model) openComments() (model, tea.Cmd) {
-	if m.page != pageHome || m.mr != nil || m.isAgilePage() || m.sw != nil || m.cl != nil || m.agt != nil || m.nt != nil || m.wt != nil || m.sm != nil || m.ait != nil || m.cm != nil ||
+	if m.page != pageHome || m.mr != nil || m.isAgilePage() || m.sw != nil || m.cl != nil || m.agt != nil || m.nt != nil || m.wt != nil || m.sm != nil || m.ait != nil || m.cm != nil || m.ne != nil ||
 		m.homeSel >= len(m.homeRows) || m.homeRows[m.homeSel].item == nil {
 		return m, nil
 	}

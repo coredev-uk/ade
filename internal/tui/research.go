@@ -311,26 +311,6 @@ func (m model) researchBody(d *notesDialog, inner, rows int) []string {
 
 // --- the side panel ----------------------------------------------------------------
 
-// loadResearch reads each listed item's research job, once per refresh, like
-// loadNotes: Home's detail pane reads the map, never the files.
-func (m *model) loadResearch() {
-	m.research = map[string]records.Research{}
-	if m.app == nil {
-		return
-	}
-	svc := m.researchService()
-	for _, r := range m.results {
-		if r.Forge == "" {
-			continue
-		}
-		for i := range r.Items {
-			if v, err := svc.ReadResearch(r.Forge, r.Items[i].Ref); err == nil {
-				m.research[markKey(r.Project, r.Items[i].Ref.String())] = v.Research
-			}
-		}
-	}
-}
-
 // researchLines is the detail pane's research block: where the item's research
 // stands. Nothing when it has none.
 func (m model) researchLines(it *domain.WorkItem, w int) []string {

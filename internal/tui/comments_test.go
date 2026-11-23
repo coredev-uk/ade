@@ -93,7 +93,7 @@ func (e *commentsEnv) screen() string { return ansi.Strip(e.m.render()) }
 func TestHomeDetailShowsTheTrackerIssueComments(t *testing.T) {
 	e := newCommentsEnv(t, 160, 44, "Support says the CSV export fails too.\n\nMore detail below.")
 	e.selectItem(e.commented)
-	detail := ansi.Strip(e.m.homeDetail(60))
+	detail := ansi.Strip(e.m.homeDetail(60, 40))
 	for _, want := range []string{"comments · 2 · C shows all", "Rae Reviewer · ", "Sandbox Dev · ", "Support says the CSV export fails too.", "Confirmed on staging"} {
 		if !strings.Contains(detail, want) {
 			t.Errorf("detail lacks %q:\n%s", want, detail)
@@ -107,7 +107,7 @@ func TestHomeDetailShowsTheTrackerIssueComments(t *testing.T) {
 	}
 
 	e.selectItem(e.quiet)
-	if detail := ansi.Strip(e.m.homeDetail(60)); strings.Contains(detail, "comments ·") {
+	if detail := ansi.Strip(e.m.homeDetail(60, 40)); strings.Contains(detail, "comments ·") {
 		t.Errorf("an issue without comments shows a comments block:\n%s", detail)
 	}
 }

@@ -635,7 +635,12 @@ func mrStatus(g glyphs, mr *forge.MR) string {
 
 // --- preview ---------------------------------------------------------------------
 
-func (m model) homeDetail(w int) string {
+// homeDetail is Home's detail pane, w wide and h high: the selected row's
+// detail, or the notes editor while one is open.
+func (m model) homeDetail(w, h int) string {
+	if m.ne != nil {
+		return m.noteEditPane(w, h)
+	}
 	if m.homeSel >= len(m.homeRows) {
 		return lipgloss.Wrap(stFaint.Render("Nothing selected."), w, " ")
 	}
@@ -646,8 +651,9 @@ func (m model) homeDetail(w int) string {
 	return m.itemDetail(r.item, w, true)
 }
 
-// itemDetail is the work item's detail block. hint adds the notes hint when
-// the item has none; the MR page leaves it out to keep its overview short.
+// itemDetail is the work item's detail block. hint adds the notes key hints
+// (`n writes one` when there are none, `n edits`); the MR page leaves them out
+// to keep its overview short.
 func (m model) itemDetail(it *domain.WorkItem, w int, hint bool) string {
 	g := m.g
 	var l []string
@@ -705,36 +711,26 @@ func (m model) itemDetail(it *domain.WorkItem, w int, hint bool) string {
 	return strings.Join(l, "\n")
 }
 
-// detailNotes is how many dated notes the detail pane shows.
-const detailNotes = 3
+// detailNoteRows is how many lines of notes the detail pane shows.
+const detailNoteRows = 8
 
-// noteLines is the detail pane's notes block: the newest dated notes wrapped
-// to the pane, blocked ones in the warn style, or (with hint) a hint when there
-// are none.
+// noteLines is the detail pane's notes block: the notes as written (free text
+// and dated lines alike), rendered like the description and cut to the first
+// lines that fit, or (with hint, on Home) a hint when there are none.
 func (m model) noteLines(it *domain.WorkItem, w int, hint bool) []string {
 	g := m.g
-	notes := m.itemDatedNotes(it)
-	if len(notes) == 0 && !hint {
+	text := m.notes[markKey(it.Project, it.Ref.String())].text
+	if text == "" && !hint {
 		return nil
 	}
-	l := []string{"", stBold.Render("notes")}
-	if len(notes) == 0 {
-		return append(l, stFaint.Render(ansi.Truncate(g.T("none yet · N adds one"), w, g.Ell)))
+	head := stBold.Render("notes")
+	if text == "" {
+		return []string{"", head, stFaint.Render(ansi.Truncate(g.T("none yet · n writes one"), w, g.Ell))}
 	}
-	for _, n := range notes[:min(len(notes), detailNotes)] {
-		stamp, text, style := stFaint.Render(n.At.Format("2 Jan 15:04")), n.Text, lipgloss.NewStyle()
-		if n.Blocked {
-			stamp, text, style = stWarn.Render(g.Warn+" "+n.At.Format("2 Jan 15:04")+" blocked"), n.Text, stWarn
-		}
-		l = append(l, stamp)
-		for _, ln := range wrap(text, max(w-2, 10)) {
-			l = append(l, "  "+style.Render(ansi.Truncate(ln, w-2, g.Ell)))
-		}
+	if hint {
+		head += stFaint.Render("  n edits")
 	}
-	if extra := len(notes) - detailNotes; extra > 0 {
-		l = append(l, stFaint.Render(fmt.Sprintf("  + %d older (n shows all)", extra)))
-	}
-	return l
+	return append([]string{"", head}, m.mdPreview(text, w, detailNoteRows)...)
 }
 
 // stationLines draws the item's line vertically, each station with its

@@ -19,6 +19,7 @@ import (
 	"github.com/coredev-uk/ade/internal/forgesync"
 	"github.com/coredev-uk/ade/internal/notify"
 	"github.com/coredev-uk/ade/internal/paths"
+	"github.com/coredev-uk/ade/internal/records"
 	"github.com/coredev-uk/ade/internal/store"
 	"github.com/coredev-uk/ade/internal/watch"
 )
@@ -315,5 +316,61 @@ func drain(cmd tea.Cmd) []tea.Msg {
 		case <-deadline:
 			return msgs
 		}
+	}
+}
+
+// A note written outside the dashboard (`ade note` in another pane, a hand
+// edit of the record) shows in Home's detail pane within a second: the item
+// records are watched and read again off the UI loop, with no sync.
+func TestANoteWrittenElsewhereShowsInTheDetailPane(t *testing.T) {
+	for _, tc := range watchModes {
+		t.Run(tc.name, func(t *testing.T) {
+			a, st := watchedApp(t)
+			res := sampleResult()
+			res.Forge = "gl"
+			it := res.Items[0]
+			rs := records.New(a.RecordsDir)
+			if _, _, err := rs.WriteSnapshot("gl", it, nil, 5); err != nil {
+				t.Fatal(err)
+			}
+			m := model{ctx: context.Background(), app: a, cache: st, g: unicodeGlyphs, w: 200, h: 40, nc: newNotifCenter(notify.NewInbox(st)), page: pageHome, homeLoaded: true}
+			m.setResults([]forgesync.Result{res})
+			for i, r := range m.homeRows {
+				if r.item != nil && r.item.Ref == it.Ref {
+					m.homeSel = i
+				}
+			}
+			m.fw = startWatch(t, a, st, tc.opts)
+			if got := m.fw.records.Mode(); got != tc.mode {
+				t.Fatalf("watch mode = %q, want %q", got, tc.mode)
+			}
+			shows := func(s string) func(model) bool {
+				return func(m model) bool { return strings.Contains(ansi.Strip(m.render()), s) }
+			}
+			l := newLoop(m, m.watchStart())
+			if shows("asked Rae")(l.m) {
+				t.Fatal("the note is on screen before it was written")
+			}
+
+			other := records.New(a.RecordsDir) // `ade note`, another process
+			if err := other.AppendNote("gl", it.Ref, "asked Rae about the cache key", time.Date(2026, 11, 12, 14, 20, 0, 0, time.UTC), false); err != nil {
+				t.Fatal(err)
+			}
+			took, ok := l.until(settle, shows("asked Rae about the cache key"))
+			if !ok {
+				t.Fatalf("the note was not shown within %v:\n%s", settle, ansi.Strip(l.m.render()))
+			}
+			t.Logf("note shown %v after the write (%s)", took, tc.mode)
+
+			if err := other.WriteNotes("gl", it.Ref, "rewritten by hand"); err != nil { // a hand edit
+				t.Fatal(err)
+			}
+			if _, ok := l.until(settle, shows("rewritten by hand")); !ok {
+				t.Fatalf("the hand edit was not shown within %v", settle)
+			}
+			if l.m.syncing {
+				t.Error("a record change started a sync")
+			}
+		})
 	}
 }
