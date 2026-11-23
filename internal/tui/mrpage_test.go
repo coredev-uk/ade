@@ -58,7 +58,7 @@ func newMREnv(t *testing.T, tier fake.Tier) *mrEnv {
 	ctx := context.Background()
 
 	cfg := config.Defaults()
-	a := &app.App{Paths: paths.Paths{CacheDir: t.TempDir()}, Config: &cfg, Bus: events.NewBus()}
+	a := &app.App{Paths: paths.Paths{CacheDir: t.TempDir()}, Config: &cfg, Bus: events.NewBus(), RecordsDir: t.TempDir()}
 	t.Cleanup(func() { a.Close() })
 	log, err := audit.Open(t.TempDir(), "user")
 	if err != nil {
