@@ -111,6 +111,9 @@ type Choices struct {
 	// An existing branch and its MR are reused; otherwise the name is created.
 	// Entries for repos not in Repos, and Browse, ignore it.
 	Branches map[string]string `json:"branches,omitempty"`
+	// NewMR opens a new MR for a branch whose latest MR is closed, instead of
+	// stopping with a notice that says how to reopen the closed one.
+	NewMR bool `json:"new_mr,omitempty"`
 }
 
 // ValidBranchName rejects a name git would refuse; the forge has the last word
@@ -182,6 +185,9 @@ type Found struct {
 	Linked        bool         `json:"linked,omitempty"`
 	Branch        string       `json:"branch,omitempty"`
 	MR            *forge.MR    `json:"mr,omitempty"`
+	// ClosedMR is the latest closed (not merged) MR of Branch when no open or
+	// merged MR exists and Choices.NewMR is unset: the MR step stops at it.
+	ClosedMR *forge.MR `json:"closed_mr,omitempty"`
 	// Cloned reports the repo's bare clone exists under the project root.
 	Cloned bool `json:"cloned"`
 	// Worktree is the existing local tree of Branch (of the default branch
@@ -243,6 +249,9 @@ type Step struct {
 	Path string `json:"path,omitempty"`
 	// Done marks a step whose result already exists; Execute skips it.
 	Done bool `json:"done,omitempty"`
+	// Closed marks an MR step that stopped because the branch's latest MR is
+	// closed; Text says how to reopen it. Not an error, and Done too.
+	Closed bool `json:"closed,omitempty"`
 	// Write marks a forge write (as opposed to local git).
 	Write bool `json:"write,omitempty"`
 }
@@ -813,6 +822,12 @@ func mrStep(tp TargetPlan) Step {
 	f := tp.Found
 	if f.MR != nil {
 		return Step{Kind: StepMR, Repo: tp.Target.Name, Done: true, Text: fmt.Sprintf("MR %s exists", f.MR.Ref)}
+	}
+	if c := f.ClosedMR; c != nil {
+		return Step{
+			Kind: StepMR, Repo: tp.Target.Name, Done: true, Closed: true,
+			Text: fmt.Sprintf("closed MR exists: reopen with `ade mr reopen %s`, or pass --new-mr to open a new one", c.Ref),
+		}
 	}
 	kind := "MR"
 	if tp.MR.Draft {
