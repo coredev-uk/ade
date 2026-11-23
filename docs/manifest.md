@@ -261,8 +261,9 @@ ade.target        = main         # the MR's target branch; absent when not known
 opened for an item's worktree do not: run the command there). The hook reads the keys above, so it prefixes the
 first commit you type (`GL-412 Fix export`):
 
-- It prefixes only while the branch has no commits ahead of `ade.target` (the local branch, else `origin/<target>`;
-  with no target recorded it prefixes), never twice (a message that already starts with the prefix, with or without
+- It prefixes only while HEAD has no commit that `ade.target` lacks, counting against the local target branch and
+  `origin/<target>` (whichever exist, so a local target behind origin does not hide the first commit; with no target
+  recorded it prefixes), never twice (a message that already starts with the prefix, with or without
   `:`, is left alone), and not a merge, a squashed merge, a revert or a `fixup!` / `squash!` / `amend!` message. An
   empty message stays empty.
 - It lives in `<git dir>/ade-hooks/` of the worktree (for a worktree of a bare clone that is
@@ -276,13 +277,14 @@ first commit you type (`GL-412 Fix export`):
   that `exec` the original; run the install again after adding a hook there. Everything ADE writes starts its second
   line with `# ade-managed:`; nothing else is touched.
 - Running it again is a no-op (or rewrites an older version of the hook). `ade ws hook remove` unsets the worktree's
-  `core.hooksPath` and deletes only those files. `--dry-run` on both reports without writing; each real change is
+  `core.hooksPath` (putting back a worktree-level one you had, which install remembers as `ade.prevHooksPath`) and
+  deletes only those files. `--dry-run` on both reports without writing; each real change is
   audited as `git.hook.install` / `git.hook.remove`. `ade doctor`'s `commit-prefix` group warns for a worktree with a
   prefix and no hook, with the command to run.
 
 To write your own instead, a `commit-msg` hook (a global `core.hooksPath` one works for every worktree) can use the
 keys; `ade.target` is the MR's target branch (written when ADE knows it), so the hook prefixes only while the branch
-has no commits ahead of it:
+has no commits beyond it:
 
 ```sh
 #!/bin/sh
@@ -290,8 +292,13 @@ has no commits ahead of it:
 prefix=$(git config --get ade.commitPrefix) || exit 0
 [ -n "$prefix" ] || exit 0
 target=$(git config --get ade.target) || exit 0
-# any commit already ahead of the target means this is not the first one
-ahead=$(git rev-list --count "$target..HEAD" 2>/dev/null || git rev-list --count "origin/$target..HEAD" 2>/dev/null) || exit 0
+# a commit that neither the target nor origin's has means this is not the first one
+refs=""
+for ref in "$target" "origin/$target"; do
+  git rev-parse -q --verify "$ref^{commit}" >/dev/null 2>&1 && refs="$refs $ref"
+done
+[ -n "$refs" ] || exit 0
+ahead=$(git rev-list --count HEAD --not $refs 2>/dev/null) || exit 0
 [ "$ahead" = 0 ] || exit 0
 first=$(head -n1 "$1")
 case "$first" in

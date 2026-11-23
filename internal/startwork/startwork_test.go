@@ -620,6 +620,12 @@ func TestStartInstallsTheCommitHookOnlyWhenTheManifestOptsIn(t *testing.T) {
 		if !slices.Contains(h.auditActions(), "git.hook.install") {
 			t.Errorf("install not audited: %v", h.auditActions())
 		}
+		if _, _, err := h.start(3, draftApi()); err != nil {
+			t.Fatal(err)
+		}
+		if n := strings.Count(strings.Join(h.auditActions(), " "), "git.hook.install"); n != 1 {
+			t.Errorf("git.hook.install audited %d times across two starts: %v", n, h.auditActions())
+		}
 	}
 }
 

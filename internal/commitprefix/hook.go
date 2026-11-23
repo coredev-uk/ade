@@ -20,6 +20,9 @@ const (
 	hookName     = "commit-msg"
 	hooksDirName = "ade-hooks"
 	hooksPathKey = "core.hooksPath"
+	// prevHooksPathKey remembers a core.hooksPath the worktree had of its own
+	// before ADE's took its place, for `ade ws hook remove` to put back.
+	prevHooksPathKey = "ade.prevHooksPath"
 	// Marker opens the second line of every file ADE writes into its hooks
 	// directory, so that removal and reinstall touch only those.
 	marker = "# ade-managed:"
@@ -28,7 +31,7 @@ const (
 // hookScript is the commit-msg hook. It reads the worktree's own git config
 // (ade.commitPrefix, ade.target), so the file is the same for every worktree
 // and survives the prefix changing. It prefixes only the MR's first commit
-// (no commits ahead of ade.target), never twice, and leaves merges, reverts,
+// (no commit that ade.target, local or on origin, lacks), never twice, and leaves merges, reverts,
 // squashed merges and autosquash messages alone.
 const hookScript = `#!/bin/sh
 ` + marker + ` commit-prefix hook (ade ws hook install; ade ws hook remove deletes it)
@@ -46,15 +49,19 @@ case "$first" in
   "$prefix"|"$prefix "*|"$prefix:"*) exit 0 ;;                                       # already prefixed
   Merge\ *|Squashed\ commit*|fixup!\ *|squash!\ *|amend!\ *|Revert\ *) exit 0 ;;     # merges, autosquash, reverts
 esac
-# any commit already ahead of the MR target means this is not the first one
+# a commit the target (local, and origin's) lacks means this is not the first one
 target=$(git config --get ade.target)
 if [ -n "$target" ]; then
+  refs=""
   for ref in "$target" "origin/$target"; do
-    if ahead=$(git rev-list --count "$ref..HEAD" 2>/dev/null); then
-      [ "$ahead" = 0 ] || exit 0
-      break
-    fi
+    git rev-parse -q --verify "$ref^{commit}" >/dev/null 2>&1 && refs="$refs $ref"
   done
+  if [ -n "$refs" ]; then
+    # shellcheck disable=SC2086
+    if ahead=$(git rev-list --count HEAD --not $refs 2>/dev/null); then
+      [ "$ahead" = 0 ] || exit 0
+    fi
+  fi
 fi
 tmp="$msg.ade"
 CC=$cc PREFIX=$prefix awk '!done && substr($0,1,1)!=ENVIRON["CC"] && $0 !~ /^[ \t]*$/ {print ENVIRON["PREFIX"] " " $0; done=1; next} {print}' "$msg" >"$tmp" \
@@ -91,6 +98,9 @@ type HookPlan struct {
 	// current. Stale: ADE's hook is in Dir but differs from this version's.
 	Installed bool `json:"installed"`
 	Stale     bool `json:"stale,omitempty"`
+	// Restore is the worktree-level core.hooksPath the user had before ADE's
+	// replaced it; remove puts it back.
+	Restore string `json:"restore,omitempty"`
 	// Present: something of ADE's is in place (the worktree's core.hooksPath is
 	// Dir, or the hook file is there), whatever its version.
 	Present bool `json:"present,omitempty"`
@@ -110,15 +120,18 @@ func PlanHook(ctx context.Context, dir string) (HookPlan, error) {
 	}
 	p.Dir = filepath.Join(strings.TrimSpace(gitDir), hooksDirName)
 
-	cur, _ := g.Run(ctx, p.Worktree, "config", "--worktree", "--get", hooksPathKey)
-	ours := resolveHooksPath(p.Worktree, strings.TrimSpace(cur)) == p.Dir
+	cur := worktreeHooksPath(ctx, g, p.Worktree)
+	ours := resolveHooksPath(p.Worktree, cur) == p.Dir
 	p.Present = ours || managed(filepath.Join(p.Dir, hookName))
 	if ours {
 		body, _ := os.ReadFile(filepath.Join(p.Dir, hookName))
 		p.Installed = string(body) == hookScript
 		p.Stale = len(body) > 0 && !p.Installed && bytes.Contains(body, []byte(marker))
+		p.Restore = readKey(ctx, p.Worktree, prevHooksPathKey)
+	} else {
+		p.Restore = cur
 	}
-	if p.Prev, err = previousHooksDir(ctx, g, p.Worktree, ours); err != nil {
+	if p.Prev, err = previousHooksDir(ctx, g, p.Worktree, ours, p.Restore); err != nil {
 		return HookPlan{}, err
 	}
 	// A commit-msg file of the user's in ADE's own directory counts too.
@@ -137,15 +150,19 @@ func PlanHook(ctx context.Context, dir string) (HookPlan, error) {
 }
 
 // previousHooksDir is the hooks directory git would use for the worktree
-// without ADE's: the last core.hooksPath outside the worktree's own scope when
-// ADE's directory is the worktree's (a reinstall), else what git resolves now.
-func previousHooksDir(ctx context.Context, g git.Client, worktree string, ours bool) (string, error) {
+// without ADE's: when ADE's directory is the worktree's (a reinstall), the
+// worktree-level path it replaced (restore), else the last core.hooksPath of
+// another scope, else the repo's; if it is not, what git resolves now.
+func previousHooksDir(ctx context.Context, g git.Client, worktree string, ours bool, restore string) (string, error) {
 	if !ours {
 		out, err := g.Run(ctx, worktree, "rev-parse", "--path-format=absolute", "--git-path", "hooks")
 		if err != nil {
 			return "", err
 		}
 		return strings.TrimSpace(out), nil
+	}
+	if restore != "" {
+		return resolveHooksPath(worktree, restore), nil
 	}
 	var last string
 	out, _ := g.Run(ctx, worktree, "config", "--show-scope", "--get-all", hooksPathKey)
@@ -179,6 +196,19 @@ func resolveHooksPath(worktree, v string) string {
 		return filepath.Join(worktree, v)
 	}
 	return filepath.Clean(v)
+}
+
+// worktreeHooksPath is the raw core.hooksPath set at the worktree's own scope
+// (config.worktree), "" when none; a value in the shared config is not it.
+func worktreeHooksPath(ctx context.Context, g git.Client, worktree string) string {
+	out, _ := g.Run(ctx, worktree, "config", "--show-scope", "--get-all", hooksPathKey)
+	var v string
+	for line := range strings.SplitSeq(out, "\n") {
+		if scope, val, ok := strings.Cut(line, "\t"); ok && scope == "worktree" {
+			v = strings.TrimSpace(val)
+		}
+	}
+	return v
 }
 
 // isHookFile reports whether path is a file git could run as a hook (a hook
@@ -247,6 +277,11 @@ func (p HookPlan) Apply(ctx context.Context) error {
 	if err := enableWorktreeConfig(ctx, g, strings.TrimSpace(common)); err != nil {
 		return err
 	}
+	if p.Restore != "" {
+		if err := setWorktree(ctx, g, p.Worktree, prevHooksPathKey, p.Restore); err != nil {
+			return err
+		}
+	}
 	return setWorktree(ctx, g, p.Worktree, hooksPathKey, p.Dir)
 }
 
@@ -304,20 +339,28 @@ func InstallHook(ctx context.Context, dir string) (HookPlan, error) {
 }
 
 // RemoveHook takes ADE's hook out of the worktree at dir: it unsets the
-// worktree's core.hooksPath when that is ADE's directory and deletes the files
-// ADE wrote there. A hook of the user's is never touched. changed is false
+// worktree's core.hooksPath when that is ADE's directory (putting back the
+// worktree-level path the user had, if any) and deletes the files ADE wrote
+// there. A hook of the user's is never touched. changed is false
 // when there was nothing of ADE's to remove.
 func RemoveHook(ctx context.Context, dir string) (p HookPlan, changed bool, err error) {
 	g := git.Client{}
 	if p, err = PlanHook(ctx, dir); err != nil {
 		return p, false, err
 	}
-	cur, _ := g.Run(ctx, p.Worktree, "config", "--worktree", "--get", hooksPathKey)
-	if resolveHooksPath(p.Worktree, strings.TrimSpace(cur)) == p.Dir {
-		if _, err = g.Run(ctx, p.Worktree, "config", "--worktree", "--unset-all", hooksPathKey); err != nil {
+	if resolveHooksPath(p.Worktree, worktreeHooksPath(ctx, g, p.Worktree)) == p.Dir {
+		if p.Restore != "" {
+			_, err = g.Run(ctx, p.Worktree, "config", "--worktree", hooksPathKey, p.Restore)
+		} else {
+			_, err = g.Run(ctx, p.Worktree, "config", "--worktree", "--unset-all", hooksPathKey)
+		}
+		if err != nil {
 			return p, false, err
 		}
 		changed = true
+	}
+	if err = setWorktree(ctx, g, p.Worktree, prevHooksPathKey, ""); err != nil {
+		return p, changed, err
 	}
 	entries, rerr := os.ReadDir(p.Dir)
 	if rerr != nil {

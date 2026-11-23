@@ -187,24 +187,28 @@ func readKey(ctx context.Context, dir, key string) string {
 }
 
 // FirstCommit reports whether a commit made now in the worktree at dir would
-// be the MR's first one: the branch has no commits ahead of the MR target
-// (ade.target; the local branch, else origin/<target>). Only that commit
-// carries the prefix. With no recorded or resolvable target it is true, so the
-// prefix is applied rather than lost.
+// be the MR's first one: HEAD has no commits that neither the local target
+// branch nor origin/<target> has (ade.target; whichever of the two exist, so a
+// local target that is behind origin does not make the first commit look like
+// a later one). Only that commit carries the prefix. With no recorded or
+// resolvable target it is true, so the prefix is applied rather than lost.
 func FirstCommit(ctx context.Context, dir string) bool {
 	target := ReadTarget(ctx, dir)
 	if target == "" {
 		return true
 	}
 	g := git.Client{}
+	args := []string{"rev-list", "--count", "HEAD", "--not"}
 	for _, ref := range []string{target, "origin/" + target} {
-		out, err := g.Run(ctx, dir, "rev-list", "--count", ref+"..HEAD")
-		if err != nil {
-			continue
+		if _, err := g.Run(ctx, dir, "rev-parse", "-q", "--verify", ref+"^{commit}"); err == nil {
+			args = append(args, ref)
 		}
-		return strings.TrimSpace(out) == "0"
 	}
-	return true
+	if len(args) == 4 {
+		return true
+	}
+	out, err := g.Run(ctx, dir, args...)
+	return err != nil || strings.TrimSpace(out) == "0"
 }
 
 // TargetBranch is the MR target branch of wi's MR whose source is the branch

@@ -310,3 +310,63 @@ func TestRemoveHook(t *testing.T) {
 	}
 	_ = bare
 }
+
+// In a bare clone the local target branch is often behind origin/<target>:
+// a branch cut from origin/main still has only its own commits to count.
+func TestHookAndFirstCommitIgnoreACommitOriginsTargetHasAndTheLocalOneLacks(t *testing.T) {
+	ctx := context.Background()
+	a, _, _ := prefixedTree(t)
+	commit(t, a, "Landed upstream, not in the local main") // no hook yet
+	sh(t, a, "update-ref", "refs/remotes/origin/main", "HEAD")
+	if !FirstCommit(ctx, a) {
+		t.Error("FirstCommit = false for a branch at origin/main with a stale local main")
+	}
+	if _, err := InstallHook(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	commit(t, a, "My first")
+	if got := lastMessage(t, a); got != "GL-7 My first" {
+		t.Errorf("first commit = %q", got)
+	}
+	if FirstCommit(ctx, a) {
+		t.Error("FirstCommit = true after the first commit")
+	}
+	commit(t, a, "My second")
+	if got := lastMessage(t, a); got != "My second" {
+		t.Errorf("second commit = %q", got)
+	}
+}
+
+func TestRemoveHookPutsBackAWorktreeLevelHooksPath(t *testing.T) {
+	ctx := context.Background()
+	a, _, _ := prefixedTree(t)
+	mine := filepath.Join(t.TempDir(), "my-hooks")
+	ran := filepath.Join(t.TempDir(), "ran")
+	writeExec(t, filepath.Join(mine, "pre-commit"), "#!/bin/sh\necho x >> '"+ran+"'\n")
+	sh(t, a, "config", "--worktree", "core.hooksPath", mine)
+
+	plan, err := InstallHook(ctx, a)
+	if err != nil || plan.Restore != mine || plan.Prev != mine {
+		t.Fatalf("install = %+v, %v", plan, err)
+	}
+	if again, err := InstallHook(ctx, a); err != nil || again.Restore != mine || again.Prev != mine {
+		t.Fatalf("reinstall = %+v, %v", again, err)
+	}
+	commit(t, a, "Through both")
+	if got := lastMessage(t, a); got != "GL-7 Through both" {
+		t.Errorf("message = %q", got)
+	}
+	if body, _ := os.ReadFile(ran); string(body) != "x\n" {
+		t.Errorf("the user's pre-commit hook ran %q", body)
+	}
+
+	if _, changed, err := RemoveHook(ctx, a); err != nil || !changed {
+		t.Fatalf("remove = %v, %v", changed, err)
+	}
+	if got := sh(t, a, "config", "--worktree", "--get", "core.hooksPath"); got != mine {
+		t.Errorf("core.hooksPath = %q, want the user's %q back", got, mine)
+	}
+	if out, err := exec.Command("git", "-C", a, "config", "--get", "ade.prevHooksPath").Output(); err == nil {
+		t.Errorf("the backup key stayed: %q", out)
+	}
+}

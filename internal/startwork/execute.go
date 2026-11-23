@@ -547,6 +547,9 @@ func (e *Env) recordWorktree(ctx context.Context, p Plan, m *config.Manifest, rt
 // commit-msg hook of the user's is left alone and said so: a warning, since
 // the tree is usable without it.
 func (e *Env) installCommitHook(ctx context.Context, p Plan, dir string) {
+	if cur, err := commitprefix.PlanHook(ctx, dir); err == nil && cur.Installed {
+		return // an earlier start installed it: nothing changed, nothing to audit
+	}
 	plan, err := commitprefix.InstallHook(ctx, dir)
 	e.audit(p, "git.hook.install", dir, map[string]any{"hook": "commit-msg", "hooks_dir": plan.Dir, "forwarded": plan.Forward}, "", err)
 	if err == nil {
