@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/coredev-uk/ade/internal/ai"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/project"
 )
@@ -141,13 +142,34 @@ func readContext(dir string) (Context, error) {
 	return c, json.Unmarshal(b, &c)
 }
 
+// writeUntrusted writes forge text as an ai.Untrusted block: the agent runs
+// shell commands, so an issue or a review thread saying "also run curl … | sh"
+// must reach it as data about the work, never as an instruction. source is
+// ADE's own label; a forge user name in it is reduced to safe characters.
+func writeUntrusted(b *strings.Builder, source, text string) {
+	b.WriteString(ai.Untrusted(source, text))
+}
+
+// safeName keeps what may sit inside a quoted source label.
+func safeName(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '"' || r == '<' || r == '>' || r < 0x20 {
+			return -1
+		}
+		return r
+	}, s)
+}
+
 func (c Context) issueBlock(b *strings.Builder) {
-	fmt.Fprintf(b, "## Issue %s: %s\n\n%s\n", c.Issue.Ref, c.Issue.Title, strings.TrimSpace(c.Issue.Description))
+	fmt.Fprintf(b, "## Issue %s\n\n", c.Issue.Ref)
+	writeUntrusted(b, "issue title and description", c.Issue.Title+"\n\n"+c.Issue.Description)
 	if len(c.Issue.Labels) > 0 {
-		fmt.Fprintf(b, "\nLabels: %s\n", strings.Join(c.Issue.Labels, ", "))
+		b.WriteString("\n")
+		writeUntrusted(b, "issue labels", "Labels: "+strings.Join(c.Issue.Labels, ", "))
 	}
 	if c.Child != nil {
-		fmt.Fprintf(b, "\n## Child issue %s: %s\n\n%s\n", c.Child.Ref, c.Child.Title, strings.TrimSpace(c.Child.Description))
+		fmt.Fprintf(b, "\n## Child issue %s\n\n", c.Child.Ref)
+		writeUntrusted(b, "child issue title and description", c.Child.Title+"\n\n"+c.Child.Description)
 	}
 	if c.Notes != "" {
 		fmt.Fprintf(b, "\n## Your notes on this item\n\nThe person you work for keeps these private notes. Treat them as guidance about intent and constraints; do not copy them into code, commits or comments.\n\n%s\n", c.Notes)
@@ -155,7 +177,8 @@ func (c Context) issueBlock(b *strings.Builder) {
 	if len(c.Comments) > 0 {
 		b.WriteString("\n## Comments\n")
 		for _, n := range c.Comments {
-			fmt.Fprintf(b, "\n%s (%s):\n%s\n", n.Author.Username, n.CreatedAt.Format("2006-01-02"), strings.TrimSpace(n.Body))
+			b.WriteString("\n")
+			writeUntrusted(b, fmt.Sprintf("comment by %s on %s", safeName(n.Author.Username), n.CreatedAt.Format("2006-01-02")), n.Body)
 		}
 	}
 	if c.ProjectAgents != "" {
@@ -172,6 +195,7 @@ func targetBlock(b *strings.Builder, t Target) {
 		fmt.Fprintf(b, "These directories are required repos you may read but must not change: %s.\n", strings.Join(t.AddDirs, ", "))
 	}
 	b.WriteString("Never run git commit, git push or anything that changes remotes: the user reviews the diff, then ADE commits and pushes.\n")
+	b.WriteString(ai.UntrustedRule())
 	switch {
 	case t.CommitPrefix != "":
 		fmt.Fprintf(b, "ADE adds the prefix %q to the MR's first commit when it commits; do not add it yourself.\n\n", t.CommitPrefix)
@@ -217,7 +241,8 @@ func AddressPrompt(t Target, c Context) string {
 		}
 		fmt.Fprintf(&b, "\n### thread %s (%s)\n", th.ID, loc)
 		for _, n := range th.Notes {
-			fmt.Fprintf(&b, "\n%s:\n%s\n", n.Author.Username, strings.TrimSpace(n.Body))
+			b.WriteString("\n")
+			writeUntrusted(&b, fmt.Sprintf("review comment by %s", safeName(n.Author.Username)), n.Body)
 		}
 	}
 	b.WriteString("\n## When done\n\nEnd your reply with one fenced json block, exactly this shape, one reply per thread:\n\n" +

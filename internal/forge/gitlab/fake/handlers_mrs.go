@@ -89,7 +89,11 @@ func (s *Server) getMR(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if m, ok := s.lookupMR(w, r); ok {
-		writeJSON(w, http.StatusOK, s.mrJSON(m, m.Project, true))
+		o := s.mrJSON(m, m.Project, true)
+		if flag(params(r), "include_rebase_in_progress") {
+			s.rebaseJSON(m, o)
+		}
+		writeJSON(w, http.StatusOK, o)
 	}
 }
 

@@ -107,7 +107,7 @@ func TestSprintOpenListsOnlyTrackerUnassignedTickets(t *testing.T) {
 // answers: sync runs in the background.
 func TestHomeRendersFromCacheWhileSyncHangs(t *testing.T) {
 	cfg := config.Defaults()
-	a := &app.App{Paths: paths.Paths{CacheDir: t.TempDir()}, Config: &cfg, Bus: nil}
+	a := &app.App{Paths: paths.Paths{CacheDir: t.TempDir()}, Config: &cfg, Bus: nil, RecordsDir: t.TempDir()}
 	t.Cleanup(func() { a.Close() })
 	st, err := a.Cache()
 	if err != nil {
@@ -130,7 +130,7 @@ func TestHomeRendersFromCacheWhileSyncHangs(t *testing.T) {
 // column stays narrow and the titles keep their room.
 func TestHomeAbbreviatesLongRepoNames(t *testing.T) {
 	cfg := config.Defaults()
-	a := &app.App{Paths: paths.Paths{CacheDir: t.TempDir()}, Config: &cfg}
+	a := &app.App{Paths: paths.Paths{CacheDir: t.TempDir()}, Config: &cfg, RecordsDir: t.TempDir()}
 	t.Cleanup(func() { a.Close() })
 	st, err := a.Cache()
 	if err != nil {
@@ -201,7 +201,7 @@ func TestHelpListsEveryHomeKey(t *testing.T) {
 	want := []string{"j", "k", "g", "G", "tab", "t", "p", "e", "o", "n", "=", "r", ":", "f", "enter", "s", "M", "c", "C", "a", "A", "w", "y", "S", "V", "b", "L", "i", "U", "esc", "?", "q"}
 	for _, full := range []bool{true, false} {
 		have := map[string]bool{}
-		for _, grp := range helpGroups(full) {
+		for _, grp := range helpGroups(full, true) {
 			for _, r := range grp.rows {
 				for _, k := range strings.Fields(strings.ReplaceAll(r[0], "/", " ")) {
 					have[k] = true
@@ -215,7 +215,7 @@ func TestHelpListsEveryHomeKey(t *testing.T) {
 		}
 	}
 	for _, size := range [][2]int{{80, 24}, {76, 24}} {
-		d := helpView(size[0], size[1], unicodeGlyphs)
+		d := helpView(size[0], size[1], unicodeGlyphs, true, 0)
 		if got := lipgloss.Height(d); got > size[1]-2 {
 			t.Errorf("help at %dx%d is %d rows", size[0], size[1], got)
 		}

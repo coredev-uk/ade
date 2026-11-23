@@ -182,6 +182,13 @@ func printMR(w io.Writer, mr forge.MR, threads []forge.Discussion) {
 	}
 	fmt.Fprintf(w, "%s · %s\n", mr.Ref, mr.Title)
 	fmt.Fprintf(w, "  %s · %s → %s · by %s\n", state, mr.SourceBranch, mr.TargetBranch, mr.Author.Display())
+	if mr.Fork {
+		from := "a fork the forge no longer names"
+		if mr.SourceProject != "" {
+			from = mr.SourceProject
+		}
+		fmt.Fprintf(w, "  fork: from %s (the branch is not in this repo; ade review opens the MR head detached)\n", from)
+	}
 	if mr.DetailedStatus != "" {
 		fmt.Fprintf(w, "  merge status: %s\n", mr.DetailedStatus)
 	}
@@ -300,9 +307,10 @@ func printDiff(w io.Writer, d forge.Diff) {
 // ---- reply / resolve -------------------------------------------------------
 
 func newMRReplyCmd() *cobra.Command {
-	return &cobra.Command{
+	var aiDrafted bool
+	cmd := &cobra.Command{
 		Use:   "reply <ref> <discussion> <body>",
-		Short: "Reply in a thread (body \"-\" reads stdin)",
+		Short: "Reply in a thread (body \"-\" reads stdin; --ai-drafted marks a reply `ade ai draft-reply` wrote)",
 		Args:  cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := openMR(cmd, args[0])
@@ -313,7 +321,11 @@ func newMRReplyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			n, err := c.w.Reply(cmd.Context(), c.ref, args[1], body)
+			post := c.w.Reply
+			if aiDrafted {
+				post = c.w.ReplyDrafted // neutralises quick actions and adds the AI mark
+			}
+			n, err := post(cmd.Context(), c.ref, args[1], body)
 			if err != nil {
 				return err
 			}
@@ -321,6 +333,8 @@ func newMRReplyCmd() *cobra.Command {
 				"%s in thread %s on %s", verb(c.dry, fmt.Sprintf("replied (note %d)", n.ID), "reply"), args[1], c.ref)
 		},
 	}
+	cmd.Flags().BoolVar(&aiDrafted, "ai-drafted", false, "the reply was drafted by a model: neutralise forge quick actions in it and end it with the \"Drafted with AI in ADE\" mark")
+	return cmd
 }
 
 func newMRResolveCmd() *cobra.Command {

@@ -5,6 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/coredev-uk/ade/internal/events"
 	"github.com/coredev-uk/ade/internal/forge/gitlab/fake"
 )
@@ -128,7 +131,7 @@ func TestRequestReviewNeedsAnOpenMR(t *testing.T) {
 func TestRequestReviewIsInTheHelpAndFooter(t *testing.T) {
 	e := newMREnv(t, fake.Free)
 	e.open(mrRef("api", 1).String())
-	e.want("v review again")
+	e.want("v re-review")
 	e.press(":")
 	e.typ("Ask for a review again")
 	e.press("enter")
@@ -163,5 +166,37 @@ func TestRequestReviewPartialLanding(t *testing.T) {
 	e.want("reviewer-sam")
 	if es := e.audited("forge.mr.request_review"); len(es) != 2 {
 		t.Errorf("audit = %+v, want both parts", es)
+	}
+}
+
+// At 160 columns every tab's footer carries the page actions u, P, v and E
+// (AI off); with AI on the tab's own AI hints take the room of v and E on
+// Overview, Threads and Review, but u and P stay.
+func TestMRFooterFitsTheActionsAt160(t *testing.T) {
+	for _, ai := range []bool{false, true} {
+		e := newMREnv(t, fake.Free)
+		if ai {
+			e.enableAI("ask")
+		}
+		e.open(grp + "/tracker#1") // a work item: P agents shows
+		for _, tab := range []mrTab{tabOverview, tabThreads, tabDiff, tabReview, tabCI, tabHistory} {
+			e.m.setTab(tab)
+			line := ansi.Strip(e.m.mrFooter(160))
+			if lipgloss.Width(line) > 160 {
+				t.Errorf("ai=%v tab=%d: footer is %d wide", ai, tab, lipgloss.Width(line))
+			}
+			want := []string{"u update", "P agents"}
+			if !ai || tab == tabDiff || tab == tabCI || tab == tabHistory {
+				want = append(want, "v re-review")
+			}
+			if !ai {
+				want = append(want, "E describe")
+			}
+			for _, w := range want {
+				if !strings.Contains(line, w) {
+					t.Errorf("ai=%v tab=%d: footer lacks %q:\n%s", ai, tab, w, line)
+				}
+			}
+		}
 	}
 }

@@ -43,8 +43,16 @@ type Store struct {
 	now func() time.Time
 }
 
-// New returns a Store rooted at dir (the ADE data dir).
-func New(dir string) *Store { return &Store{dir: dir, now: time.Now} }
+// New returns a Store rooted at dir (the ADE data dir). dir must be an
+// absolute path: an empty or relative root would resolve against the working
+// directory and write records into whatever tree that is (a test's package
+// directory, a repository), so New panics instead.
+func New(dir string) *Store {
+	if !filepath.IsAbs(dir) {
+		panic(fmt.Sprintf("records.New: root %q is not an absolute path", dir))
+	}
+	return &Store{dir: dir, now: time.Now}
+}
 
 // segment makes one path component safe: no traversal, no separators.
 func segment(s string) string {

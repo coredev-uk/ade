@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/coredev-uk/ade/internal/config"
 )
@@ -21,15 +22,25 @@ const ompExitMaxCost = 3
 // turn (usage.cost.total); on a subscription that is not what is billed, but
 // it is the figure ADE budgets against (docs/PLAN.md §9).
 type omp struct {
-	cmd string
+	cmd     string
+	timeout time.Duration
 }
+
+// defaultOMPTimeout bounds one omp call when the profile sets no timeout: a
+// hung omp must not hold a caller (or the detached research worker, which
+// locks research on its issue while it lives) for ever.
+const defaultOMPTimeout = 10 * time.Minute
 
 func newOMP(p config.AIProfile) *omp {
 	c := p.Command
 	if c == "" {
 		c = "omp"
 	}
-	return &omp{cmd: c}
+	t := p.Timeout.Duration
+	if t <= 0 {
+		t = defaultOMPTimeout
+	}
+	return &omp{cmd: c, timeout: t}
 }
 
 func (d *omp) Name() string { return "omp" }
@@ -57,20 +68,28 @@ func ompArgs(c Call) []string {
 }
 
 func (d *omp) Complete(ctx context.Context, c Call) (Response, error) {
-	cmd := exec.CommandContext(ctx, d.cmd, ompArgs(c)...)
+	callCtx, cancel := context.WithTimeout(ctx, d.timeout)
+	defer cancel()
+	cmd := exec.CommandContext(callCtx, d.cmd, ompArgs(c)...)
 	cmd.Stdin = strings.NewReader(c.Prompt)
+	cmd.WaitDelay = 5 * time.Second // a killed omp must not leave Run waiting on its pipes
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	runErr := cmd.Run()
 	resp, perr := parseOMP(stdout.Bytes())
-	resp.Bytes = len(c.Prompt) + len(c.System)
 	resp.CostSource = CostReported
+	if !errors.Is(runErr, exec.ErrNotFound) { // nothing left the machine if omp never started
+		resp.Bytes = len(c.Prompt) + len(c.System)
+		resp.DestHost = firstNonEmpty(resp.DestHost, "omp")
+	}
 	var ee *exec.ExitError
 	switch {
 	case errors.As(runErr, &ee) && ee.ExitCode() == ompExitMaxCost:
 		return resp, &StopError{Source: "omp", Message: fmt.Sprintf("omp stopped at --max-cost $%.2f (spent $%.4f)", c.MaxCostUSD, resp.CostUSD)}
 	case runErr != nil && ctx.Err() != nil:
 		return resp, ctx.Err()
+	case runErr != nil && errors.Is(callCtx.Err(), context.DeadlineExceeded):
+		return resp, fmt.Errorf("omp: no answer within %s (the profile's timeout): %w", d.timeout, context.DeadlineExceeded)
 	case errors.Is(runErr, exec.ErrNotFound):
 		return resp, &NotInstalledError{Driver: "omp", Err: runErr}
 	case runErr != nil:

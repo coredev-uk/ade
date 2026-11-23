@@ -30,6 +30,7 @@ func (s *Server) reviewRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+mrp+"/approve", s.approve(true))
 	mux.HandleFunc("POST "+mrp+"/unapprove", s.approve(false))
 	mux.HandleFunc("PUT "+mrp+"/merge", s.mergeMR)
+	mux.HandleFunc("PUT "+mrp+"/rebase", s.rebaseMR)
 	mux.HandleFunc("POST /api/v4/projects/{id}/pipelines/{pid}/retry", s.retryPipeline)
 	mux.HandleFunc("GET /api/v4/projects/{id}/pipelines/{pid}/jobs", s.pipelineJobs)
 	mux.HandleFunc("GET /api/v4/projects/{id}/jobs/{jid}/trace", s.jobTrace)
@@ -139,8 +140,12 @@ func (s *Server) updateMR(w http.ResponseWriter, r *http.Request) {
 	if hasReviewers && !s.setReviewerIDs(w, m, p) {
 		return
 	}
-	if title == "" && !hasDesc && !hasReviewers {
+	event := str(p, "state_event")
+	if title == "" && !hasDesc && event == "" && !hasReviewers {
 		badRequest(w, "title is empty")
+		return
+	}
+	if event != "" && !s.applyStateEvent(w, m, event) {
 		return
 	}
 	if title != "" {
@@ -544,4 +549,38 @@ func (s *Server) mrCommits(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	paged(s, w, r, out, func(o object) any { return o })
+}
+
+// applyStateEvent applies state_event=close|reopen. Closing needs an open MR
+// and reopening a closed one; a merged MR does neither (400). Reopening while
+// another MR is open for the same source and target is a 409, as on create.
+// The documented contract only names the two events; the refusals are
+// [INFERENCE] (docs/gitlab-api/workflow.md).
+func (s *Server) applyStateEvent(w http.ResponseWriter, m *mr, event string) bool {
+	switch event {
+	case "close":
+		if m.State != "opened" {
+			badRequest(w, "Cannot close a merge request that is "+m.State)
+			return false
+		}
+		m.State, m.AutoMerge = "closed", false
+	case "reopen":
+		if m.State != "closed" {
+			badRequest(w, "Cannot reopen a merge request that is "+m.State)
+			return false
+		}
+		for _, o := range s.st.mrs {
+			if o != m && o.Project == m.Project && o.State == "opened" && o.Source == m.Source && o.Target == m.Target {
+				writeJSON(w, http.StatusConflict, object{"message": []string{
+					fmt.Sprintf("Another open merge request already exists for this source branch: !%d", o.IID),
+				}})
+				return false
+			}
+		}
+		m.State = "opened"
+	default:
+		badRequest(w, "state_event does not have a valid value")
+		return false
+	}
+	return true
 }

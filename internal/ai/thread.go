@@ -9,7 +9,7 @@ import (
 	"github.com/coredev-uk/ade/internal/review"
 )
 
-const threadSummaryVersion = "thread-summary-v2"
+const threadSummaryVersion = "thread-summary-v3"
 
 //go:embed prompts/thread.md
 var threadSummarySystem string
@@ -21,22 +21,24 @@ func ThreadSummaryJob(forgeName string, mr forge.MR, disc forge.Discussion, d fo
 	var b strings.Builder
 	b.WriteString(mrHeader(mr, firstNonEmpty(d.HeadSHA, mr.HeadSHA)))
 	if p := disc.Position; p != nil {
-		fmt.Fprintf(&b, "\nThread is on %s", p.Path)
+		var pos strings.Builder
+		fmt.Fprintf(&pos, "Thread is on %s", p.Path)
 		if p.NewLine > 0 {
-			fmt.Fprintf(&b, " line %d (new file)", p.NewLine)
+			fmt.Fprintf(&pos, " line %d (new file)", p.NewLine)
 		} else if p.OldLine > 0 {
-			fmt.Fprintf(&b, " line %d (old file)", p.OldLine)
+			fmt.Fprintf(&pos, " line %d (old file)", p.OldLine)
 		}
-		b.WriteString("\n")
 		if f, ok := review.File(d, p.Path); ok && f.Diff != "" {
-			fmt.Fprintf(&b, "That file's diff:\n%s\n", clip(f.Diff, maxFileDiff))
+			fmt.Fprintf(&pos, "\nThat file's diff:\n%s", clip(f.Diff, maxFileDiff))
 		}
+		b.WriteString("\n" + untrusted("thread location and diff", pos.String()))
 	}
 	state := "open"
 	if disc.Resolved {
 		state = "resolved"
 	}
-	fmt.Fprintf(&b, "\nThe thread (%s), oldest first:\n", state)
+	var thread strings.Builder
+	fmt.Fprintf(&thread, "The thread (%s), oldest first:\n", state)
 	notes := disc.Notes
 	if len(notes) > maxThreadNotes {
 		notes = notes[len(notes)-maxThreadNotes:]
@@ -45,11 +47,12 @@ func ThreadSummaryJob(forgeName string, mr forge.MR, disc forge.Discussion, d fo
 		if n.System {
 			continue
 		}
-		fmt.Fprintf(&b, "- %s: %s\n", n.Author.Username, clip(strings.Join(strings.Fields(n.Body), " "), maxNoteChars))
+		fmt.Fprintf(&thread, "- %s: %s\n", n.Author.Username, clip(strings.Join(strings.Fields(n.Body), " "), maxNoteChars))
 	}
+	b.WriteString("\n" + untrusted("review thread", thread.String()))
 	return Job{
 		Feature: "summarize-thread", Role: RoleExplain, PromptVersion: threadSummaryVersion,
-		System: threadSummarySystem, Prompt: b.String(),
+		System: guarded(threadSummarySystem), Prompt: b.String(),
 		Forge: forgeName, Ref: mr.Ref, Name: "thread-mr" + fmt.Sprint(mr.Ref.IID) + "-" + slug(disc.ID),
 		MaxTokens: 700,
 		Params:    map[string]any{"discussion": disc.ID},

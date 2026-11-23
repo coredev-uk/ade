@@ -96,11 +96,16 @@ type issueEvent struct {
 }
 
 type pull struct {
-	Draft     bool
-	Merged    bool
-	MergedAt  time.Time
-	MergeSHA  string
-	Head      string // head branch name
+	Draft    bool
+	Merged   bool
+	MergedAt time.Time
+	MergeSHA string
+	Head     string // head branch name
+	// HeadRepo is the full name of the fork the head branch lives in ("" for the
+	// PR's own repo); HeadGone renders head.repo as null, as GitHub does once a
+	// fork is deleted.
+	HeadRepo  string
+	HeadGone  bool
 	Base      string // base branch name
 	HeadSHA   string
 	BaseSHA   string
@@ -114,6 +119,12 @@ type pull struct {
 	AutoMerge   *autoMerge
 	MergeParams map[string]any
 	Publishes   int
+
+	BaseMoved bool           // MoveBase ran: the base branch is checked for lag (update_branch.go)
+	Updates   int            // update-branch requests accepted
+	Update    *pendingUpdate // accepted, not landed yet
+	// DescWrites counts PATCHes that rewrote the body (Description).
+	DescWrites int
 }
 
 type autoMerge struct {
@@ -478,6 +489,12 @@ func (rp *repo) mergeable(it *item) (bool, string) {
 		return false, "unknown"
 	case p.Draft:
 		return true, "draft"
+	case p.BaseMoved && !rp.contains(p.HeadSHA, rp.resolveRef(p.Base).SHA):
+		tip := rp.resolveRef(p.Base)
+		if _, conflicts := threeWay(rp.Commits[p.BaseSHA].Files, rp.Commits[p.HeadSHA].Files, tip.Files); len(conflicts) > 0 {
+			return false, "dirty"
+		}
+		return true, "behind"
 	case rp.checksFailing(p.HeadSHA):
 		return true, "unstable"
 	}

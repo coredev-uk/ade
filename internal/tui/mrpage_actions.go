@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -38,10 +39,20 @@ func (m *model) mrAudit() *audit.Log {
 	return m.app.Audit
 }
 
-func (m *model) actReply(discID, body string) tea.Cmd {
+// actReply posts a reply. aiDraft is true when the text started as an AI draft
+// (the editor opened with one): it then goes out through ReplyDrafted, which
+// neutralises quick actions, ends the text with the AI mark and audits the
+// source, however much of it was edited.
+func (m *model) actReply(discID, body string, aiDraft bool) tea.Cmd {
 	d := m.mr.data
 	return m.mrWrite(d, "reply", "replying", func(ctx context.Context, w forge.MRWriter) (mrWrote, error) {
-		if _, err := w.Reply(ctx, d.ref, discID, body); err != nil {
+		post := w.Reply
+		if aw, ok := w.(*review.AuditedWriter); ok && aiDraft {
+			post = aw.ReplyDrafted
+		} else if aiDraft {
+			return mrWrote{}, errors.New("the writer does not audit: not posting an AI draft")
+		}
+		if _, err := post(ctx, d.ref, discID, body); err != nil {
 			return mrWrote{}, err
 		}
 		return mrWrote{done: "Reply posted on " + d.ref.String(), reload: relThreads | relMR}, nil
@@ -219,7 +230,7 @@ func mergeVerdict(mr forge.MR) verdict {
 	case mr.Draft:
 		return verdict{why: "it is still a draft (R marks it ready)"}
 	case mr.HasConflicts:
-		return verdict{why: "it conflicts with " + mr.TargetBranch + ": rebase first"}
+		return verdict{why: "it conflicts with " + mr.TargetBranch + ": u updates the branch, or rebase it locally"}
 	}
 	switch mr.DetailedStatus {
 	case "", "mergeable":
@@ -233,7 +244,9 @@ func mergeVerdict(mr forge.MR) verdict {
 	case "discussions_not_resolved":
 		return verdict{why: fmt.Sprintf("%d unresolved %s", mr.Unresolved, plural(mr.Unresolved, "thread"))}
 	case "need_rebase":
-		return verdict{why: "it needs a rebase"}
+		return verdict{why: "it needs a rebase: u updates the branch"}
+	case "behind":
+		return verdict{why: "it is behind " + mr.TargetBranch + ": u updates the branch"}
 	case "checking", "unchecked":
 		return verdict{why: "GitLab is still checking whether it can merge: try again in a moment"}
 	case "blocked_status":

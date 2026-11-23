@@ -54,7 +54,7 @@ tar xzf ade_${v}_${os}_${arch}.tar.gz && install -m 0755 ade ~/.local/bin/ade
 ade version
 ```
 
-The archive is the only thing you need besides the tools in the next section. Releases are cut by release-please: it keeps a release PR open on `main` with the next version and its `CHANGELOG.md` section, written from the Conventional Commit titles merged since the last tag. Merging that PR, once CI passes on `main`, tags it, creates the GitHub release with that section as the notes, and `.github/workflows/release.yml` runs goreleaser to upload the archives. Maintainers can try the build locally with `goreleaser build --snapshot --clean --single-target` (in `nix develop`).
+The archive is the only thing you need besides the tools in the next section. Releases are cut by release-please: it keeps a release PR open on `main` with the next version and its `CHANGELOG.md` section, written from the Conventional Commit titles merged since the last tag. Merging that PR, once CI passes on `main`, tags it, creates the GitHub release with that section as the notes, and `.github/workflows/release.yml` runs goreleaser to upload the archives. release-please acts as the bot-cecil GitHub App (a token minted through octo-sts, trust policy `.github/chainguard/release-please.sts.yaml`), so the release PR runs CI like any other. Maintainers can try the build locally with `goreleaser build --snapshot --clean --single-target` (in `nix develop`).
 
 ## 3. Tools ADE uses
 
@@ -65,7 +65,7 @@ The archive is the only thing you need besides the tools in the next section. Re
 | `git` | clones, worktrees, everything | ADE cannot work | `nix profile install nixpkgs#git` (or your OS) |
 | `zellij` | the `ade` session and the per-ticket tabs | `ade` still runs the dashboard in your terminal (or in place when `host.mode = "plain"`), but there are no work tabs; `host.mode = "zellij"` refuses to start instead | `nix profile install nixpkgs#zellij` |
 | `lazygit` | the git pane of dev tabs | that pane has nothing to run | `nix profile install nixpkgs#lazygit` |
-| `omp` | AI summaries, agent plan/run/review (optional; `ai.mode = "off"` disables AI) | no AI features; the rest is unaffected | see the omp project; ADE only needs the `omp` command on `PATH` |
+| `omp` | AI summaries, agent plan/run/review (optional; `ai.mode = "off"` disables AI) | no AI features; with AI off an `agent` layout opens as `code` and says so; without `omp` the agent pane is a shell (with a hint); the rest is unaffected | see the omp project; ADE only needs the `omp` command on `PATH` |
 | `code` (VS Code) | `v` opens a multi-root workspace; `host.editor = "code"` | use `$EDITOR` or a terminal editor instead | install VS Code and run "Shell Command: Install 'code' command in PATH"; check with `ade doctor --vscode`, which also prints recommended `settings.json` entries so VS Code does not swallow ADE's keys |
 | Neovim (optional) | `host.editor = "nvim"` or `"ade-nvim"`; `auto` uses it when `$VISUAL`/`$EDITOR` are unset | `auto` falls back to vim, vi or nano | `nix profile install nixpkgs#neovim`, or ADE's preconfigured one: `nix profile install github:coredev-uk/ade#ade-nvim` (a separate flake output: it pulls in neovim, every treesitter grammar, lazygit, fd and ripgrep, about 860 MiB against 32 MiB for `ade`; a pinned, isolated config under `NVIM_APPNAME=ade-nvim`; set `host.editor = "ade-nvim"`, and `ade doctor` warns when the wrapper is missing). `nix run github:coredev-uk/ade#ade-nvim` tries it without installing. It ships the snacks.nvim picker: `<space><space>` smart find, `<space>ff` files, `<space>fg` grep, `<space>fb` buffers, `<space>fr` recent, `<space>e` explorer, `<space>gg` lazygit, `<space>ai` ADE items, `<space>ll` lint now. Language servers and linters (golangci-lint, eslint, ruff, shellcheck, …) are used when the project's dev shell puts them on PATH; the full list is in PLAN.md §6.7 |
 | `delta` | coloured diffs in review tabs (optional) | plain `git diff` | `nix profile install nixpkgs#delta` |
@@ -215,6 +215,7 @@ profile = "sub"
 
 [ai.profiles.sub]
 driver  = "omp"
+timeout = "5m"                   # one omp call; default 10m, so a hung omp ends
 billing = { source = "omp", weekly_soft_usd = 10 }
 
 [budget]
@@ -224,6 +225,10 @@ agent_run_usd = 1.50            # cap for one agent run
 ```
 
 Every AI call is shown with its cost before it runs when it exceeds `confirm_over_usd`, and is audited (`ade audit --action 'ai.*'`). Spend at 80% of a cap raises one `budget.warn` per period; a refused call (a cap, or the provider out of budget) is audited as `budget.stop`, and only the first refusal of the day per profile is a notification. For the rest of that day the dashboard skips the AI calls nobody asked for and Home shows `✕ AI budget reached` under the header ([reference.md](reference.md#configuration)). Details: PLAN.md §4.3 and [billing/README.md](billing/README.md).
+
+omp takes no output cap from ADE, so the pre-flight of an omp call is an estimate (it says `omp sets no cap`), and only `call_usd` (passed as `omp --max-cost`) bounds a call. A detached `ade ai research` worker that hangs can be stopped with `ade ai research <issue> --cancel`.
+
+Text a model drafted that ADE posts to the forge ends with `<sub>Drafted with AI in ADE</sub>`, and lines in it that would run as GitLab quick actions (`/approve`, `/run_pipeline` …) are neutralised as `\/approve` ([reference.md](reference.md#configuration)). With `ai.mode = "off"` none of this applies: nothing is sent, `ade ai models` refuses and `ade budget` reads no billing endpoint.
 
 #### Through a LiteLLM gateway
 
@@ -279,6 +284,8 @@ Each AI feature asks for a *role*; the profile maps the role to a model. A role 
 | `draft` | reply drafts, MR text (`ade ai describe`) | `explain` |
 | `review` | AI review passes over an MR diff | `draft`, then `explain` |
 | `plan`, `implement` | agent plans and runs (through the profile's agent CLI); `plan` also serves issue research (`ade ai research`) | `explain` |
+
+**Checking the setup.** `ade doctor` has an `ai` group that tells "AI off" from "AI misconfigured" without a model call: the mode, whether `ai.profile` names a defined profile, that the `omp` binary is on PATH or the gateway answers a read-only `GET /models`, and that the key resolves (where it comes from, never its value). ADE works without AI, so a problem there is a warning and never fails `ade doctor`.
 
 Weight suggestions and the keyword classifier used when AI is off never call a model. Pre-flight estimates, the per-call, daily and sprint caps and the audit trail are identical for every role; a classify call is just a cheaper entry in the ledger (`ade audit --action ai.classify`).
 

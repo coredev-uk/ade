@@ -132,10 +132,13 @@ type mrPage struct {
 	data     *mrData          // nil while the item has no MR
 	tab      mrTab
 
-	ovTop    int  // overview scroll
-	rawDesc  bool // Overview shows the raw description instead of the AI summary
-	thSel    int  // selected thread (index into threadList)
-	thDetail bool // narrow: the thread's conversation instead of the list
+	ovTop   int  // overview scroll
+	rawDesc bool // Overview shows the raw description instead of the AI summary
+	// aiToldOff is set once an AI key was pressed while AI is unavailable and
+	// the toast said why: later presses stay quiet.
+	aiToldOff bool
+	thSel     int  // selected thread (index into threadList)
+	thDetail  bool // narrow: the thread's conversation instead of the list
 
 	fileSel   int
 	focusDiff bool // the diff pane (not the file list) has the cursor
@@ -200,6 +203,7 @@ const (
 	relMR mrReload = 1 << iota
 	relThreads
 	relJobs
+	relDiff
 )
 
 // mrWrote is what a successful write returns: the pop-up title and what to
@@ -483,6 +487,9 @@ func (m *model) mrRefetch(d *mrData, what mrReload) tea.Cmd {
 	}
 	if what&relJobs != 0 && d.jobsL.st != loadIdle {
 		cmds = append(cmds, m.loadJobs(d))
+	}
+	if what&relDiff != 0 && d.diffL.st != loadIdle {
+		cmds = append(cmds, m.loadDiff(d)) // the head moved: comment positions need the new version
 	}
 	return tea.Batch(cmds...)
 }

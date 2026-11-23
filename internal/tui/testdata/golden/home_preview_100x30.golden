@@ -1,0 +1,30 @@
+ ADE  Home · worktrees                                                                    no unread
+
+g/tracker#1  Rate-limit the export endpoint
+Sprint 42 · weight 5
+
+ ●  assigned  –
+ ●  started
+ ●  branch
+ ●  draft
+ ●  ci
+ ◉  review
+ ○  merged
+
+you · 2 unresolved threads
+
+notes
+none yet · n writes one
+
+Exports hammer the API during the nightly batch.
+
+Plan
+
+• measure the current rate with `ade items`
+[x] pick a limiter
+[ ] add the middleware, see the design https://example.com/design/rate-limit
+…
+
+
+
+ j/k move   enter open   / search   : palette   f all   tab details   ? keys

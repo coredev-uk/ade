@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/coredev-uk/ade/internal/aimark"
 	"github.com/coredev-uk/ade/internal/audit"
 	"github.com/coredev-uk/ade/internal/forge"
 )
@@ -59,6 +60,19 @@ func (a *AuditedWriter) RetryPipeline(ctx context.Context, project string, pipel
 
 func (a *AuditedWriter) Reply(ctx context.Context, mr forge.Ref, discussionID, body string) (n forge.Note, err error) {
 	err = a.do("forge.thread.reply", mr.String(), discussionID, map[string]any{"chars": len(body)}, func() (e error) {
+		n, e = a.MRWriter.Reply(ctx, mr, discussionID, body)
+		return
+	})
+	return n, err
+}
+
+// ReplyDrafted posts a reply a model drafted (forge.thread.reply, with source
+// "ai-draft"). Lines that would run as forge quick actions are neutralised and
+// the text ends with the AI mark, whatever was edited on the way
+// (aimark; docs/PLAN.md §6.9).
+func (a *AuditedWriter) ReplyDrafted(ctx context.Context, mr forge.Ref, discussionID, body string) (n forge.Note, err error) {
+	body = aimark.Mark(aimark.NoQuickActions(body))
+	err = a.do("forge.thread.reply", mr.String(), discussionID, map[string]any{"chars": len(body), "source": "ai-draft"}, func() (e error) {
 		n, e = a.MRWriter.Reply(ctx, mr, discussionID, body)
 		return
 	})
@@ -139,12 +153,17 @@ func (a *AuditedWriter) PublishDraftNotes(ctx context.Context, mr forge.Ref) err
 
 // SetDescription replaces the MR's description (forge.mr.description). The
 // wrapped driver must implement forge.MRTextWriter; one that does not is an
-// error, not a silent no-op. source says what wrote the text ("ai-describe").
-// Like comment bodies, the text itself is not logged, only its length.
+// error, not a silent no-op. source says what wrote the text ("ai-describe"):
+// text a model drafted always ends with the AI mark (aimark.Mark, idempotent),
+// whatever an editor did to the draft on the way. Like comment bodies, the
+// text itself is not logged, only its length.
 func (a *AuditedWriter) SetDescription(ctx context.Context, mr forge.Ref, description, source string) error {
 	tw, ok := a.MRWriter.(forge.MRTextWriter)
 	if !ok {
 		return fmt.Errorf("this forge cannot update merge request descriptions yet (%s)", mr)
+	}
+	if source == "ai-describe" {
+		description = aimark.Mark(description)
 	}
 	return a.do("forge.mr.description", mr.String(), "", map[string]any{"chars": len(description), "source": source}, func() error {
 		return tw.SetMRDescription(ctx, mr, description)
