@@ -19,6 +19,7 @@ func (s *Server) pullRoutes(mux *http.ServeMux) {
 	s.handle(mux, "GET "+r+"/pulls/{n}/files", s.listPullFiles)
 	s.pullTextRoutes(mux)
 	s.handle(mux, "PUT "+r+"/pulls/{n}/merge", s.mergePull)
+	s.handle(mux, "PUT "+r+"/pulls/{n}/update-branch", s.updateBranch)
 	s.handle(mux, "POST "+r+"/pulls/{n}/requested_reviewers", s.requestReviewers)
 }
 
@@ -80,6 +81,7 @@ func (s *Server) listPulls(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getPull(w http.ResponseWriter, r *http.Request) {
 	if rp, it := s.pullOf(w, r); it != nil {
+		s.settleUpdate(rp, it)
 		writeJSON(w, http.StatusOK, s.renderPull(rp, it, true))
 	}
 }
