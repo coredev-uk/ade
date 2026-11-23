@@ -39,7 +39,7 @@ func seedCache(t *testing.T, a *app.App) *sql.DB {
 	}
 	for _, q := range []string{
 		`INSERT INTO inbox (id, time, kind, severity, title, read) VALUES ('a', 1, 'ci.failed', 'warn', 'one', 0), ('b', 2, 'ci.passed', 'info', 'two', 1)`,
-		`INSERT INTO review_drafts VALUES ('g/api!1', 'd1', 'a.go', '', 3, 'new', 'nit', 'nit', 'manual', 'pending', 0, 0, '2026-03-01T00:00:00Z'),
+		`INSERT INTO review_drafts (mr, id, path, old_path, line, side, body, severity, source, state, remote_id, published, created_at) VALUES ('g/api!1', 'd1', 'a.go', '', 3, 'new', 'nit', 'nit', 'manual', 'pending', 0, 0, '2026-03-01T00:00:00Z'),
 		   ('g/api!1', 'd2', 'a.go', '', 4, 'new', 'sent', 'nit', 'manual', 'pending', 9, 1, '2026-03-01T00:00:00Z')`,
 		`INSERT INTO kv (k, v) VALUES ('marker', 'x')`,
 	} {

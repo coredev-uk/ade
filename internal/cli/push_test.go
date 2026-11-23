@@ -114,14 +114,19 @@ func TestPushRefusesAgentRunsAndForeignDirectories(t *testing.T) {
 	e := newCLIEnv(t)
 	api, _ := e.gcLayout()
 	gitAt(t, api, "commit", "--quiet", "--allow-empty", "-m", "agent change")
-	t.Setenv(workspace.AgentRunEnv, "1")
-	if out, err := e.push(api); err == nil || !strings.Contains(err.Error(), "not for agents") {
-		t.Fatalf("an agent run pushed: %v\n%s", err, out)
+	// The central guard (agentguard.go) refuses `ade push` while ADE_AGENT_RUN=1.
+	cmd, _, err := newRoot().Find([]string{"push"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(e.audited("git.push")) != 0 {
-		t.Fatal("a refused push was audited")
+	t.Setenv(workspace.AgentRunEnv, "1")
+	if err := checkAgentRun(cmd); err == nil || !strings.Contains(err.Error(), "refused while an agent run is in progress") {
+		t.Fatalf("an agent run may push: %v", err)
 	}
 	t.Setenv(workspace.AgentRunEnv, "")
+	if err := checkAgentRun(cmd); err != nil {
+		t.Fatalf("a user may not push: %v", err)
+	}
 	if _, err := e.push(t.TempDir()); err == nil {
 		t.Fatal("a directory outside ADE's layout was pushed")
 	}
