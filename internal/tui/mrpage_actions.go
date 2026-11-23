@@ -230,7 +230,7 @@ func mergeVerdict(mr forge.MR) verdict {
 	case mr.Draft:
 		return verdict{why: "it is still a draft (R marks it ready)"}
 	case mr.HasConflicts:
-		return verdict{why: "it conflicts with " + mr.TargetBranch + ": rebase first"}
+		return verdict{why: "it conflicts with " + mr.TargetBranch + ": u updates the branch, or rebase it locally"}
 	}
 	switch mr.DetailedStatus {
 	case "", "mergeable":
@@ -244,7 +244,9 @@ func mergeVerdict(mr forge.MR) verdict {
 	case "discussions_not_resolved":
 		return verdict{why: fmt.Sprintf("%d unresolved %s", mr.Unresolved, plural(mr.Unresolved, "thread"))}
 	case "need_rebase":
-		return verdict{why: "it needs a rebase"}
+		return verdict{why: "it needs a rebase: u updates the branch"}
+	case "behind":
+		return verdict{why: "it is behind " + mr.TargetBranch + ": u updates the branch"}
 	case "checking", "unchecked":
 		return verdict{why: "GitLab is still checking whether it can merge: try again in a moment"}
 	case "blocked_status":

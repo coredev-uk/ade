@@ -30,6 +30,7 @@ func (s *Server) reviewRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+mrp+"/approve", s.approve(true))
 	mux.HandleFunc("POST "+mrp+"/unapprove", s.approve(false))
 	mux.HandleFunc("PUT "+mrp+"/merge", s.mergeMR)
+	mux.HandleFunc("PUT "+mrp+"/rebase", s.rebaseMR)
 	mux.HandleFunc("POST /api/v4/projects/{id}/pipelines/{pid}/retry", s.retryPipeline)
 	mux.HandleFunc("GET /api/v4/projects/{id}/pipelines/{pid}/jobs", s.pipelineJobs)
 	mux.HandleFunc("GET /api/v4/projects/{id}/jobs/{jid}/trace", s.jobTrace)
