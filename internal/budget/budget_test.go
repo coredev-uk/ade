@@ -185,3 +185,30 @@ func TestSourceConfigErrorsAreReportedPerProfile(t *testing.T) {
 		t.Fatalf("%v %+v", err, r.Profiles[0])
 	}
 }
+
+func TestAIOffNeverPollsAProviderButStillShowsTheLocalLedger(t *testing.T) {
+	d, log, n := fixture(t)
+	d.Cfg.AI.Mode = "off"
+	log.Append(call(d.Now().Add(-time.Hour), "summarize", "gw", "echo", 0.3, "g/a!1", false))
+	sourced := 0
+	src := d.Source
+	d.Source = func(ctx context.Context, name string, p config.AIProfile) (billing.Source, error) {
+		sourced++ // building a source reads the profile's key
+		return src(ctx, name, p)
+	}
+	r, err := Build(context.Background(), d, Options{Refresh: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *n != 0 || sourced != 0 {
+		t.Fatalf("ai.mode = off must not read a key or call a billing endpoint (fetches %d, sources %d)", *n, sourced)
+	}
+	if r.Caps[0].SpentUSD != 0.3 || r.Calls != 1 {
+		t.Fatalf("the local ledger is still shown: %+v", r)
+	}
+	for _, p := range r.Profiles {
+		if p.Provider != nil || p.ProviderErr != "" {
+			t.Fatalf("profile %s has provider figures with AI off: %+v", p.Name, p)
+		}
+	}
+}

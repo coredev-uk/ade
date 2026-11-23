@@ -201,7 +201,7 @@ func TestArtifactCarriesFrontmatterAndLivesInTheItemRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"feature: summarize", "profile: p", "model: haiku-test", "prompt_version: summarize-v2", "input_hash: ", "audit_id: " + res.AuditID, "cost_usd: 0.002"} {
+	for _, key := range []string{"feature: summarize", "profile: p", "model: haiku-test", "prompt_version: " + summarizeVersion, "input_hash: ", "audit_id: " + res.AuditID, "cost_usd: 0.002"} {
 		if !strings.Contains(string(raw), key) {
 			t.Errorf("artifact frontmatter lacks %q:\n%s", key, raw)
 		}
