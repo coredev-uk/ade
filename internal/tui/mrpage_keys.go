@@ -96,6 +96,8 @@ func (m *model) mrKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 		return m.aiReviewKey(), true
 	case "B":
 		return m.describeKey(), true
+	case "v":
+		return m.requestReviewKey(), true
 	}
 	switch p.tab {
 	case tabThreads:
@@ -415,7 +417,7 @@ func (m model) mrFooter(w int) string {
 	if p.tab == tabOverview && p.item != nil {
 		tabKeys = append(tabKeys, "n", "edit notes")
 	}
-	act := []string{"a", "approve", "R", "ready/draft", "m", "merge", "S", "submit review"}
+	act := []string{"a", "approve", "R", "ready/draft", "m", "merge", "S", "submit review", "v", "review again"}
 	if m.aiOn() {
 		act = append(act, "A", "agent review", "B", "AI description")
 	}
@@ -476,6 +478,7 @@ func mrHelpRows(ai bool) [][2]string {
 		{"Y s d", "accept all, severity, delete"},
 		{"S", "submit the review as one batch"},
 		{"a R m", "approve, ready/draft, merge"},
+		{"v", "ask for a review again: reviewers, or @users"},
 		{"w W", "open this MR's worktree (W: other main pane)"},
 		{"P", "agent menu: plan, address comments"},
 		{"l", "CI: job log (full screen, / searches)"},

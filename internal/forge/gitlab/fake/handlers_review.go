@@ -19,6 +19,7 @@ func (s *Server) reviewRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+mrp+"/versions", s.mrVersions)
 	mux.HandleFunc("GET "+mrp+"/diffs", s.mrDiffs)
 	mux.HandleFunc("PUT "+mrp, s.updateMR)
+	mux.HandleFunc("GET /api/v4/users", s.listUsers)
 	mux.HandleFunc("GET "+mrp+"/commits", s.mrCommits)
 	mux.HandleFunc("POST "+mrp+"/discussions", s.createDiscussion)
 	mux.HandleFunc("POST "+mrp+"/discussions/{did}/notes", s.replyDiscussion)
@@ -134,8 +135,12 @@ func (s *Server) updateMR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, hasDesc := p["description"]
+	_, hasReviewers := p["reviewer_ids"]
 	title := str(p, "title")
-	if title == "" && !hasDesc {
+	if hasReviewers && !s.setReviewerIDs(w, m, p) {
+		return
+	}
+	if title == "" && !hasDesc && !hasReviewers {
 		badRequest(w, "title is empty")
 		return
 	}

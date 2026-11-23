@@ -545,6 +545,9 @@ func (m *model) onMRResult(msg mrResultMsg) tea.Cmd {
 			p.modal.setLog(msg)
 		}
 		return nil
+	case "reviewers":
+		m.onReviewers(msg)
+		return nil
 	case "ai":
 		return m.onAI(d, msg)
 	case "pager":

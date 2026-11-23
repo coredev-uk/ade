@@ -30,7 +30,8 @@ const (
 	modalMerge
 	modalLog
 	modalAI
-	modalDescribe // an AI-drafted MR description, editable, applied on enter
+	modalDescribe      // an AI-drafted MR description, editable, applied on enter
+	modalRequestReview // ask reviewers (again) and named users to review, applied on enter
 )
 
 // severities are the choices of a comment, in cycling order. The first, none,
@@ -89,6 +90,8 @@ type mrModal struct {
 	draftID string     // edit, deny: which draft
 
 	approve bool // submit: also approve
+
+	rr *reviewAsk // request review: the reviewers and the choice
 
 	squash, remove, auto bool   // merge options
 	prefix               string // merge: the commit prefix that applies to the item, "" for none
@@ -296,6 +299,8 @@ func (m *model) modalKey(k tea.KeyPressMsg) tea.Cmd {
 		return m.aiConfirmKey(md, ks)
 	case modalDescribe:
 		return m.describeModalKey(md, k)
+	case modalRequestReview:
+		return m.requestReviewModalKey(md, k)
 	case modalLog:
 		md.logKey(k)
 	}
@@ -401,6 +406,8 @@ func (m model) mrOverlay(w, h int) string {
 		title, l = m.aiModal(md, inner)
 	case modalDescribe:
 		title, l = m.describeDialog(md, inner, h)
+	case modalRequestReview:
+		title, l = m.requestReviewDialog(md, inner)
 	}
 	if md.warn != "" {
 		l = append(l, "", stWarn.Render(m.g.Warn+" "+md.warn))
@@ -437,6 +444,8 @@ func (m model) modalHint(md *mrModal) string {
 		return keys("enter", "save", "tab", "severity", "alt+enter", "newline", "esc", "cancel")
 	case modalDeny:
 		return keys("enter", "deny", "esc", "cancel")
+	case modalRequestReview:
+		return requestReviewHint()
 	case modalSubmit:
 		return keys("enter", "submit", "tab", "approve", "alt+enter", "newline", "esc", "cancel")
 	case modalMerge:

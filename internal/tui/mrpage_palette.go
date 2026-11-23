@@ -48,6 +48,7 @@ func (m model) mrEntries() []palEntry {
 		any("Mark ready or back to draft", "R", "ade mr ready | ade mr draft"),
 		any("Merge", "m", "ade mr merge"),
 		any("Submit the review as one batch", "S", "ade review submit"),
+		any("Ask for a review again", "v", "ade mr request-review"),
 		any("Agents for this item", "P", "ade agent"),
 		any("Open this MR's workspace", "w", "ade ws up"),
 		any("Open this MR's workspace with the other main pane (omp or editor)", "W", "ade ws up --layout agent"),
