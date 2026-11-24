@@ -775,7 +775,7 @@ func TestNarrowChooseKeepsGapsAboveRules(t *testing.T) {
 	}
 }
 
-// The main pane starts on the configured default, `a` cycles editor → omp →
+// The main pane starts on the configured default, `a` toggles omp and the
 // shell, and the choice reaches the workspace request.
 func TestStartDialogMainPaneToggleReachesTheWorkspace(t *testing.T) {
 	e := newSWEnv(t)
@@ -795,17 +795,15 @@ func TestStartDialogMainPaneToggleReachesTheWorkspace(t *testing.T) {
 		t.Fatalf("host.layout is the default, got %q", e.m.sw.ch.Layout)
 	}
 	e.press("a") // omp → shell
-	if e.m.sw.ch.Layout != workspace.LayoutManual {
-		t.Fatalf("a cycles to the shell, got %q", e.m.sw.ch.Layout)
+	if e.m.sw.ch.Layout != workspace.LayoutCode {
+		t.Fatalf("a toggles to the shell, got %q", e.m.sw.ch.Layout)
 	}
-	e.press("a", "a") // shell → editor → omp
-	e.press("a")      // omp → shell
-	e.press("a")      // shell → editor
+	e.press("a", "a") // shell → omp → shell
 	if e.m.sw.ch.Layout != workspace.LayoutCode {
 		t.Fatalf("got %q", e.m.sw.ch.Layout)
 	}
 	out := e.screen()
-	if !strings.Contains(out, "● editor") || !strings.Contains(out, "○ omp") {
+	if !strings.Contains(out, "● shell") || !strings.Contains(out, "○ omp") {
 		t.Errorf("the chosen pane is marked:\n%s", out)
 	}
 	e.press("enter", "enter") // plan, then create
@@ -813,7 +811,7 @@ func TestStartDialogMainPaneToggleReachesTheWorkspace(t *testing.T) {
 		t.Fatalf("workspace request = %+v", got)
 	}
 	if got[0].Item.Ref.IID != 3 || got[0].Forge == "" {
-		t.Errorf("the request carries the item for the overview and skill: %+v", got[0])
+		t.Errorf("the request carries the item for the skill: %+v", got[0])
 	}
 }
 

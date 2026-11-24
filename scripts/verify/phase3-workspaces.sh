@@ -32,7 +32,7 @@ step "sandbox apps (db on \$PORT, api /healthz reports the db at \$DB_ADDR, web 
   export XDG_DATA_HOME="$WS/data" XDG_CACHE_HOME="$WS/cache" XDG_CONFIG_HOME="$WS/config"
   export ADE_CONFIG="$WS/config.toml"
   unset ZELLIJ ZELLIJ_SESSION_NAME ZELLIJ_PANE_ID TERM_PROGRAM
-  export EDITOR=cat # a long-lived stand-in for the editor pane
+  export EDITOR=cat # a long-lived stand-in for the editor that ade ws edit runs
   cat >"$ADE_CONFIG" <<EOF
 [user]
 handle = "sandbox"

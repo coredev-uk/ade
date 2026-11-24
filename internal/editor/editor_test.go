@@ -105,17 +105,3 @@ func TestCommandSetsNvimAppName(t *testing.T) {
 		t.Fatalf("plain nvim must inherit the environment untouched, got %v", cmd.Env)
 	}
 }
-
-func TestPaneCommand(t *testing.T) {
-	prog, args := Editor{Kind: Code, Cmd: "/bin/code"}.PaneCommand("/w")
-	if prog != "sh" || args[len(args)-2] != "/bin/code" || args[len(args)-1] != "/w" {
-		t.Fatalf("code pane = %s %q: it must open the window with the directory and keep a shell", prog, args)
-	}
-	if prog, args := (Editor{Kind: Term, Cmd: "/bin/nvim"}).PaneCommand("/w"); prog != "/bin/nvim" || args != nil {
-		t.Fatalf("nvim pane = %s %q", prog, args)
-	}
-	prog, args = Editor{Kind: Term, Cmd: "/bin/nvim", AppName: "ade-nvim"}.PaneCommand("/w")
-	if prog != "env" || !slices.Contains(args, "NVIM_APPNAME=ade-nvim") {
-		t.Fatalf("ade-nvim pane = %s %q", prog, args)
-	}
-}

@@ -17,7 +17,7 @@
 │   ● auto    a child when the repo is not the tracker's                       │
 │   ○ always  always a child issue                                             │
 │   ○ never   none: branch and MR reference the tracker issue                  │
-│  Main pane  ● editor  ○ omp  ○ shell  a toggles · your editor beside lazygi… │
+│  Main pane  ● shell  ○ omp  a toggles · shell + lazygit in the dev shell; a… │
 │ space select   b branch   B base   m mode   c child   a main pane   enter    │
 │ continue   esc cancel                                                        │
 ╰──────────────────────────────────────────────────────────────────────────────╯

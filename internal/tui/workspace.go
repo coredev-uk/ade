@@ -52,7 +52,7 @@ type (
 
 // openWorkspace handles `w`; other is `W`, which opens the tab with the other
 // main pane: omp with the ADE implement skill when the default is not omp, the
-// editor when it is. On the MR page it opens the worktree of the MR shown; on
+// shell when it is. On the MR page it opens the worktree of the MR shown; on
 // Home, an item with worktrees in several repos asks which one first.
 func (m model) openWorkspace(other bool) (model, tea.Cmd) {
 	if m.isAgilePage() || m.isToolPage() {
@@ -60,7 +60,7 @@ func (m model) openWorkspace(other bool) (model, tea.Cmd) {
 	}
 	if ok, why := m.aiAvail(); other && !ok {
 		e := events.New("workspace.hint", events.Info, why+": no agent pane")
-		e.Subject = "w opens the editor layout"
+		e.Subject = "w opens the shell layout"
 		e.Transient = true
 		m.nc.push(e)
 		return m, nil
@@ -166,9 +166,9 @@ func (m model) openTarget(t workspace.Target, items []workspace.ItemRef, other b
 	return wsOpenedMsg{label: t.Repo + "/" + t.Title, res: res, err: err}
 }
 
-// otherMainPane is the layout `W` asks for: omp unless that is the default, then the editor.
+// otherMainPane is the layout `W` asks for: omp unless that is the default, then the shell.
 // Without usable AI (off, no profile) there is no agent pane to toggle to: W
-// keeps the editor.
+// keeps the shell.
 func otherMainPane(a *app.App, proj string) string {
 	if ok, _ := a.Config.AI.Available(); !ok {
 		return workspace.LayoutCode

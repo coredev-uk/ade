@@ -14,7 +14,7 @@ import (
 
 func direnvShell(dir string) devshell.Shell { return devshell.Shell{Kind: devshell.Direnv, Dir: dir} }
 
-// Editor, omp and shell panes run inside the dev shell; lazygit and the ade
+// The omp, diff and shell panes run inside the dev shell; lazygit and the ade
 // panes (which wrap their own commands) do not.
 func TestBuildLayoutRunsPanesInTheDevShell(t *testing.T) {
 	dir := "/projects/acme/web/418-paginate"
@@ -26,11 +26,9 @@ func TestBuildLayoutRunsPanesInTheDevShell(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		`pane name="editor" size="60%" focus=true command="direnv" {`,
-		`args "exec" "` + dir + `" "nvim" "-u" "NONE"`,
-		`pane name="shell" command="direnv" {`,
+		`pane name="shell" expanded=true focus=true command="direnv" {`,
 		`args "exec" "` + dir + `" "sh" "-c" "exec \"${SHELL:-sh}\""`,
-		`pane name="lazygit" expanded=true command="/bin/lazygit"`, // untouched
+		`pane name="lazygit" command="/bin/lazygit"`, // untouched
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("code layout lacks %q:\n%s", want, got)
@@ -53,16 +51,6 @@ func TestBuildLayoutRunsPanesInTheDevShell(t *testing.T) {
 		t.Errorf("agent layout must start omp via nix develop:\n%s", got)
 	}
 
-	manual := baseSpec(LayoutManual)
-	manual.Devshell = direnvShell(dir)
-	got, err = BuildLayout(manual)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(got, `pane name="shell" size="60%" focus=true command="direnv" {`) {
-		t.Errorf("the manual layout's shell must enter the dev shell:\n%s", got)
-	}
-
 	plain, err := BuildLayout(baseSpec(LayoutCode))
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +65,7 @@ func TestBuildLayoutRunsPanesInTheDevShell(t *testing.T) {
 // shell, and every wrapped program sees it as $SHELL.
 func TestBuildLayoutKeepsTheUsersShellInTheDevShell(t *testing.T) {
 	dir := "/projects/acme/web/418-paginate"
-	spec := baseSpec(LayoutCode)
+	spec := baseSpec(LayoutAgent)
 	spec.Tools.Shell = "/usr/bin/zsh"
 	spec.Devshell = devshell.Shell{Kind: devshell.Nix, Dir: dir}
 	got, err := BuildLayout(spec)
@@ -86,7 +74,7 @@ func TestBuildLayoutKeepsTheUsersShellInTheDevShell(t *testing.T) {
 	}
 	for _, want := range []string{
 		`args "develop" "` + dir + `" "-c" "env" "SHELL=/usr/bin/zsh" "/usr/bin/zsh"`,
-		`args "develop" "` + dir + `" "-c" "env" "SHELL=/usr/bin/zsh" "nvim" "-u" "NONE"`,
+		`args "develop" "` + dir + `" "-c" "env" "SHELL=/usr/bin/zsh" "env" "ADE_AGENT_RUN=1" "/bin/omp"`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("layout lacks %q:\n%s", want, got)

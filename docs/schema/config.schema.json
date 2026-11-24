@@ -269,7 +269,7 @@
           "type": "string"
         },
         "layout": {
-          "description": "Default tab layout: code (editor main pane), agent (omp with the ADE implement skill) or manual (shell). Overrides the manifest workspace's layout; empty keeps it.",
+          "description": "Default tab layout: code (a shell in the dev shell, stacked with lazygit), agent (omp with the ADE implement skill) or manual (the same tab as code). Overrides the manifest workspace's layout; empty keeps it.",
           "enum": [
             "code",
             "agent",

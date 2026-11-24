@@ -10,10 +10,13 @@ import (
 
 // Layout names a workspace layout (PLAN 6.6).
 const (
-	LayoutCode   = "code"   // editor 60% | overview, lazygit + shell stacked
-	LayoutAgent  = "agent"  // omp with the ADE implement skill 60% | overview, lazygit + shell stacked
+	LayoutCode   = "code"   // a shell in the dev shell and lazygit, stacked, full width
+	LayoutAgent  = "agent"  // omp with the ADE implement skill 60% | shell + lazygit stacked
 	LayoutReview = "review" // diff through delta 60% | lazygit + shell stacked
-	LayoutManual = "manual" // shell 60% | overview, lazygit + shell stacked: no agent, no editor pane
+	// LayoutManual lays out the tab as code does. It was the shell layout
+	// beside an editor layout; with the editor pane gone the two are one, and
+	// the name stays valid for configs and manifests that set it.
+	LayoutManual = "manual"
 )
 
 // ValidLayout reports whether name is a known layout.
@@ -28,17 +31,12 @@ func ValidLayout(name string) bool {
 // Tools are the programs panes run. An empty field means the tool is not
 // installed and its pane falls back to a plain shell.
 type Tools struct {
-	Ade    string
-	Editor string
-	// EditorArgs, when set, are the complete arguments of Editor, which is then
-	// a single program (a GUI launcher gets its directory and a trailing shell
-	// there); otherwise Editor is split into a program and its arguments.
-	EditorArgs []string
-	Lazygit    string
-	Delta      string
-	Omp        string
-	// Shell is the user's shell ($SHELL as ADE sees it, outside any dev shell).
-	// Empty when unknown.
+	Ade     string
+	Lazygit string
+	Delta   string
+	Omp     string
+	// Shell is the user's shell (UserShell: $SHELL, or the login shell when
+	// $SHELL is a dev shell's bash). Empty when unknown.
 	Shell string
 }
 
@@ -59,10 +57,6 @@ type LayoutSpec struct {
 	// Devshell is the worktree's dev shell; the editor, omp and shell panes
 	// run inside it when it is active.
 	Devshell devshell.Shell
-	// Overview holds the arguments of `ade` that show the work item live
-	// (`item <ref> --watch`); empty when the worktree belongs to no item, which
-	// leaves the pane out.
-	Overview []string
 	// Agent holds the arguments of omp in the agent layout: the config overlay
 	// that loads the ADE implement skill and the opening prompt.
 	Agent []string
@@ -101,21 +95,22 @@ func (s LayoutSpec) HasServicesTab() bool {
 // ServicesTab is the name of the services tab.
 func (s LayoutSpec) ServicesTab() string { return s.Tab + ServicesTabSuffix }
 
-// Pane sizes, in percent: the main pane's share of the top row, the overview's
-// share of the right-hand column (the stack below takes the rest), and the strip's share of the tab.
+// Pane sizes, in percent: the main pane's share of the top row and the strip's share of the tab.
 const (
-	mainPct     = 60
-	overviewPct = 40
-	stripPct    = 30
-	installPct  = 25 // the install pane's share of the services tab
+	mainPct    = 60
+	stripPct   = 30
+	installPct = 25 // the install pane's share of the services tab
 )
 
 // BuildLayout renders the zellij KDL for one workspace tab. Every string comes
 // from the file system or user config, so all of them are escaped.
 //
-//	main (editor | omp | shell)  | overview   <- ade item --watch
-//	                             | lazygit / shell (stacked)
+//	code, manual:   shell / lazygit (stacked, the shell in front), full width
+//	agent, review:  main (omp | diff) | lazygit / shell (stacked)
 //	services and tasks, one pane each (when the workspace runs any), all waiting for Enter
+//
+// The work item's overview is not part of the tab: the dashboard's home tab
+// shows it, and Open makes sure that tab exists.
 func BuildLayout(s LayoutSpec) (string, error) {
 	if !ValidLayout(s.Layout) {
 		return "", fmt.Errorf("unknown layout %q (want code, agent, review or manual)", s.Layout)
@@ -141,24 +136,18 @@ func BuildLayout(s LayoutSpec) (string, error) {
 	if hasStrip {
 		topAttr = fmt.Sprintf(` size="%d%%"`, 100-stripPct)
 	}
-	b.line(2, `pane%s split_direction="vertical" {`, topAttr)
-	b.pane(3, fmt.Sprintf(`size="%d%%" focus=true`, mainPct), s.wrap(s.primary()))
-	right := 100 - mainPct
-	if len(s.Overview) > 0 {
-		b.line(3, `pane size="%d%%" split_direction="horizontal" {`, right)
-		b.pane(4, fmt.Sprintf(`name="overview" size="%d%%"`, overviewPct), s.adeCmd(Pane{Args: s.Overview}))
-		// The stack takes the rest: giving both children a percentage makes
-		// zellij size them differently from one run to the next.
-		b.line(4, "pane stacked=true {")
-		s.stackPanes(&b, 5)
-		b.line(4, "}")
-		b.line(3, "}")
+	if s.Layout == LayoutCode || s.Layout == LayoutManual {
+		b.line(2, `pane%s stacked=true {`, topAttr)
+		s.stackPanes(&b, 3, true)
+		b.line(2, "}")
 	} else {
-		b.line(3, `pane size="%d%%" stacked=true {`, right)
-		s.stackPanes(&b, 4)
+		b.line(2, `pane%s split_direction="vertical" {`, topAttr)
+		b.pane(3, fmt.Sprintf(`size="%d%%" focus=true`, mainPct), s.wrap(s.primary()))
+		b.line(3, `pane size="%d%%" stacked=true {`, 100-mainPct)
+		s.stackPanes(&b, 4, false)
 		b.line(3, "}")
+		b.line(2, "}")
 	}
-	b.line(2, "}")
 	if hasStrip {
 		b.line(2, `pane size="%d%%" split_direction="vertical" {`, stripPct)
 		if len(up.Args) > 0 {
@@ -219,23 +208,42 @@ func BuildServicesLayout(s LayoutSpec) (string, error) {
 	return b.String(), nil
 }
 
-// stackPanes writes the stack beside the main pane: lazygit when installed, and a shell.
-func (s LayoutSpec) stackPanes(b *kdl, depth int) {
-	if cmd, ok := s.lazygit(); ok {
-		b.pane(depth, `name="lazygit" expanded=true`, cmd)
-		b.pane(depth, `name="shell"`, s.wrap(command{}))
-		return
+// stackPanes writes the stack of a shell and lazygit (when installed). As the
+// tab's main pane (shellMain) the shell is in front and focused; beside omp or
+// a diff lazygit is.
+func (s LayoutSpec) stackPanes(b *kdl, depth int, shellMain bool) {
+	shell := s.wrap(s.shell())
+	lg, ok := s.lazygit()
+	switch {
+	case !ok && shellMain:
+		b.pane(depth, `name="shell" expanded=true focus=true`, shell)
+	case !ok:
+		b.pane(depth, `name="shell" expanded=true`, shell)
+	case shellMain:
+		b.pane(depth, `name="shell" expanded=true focus=true`, shell)
+		b.pane(depth, `name="lazygit"`, lg)
+	default:
+		b.pane(depth, `name="lazygit" expanded=true`, lg)
+		b.pane(depth, `name="shell"`, shell)
 	}
-	b.pane(depth, `name="shell" expanded=true`, s.wrap(command{}))
+}
+
+// shell is the shell pane's program: the user's shell when known, so the pane
+// does not depend on what zellij's own environment says; else zellij's default.
+func (s LayoutSpec) shell() command {
+	if s.Tools.Shell == "" {
+		return command{}
+	}
+	return command{prog: s.Tools.Shell}
 }
 
 // wrap runs a pane's program inside the worktree's dev shell (direnv exec,
-// nix develop) so the editor, omp and the shell see the repo's tools. A plain
+// nix develop) so omp, the diff and the shell see the repo's tools. A plain
 // shell pane becomes an explicit program, because zellij needs one to wrap.
 // `nix develop` (and `nix print-dev-env`, which `use flake` loads) exports $SHELL as stdenv's bash,
 // which has no line editing, so the user's shell is restored inside it: the
-// shell pane runs it and every wrapped program (an editor's :terminal, omp's
-// shell) sees it as $SHELL. Panes of a tree without a dev shell are untouched.
+// shell pane runs it and every wrapped program (an editor started from the
+// shell, omp's shell) sees it as $SHELL. Panes of a tree without a dev shell are untouched.
 func (s LayoutSpec) wrap(c command) command {
 	if !s.Devshell.Active() {
 		return c
@@ -275,17 +283,9 @@ func (s LayoutSpec) lazygit() (command, bool) {
 // from the user's.
 const AgentRunEnv = "ADE_AGENT_RUN"
 
-// primary is the large left pane.
+// primary is the large left pane of the agent and review layouts.
 func (s LayoutSpec) primary() command {
 	switch s.Layout {
-	case LayoutCode:
-		if len(s.Tools.EditorArgs) > 0 {
-			return command{prog: s.Tools.Editor, args: s.Tools.EditorArgs, name: "editor"}
-		}
-		if f := strings.Fields(s.Tools.Editor); len(f) > 0 {
-			return command{prog: f[0], args: f[1:], name: "editor"}
-		}
-		return command{name: "editor"}
 	case LayoutAgent:
 		if s.Tools.Omp != "" {
 			// env sets the marker for the agent only and drops the write-token

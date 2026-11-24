@@ -687,7 +687,7 @@ func TestOpenTabKeepsTheMainTabWhenTheServicesTabFails(t *testing.T) {
 	if err != nil || !created {
 		t.Fatalf("created=%v err=%v", created, err)
 	}
-	if bgErr == nil || !strings.Contains(bgErr.Error(), "/tmp/s.kdl") {
+	if len(bgErr) != 1 || !strings.Contains(bgErr[0].Error(), "/tmp/s.kdl") || !strings.Contains(bgErr[0].Error(), "web/418 · services tab") {
 		t.Fatalf("the services tab failure is reported as a warning: %v", bgErr)
 	}
 	if last := z.calls[len(z.calls)-1]; strings.Join(last, " ") != "--session ade action new-tab --layout /tmp/x.kdl --name web/418" {

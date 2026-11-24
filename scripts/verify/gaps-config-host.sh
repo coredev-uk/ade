@@ -47,8 +47,8 @@ check "--debug-http transport: redacted request/response lines, no bodies" go te
 check "project snapshots carry local manifest overrides; invalid merge is rejected" \
   go test ./internal/project/... -run 'LocalOverride' -count=1
 check "conventions.mr.draft: unset is a draft, false is not" go test ./internal/startwork/... -run 'MRDraft' -count=1
-check "workspace Restart (blocked subtree, holds kept, dead requirement stays blocked) and editor pane layout" \
-  go test ./internal/workspace/... -run 'Restart|CodeLayout' -count=1
+check "workspace Restart (blocked subtree, holds kept, dead requirement stays blocked) and code layout (shell + lazygit stack, no editor pane)" \
+  go test ./internal/workspace/... -run 'Restart|BuildLayoutCode' -count=1
 check "zellij unlock-first preset + argv with --config" go test ./internal/host/... -count=1
 check "doctor: records dir in a git work tree, resolved editor" go test ./internal/doctor/... -count=1
 check "cache reset (deletes, rebuilds ledger, audits, dry-run and decline touch nothing)" \

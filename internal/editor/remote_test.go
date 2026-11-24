@@ -264,7 +264,7 @@ func TestResolveRemoteCLI(t *testing.T) {
 	}
 }
 
-func TestEditorEnvironAndPane(t *testing.T) {
+func TestEditorEnviron(t *testing.T) {
 	plain := Editor{Kind: Code, Cmd: remoteCLI, Remote: true}
 	if plain.Environ() != nil {
 		t.Error("an editor needing nothing must inherit the environment")
@@ -273,13 +273,6 @@ func TestEditorEnvironAndPane(t *testing.T) {
 	env := fixed.Environ()
 	if env[len(env)-1] != "VSCODE_IPC_HOOK_CLI=/run/live.sock" {
 		t.Errorf("Environ must end with the repaired socket, got %v", env[len(env)-1])
-	}
-	prog, args := fixed.PaneCommand("/w")
-	if prog != "sh" || !strings.Contains(args[1], "VSCODE_IPC_HOOK_CLI") || args[len(args)-1] != "/run/live.sock" {
-		t.Errorf("pane = %s %q: the pane's shell must export the live socket", prog, args)
-	}
-	if _, args := plain.PaneCommand("/w"); strings.Contains(strings.Join(args, " "), "VSCODE_IPC") {
-		t.Errorf("no socket repair expected: %q", args)
 	}
 	if got := fixed.String(); !strings.Contains(got, "remote CLI") {
 		t.Errorf("String = %q: doctor should say it is the remote CLI", got)
@@ -318,10 +311,6 @@ func TestCodeServerSessionArgv(t *testing.T) {
 	}
 	if got := cs.Argv("/w/a.go", 7, true); !reflect.DeepEqual(got, append(slices.Clone(base), "--wait", "/w/a.go:7")) {
 		t.Errorf("Argv = %q: code-server's launcher has no -g", got)
-	}
-	prog, args := cs.PaneCommand("/w")
-	if prog != "sh" || !reflect.DeepEqual(args[3:], append(slices.Clone(base), "/w")) {
-		t.Errorf("pane = %s %q", prog, args)
 	}
 	if got := (Editor{Kind: Code, Cmd: "/bin/code"}).ArgvWindow("/w"); !reflect.DeepEqual(got, []string{"/bin/code", "--new-window", "/w"}) {
 		t.Errorf("VS Code ArgvWindow = %q", got)
