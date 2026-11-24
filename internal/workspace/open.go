@@ -21,6 +21,7 @@ import (
 	"github.com/coredev-uk/ade/internal/editor"
 	"github.com/coredev-uk/ade/internal/host"
 	"github.com/coredev-uk/ade/internal/host/zellij"
+	"github.com/coredev-uk/ade/internal/paths"
 	"github.com/coredev-uk/ade/internal/project"
 	"github.com/coredev-uk/ade/internal/records"
 )
@@ -78,9 +79,9 @@ func WithBaseRef(ref string) OpenOption { return func(c *openConfig) { c.baseRef
 // and the file system by default); tests use it.
 func WithDevshellFinder(f devshell.Finder) OpenOption { return func(c *openConfig) { c.devshell = f } }
 
-// WithItem names the work item the worktree belongs to: its tab then shows the
-// item's overview, the agent layout briefs omp on it, and the item's worktrees in
-// the other repos feed the run graph.
+// WithItem names the work item the worktree belongs to: the agent layout
+// briefs omp on it, the worktree's git config gets its commit prefix, and the
+// item's worktrees in the other repos feed the run graph.
 func WithItem(it ItemRef) OpenOption { return func(c *openConfig) { c.item = &it } }
 
 // WithItems offers the cached work items; Open finds the one that owns the
@@ -93,9 +94,9 @@ const (
 )
 
 // NoticeAIUnavailable is the notice for the agent layout that fell back to the
-// editor because config.AI.Available said no; reason is its reason.
+// code layout because config.AI.Available said no; reason is its reason.
 func NoticeAIUnavailable(reason string) string {
-	return reason + ": opened the editor layout instead of agent"
+	return reason + ": opened the code layout (shell and lazygit) instead of agent"
 }
 
 // OpenResult says what Open did.
@@ -110,7 +111,7 @@ type OpenResult struct {
 	// Hint is what to do by hand when the host cannot open it (plain, or code missing).
 	Hint string `json:"hint,omitempty"`
 	// Notice says what differs from what was asked for: the agent layout fell
-	// back to the editor because AI is off, or its pane is a shell because omp
+	// back to the code layout because AI is off, or its pane is a shell because omp
 	// is not on PATH. The tab opened either way.
 	Notice string `json:"notice,omitempty"`
 	// Warnings are problems that did not stop the workspace opening (e.g. the
@@ -198,10 +199,9 @@ type prepared struct {
 	cfg     openConfig
 	res     OpenResult // Tab and Layout filled in
 	ade     string
-	editor  editor.Editor // host.editor resolved against the environment
-	runArgs []string      // extra arguments of every generated `ade task run`
-	item    *ItemRef      // the work item owning the worktree's branch, when there is one
-	agent   *agentFiles   // the omp skill; set only for the agent layout of an item
+	runArgs []string    // extra arguments of every generated `ade task run`
+	item    *ItemRef    // the work item owning the worktree's branch, when there is one
+	agent   *agentFiles // the omp skill; set only for the agent layout of an item
 	// background says the run group's services start in a tab of their own;
 	// install that the workspace's repos declare install commands to run first.
 	background, install bool
@@ -251,7 +251,7 @@ func prepare(ctx context.Context, a *app.App, project, repo, worktree string, op
 			notice = NoticeNoOmp
 		}
 	}
-	p := &prepared{loc: loc, editor: editor.Resolve(a.Config.Host.Editor, editor.FromOS()), agentUnset: a.Config.AgentHiddenEnv()}
+	p := &prepared{loc: loc, agentUnset: a.Config.AgentHiddenEnv()}
 	if cfg.item != nil {
 		p.item = cfg.item
 	} else if it, ok := ItemFor(ctx, cfg.items, loc); ok {
@@ -409,23 +409,54 @@ func openZellij(ctx context.Context, a *app.App, p *prepared, res *OpenResult) e
 		return err
 	}
 	res.LayoutFile = file
-	var services tabLayout
+	// The dashboard's home tab comes first: the tab holds no overview of the
+	// item, so the dashboard must be one tab away.
+	homeFile, err := WriteHomeLayout(a.Paths.CacheDir, p.ade)
+	if err != nil {
+		return err
+	}
+	before := []tabLayout{{name: zellij.HomeTab, file: homeFile}}
 	if spec.HasServicesTab() {
 		svc, err := BuildServicesLayout(spec)
 		if err != nil {
 			return err
 		}
-		services = tabLayout{name: spec.ServicesTab(), file: filepath.Join(dir, slugOf(p.loc.Tree+"#"+spec.ServicesTab())+".kdl")}
+		services := tabLayout{name: spec.ServicesTab(), file: filepath.Join(dir, slugOf(p.loc.Tree+"#"+spec.ServicesTab())+".kdl")}
 		if err := os.WriteFile(services.file, []byte(svc), 0o600); err != nil {
 			return err
 		}
+		before = append(before, services)
 	}
-	created, servicesErr, err := openTab(ctx, runZellij, session, res.Tab, file, services)
+	created, beforeErrs, err := openTab(ctx, runZellij, session, res.Tab, file, before...)
 	res.Created = created
-	if servicesErr != nil {
-		res.Warnings = append(res.Warnings, "services tab: "+servicesErr.Error())
+	for _, e := range beforeErrs {
+		res.Warnings = append(res.Warnings, e.Error())
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	// `ade ws close` finds the tab again from the worktree: its name comes from
+	// a branch or a title, not from the path.
+	if rerr := recordTab(a.Paths.CacheDir, p.loc.Tree, session, res.Tab); rerr != nil {
+		res.Warnings = append(res.Warnings, "record the tab for ade ws close: "+rerr.Error())
+	}
+	return nil
+}
+
+// HomeLayoutFile is where the layout of the dashboard's home tab (zellij.Layout) lives in cacheDir.
+func HomeLayoutFile(cacheDir string) string { return filepath.Join(cacheDir, "layout.kdl") }
+
+// WriteHomeLayout writes the home tab's layout, running `<ade> dash`, to
+// HomeLayoutFile and returns its path.
+func WriteHomeLayout(cacheDir, ade string) (string, error) {
+	if err := paths.EnsureDir(cacheDir); err != nil {
+		return "", err
+	}
+	file := HomeLayoutFile(cacheDir)
+	if err := os.WriteFile(file, []byte(zellij.Layout(ade)), 0o600); err != nil {
+		return "", fmt.Errorf("write the home layout: %w", err)
+	}
+	return file, nil
 }
 
 // currentSession is the session tabs open in by default: the one the caller is
@@ -495,11 +526,11 @@ func exitedTabs(ctx context.Context, run zellijRunner, session, tab string) []in
 type tabLayout struct{ name, file string }
 
 // openTab focuses the tab when it exists, otherwise creates it from layoutFile.
-// A new tab also gets the background tab created before it (unless that one
-// exists): zellij focuses every tab it creates, so the tab the user asked for
-// goes last and ends up focused. A failure of the background tab is returned as
-// backgroundErr and does not stop the main tab.
-func openTab(ctx context.Context, run zellijRunner, session, tab, layoutFile string, background tabLayout) (created bool, backgroundErr, err error) {
+// A new tab also gets each of the before tabs created ahead of it, in order,
+// unless that one exists: zellij focuses every tab it creates, so the tab the
+// user asked for goes last and ends up focused. A before tab that fails is
+// returned in beforeErrs and does not stop the main tab.
+func openTab(ctx context.Context, run zellijRunner, session, tab, layoutFile string, before ...tabLayout) (created bool, beforeErrs []error, err error) {
 	listing, _ := run(ctx, "list-sessions", "--no-formatting") // no server yet: no sessions
 	if zellij.SessionState(listing, session) != zellij.Live {
 		return false, nil, fmt.Errorf("%w: %q (start it with `ade`)", ErrNoSession, session)
@@ -516,22 +547,24 @@ func openTab(ctx context.Context, run zellijRunner, session, tab, layoutFile str
 		_, err := run(ctx, "--session", session, "action", "go-to-tab-name", tab)
 		return false, nil, err
 	}
-	if background.name != "" && !have[background.name] {
-		_, backgroundErr = run(ctx, "--session", session, "action", "new-tab", "--layout", background.file, "--name", background.name)
+	for _, t := range before {
+		if t.name == "" || have[t.name] {
+			continue
+		}
+		if _, err := run(ctx, "--session", session, "action", "new-tab", "--layout", t.file, "--name", t.name); err != nil {
+			beforeErrs = append(beforeErrs, fmt.Errorf("%s tab: %w", t.name, err))
+		}
 	}
 	_, err = run(ctx, "--session", session, "action", "new-tab", "--layout", layoutFile, "--name", tab)
-	return err == nil, backgroundErr, err
+	return err == nil, beforeErrs, err
 }
 
 // layoutSpec assembles the layout input: tools found on PATH, a pane per
 // run-graph node.
 func layoutSpec(ctx context.Context, p *prepared) LayoutSpec {
-	spec := LayoutSpec{Layout: p.res.Layout, Tab: p.res.Tab, Dir: p.loc.Tree, Tools: DetectTools(p.ade, p.editor, p.loc.Tree), BaseRef: p.cfg.baseRef}
+	spec := LayoutSpec{Layout: p.res.Layout, Tab: p.res.Tab, Dir: p.loc.Tree, Tools: DetectTools(p.ade), BaseRef: p.cfg.baseRef}
 	spec.Devshell = p.cfg.devshell.WithProject(
 		p.cfg.devshell.Detect(p.loc.Tree, p.loc.Manifest.Repos[p.loc.Repo].Devshell), p.loc.ProjectDir, p.loc.Manifest.Project)
-	if p.item != nil {
-		spec.Overview = []string{"item", p.item.Item.Ref.String(), "--watch"}
-	}
 	// Every agent pane drops the write token, with or without a work item.
 	spec.AgentUnset = p.agentUnset
 	if p.agent != nil {
@@ -579,18 +612,47 @@ func layoutSpec(ctx context.Context, p *prepared) LayoutSpec {
 	return spec
 }
 
-// DetectTools looks up the programs the layouts use on PATH; the editor is the
-// resolved host.editor and opens dir, and the shell is $SHELL.
-func DetectTools(ade string, ed editor.Editor, dir string) Tools {
+// DetectTools looks up the programs the layouts use on PATH; the shell is UserShell.
+func DetectTools(ade string) Tools {
 	find := func(name string) string {
 		if p, err := exec.LookPath(name); err == nil {
 			return p
 		}
 		return ""
 	}
-	t := Tools{Ade: ade, Lazygit: find("lazygit"), Delta: find("delta"), Omp: find("omp"), Shell: os.Getenv("SHELL")}
-	t.Editor, t.EditorArgs = ed.PaneCommand(dir)
-	return t
+	return Tools{Ade: ade, Lazygit: find("lazygit"), Delta: find("delta"), Omp: find("omp"), Shell: UserShell()}
+}
+
+// UserShell is the shell the user works in: $SHELL, unless it is unset or the
+// bash a Nix dev shell exports (`nix develop` sets $SHELL to stdenv's bash, so
+// an ADE started inside one would hand that bash to every pane); then the
+// login shell from /etc/passwd. Empty when neither is known.
+func UserShell() string { return userShell(os.Getenv("SHELL"), "/etc/passwd", os.Getuid()) }
+
+func userShell(env, passwd string, uid int) string {
+	if env != "" && (!strings.HasPrefix(env, "/nix/store/") || filepath.Base(env) != "bash") {
+		return env
+	}
+	if sh := loginShell(passwd, uid); sh != "" {
+		return sh
+	}
+	return env
+}
+
+// loginShell is the shell field of uid's entry in a passwd file; empty when
+// there is none (macOS keeps users in Directory Services, not /etc/passwd).
+func loginShell(passwd string, uid int) string {
+	data, err := os.ReadFile(passwd)
+	if err != nil {
+		return ""
+	}
+	id := strconv.Itoa(uid)
+	for line := range strings.SplitSeq(string(data), "\n") {
+		if f := strings.Split(line, ":"); len(f) == 7 && f[2] == id {
+			return f[6]
+		}
+	}
+	return ""
 }
 
 // --- VS Code ---------------------------------------------------------------

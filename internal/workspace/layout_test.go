@@ -4,13 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
-
-	"github.com/coredev-uk/ade/internal/editor"
 )
 
-var fullTools = Tools{Ade: "/opt/ade/bin/ade", Editor: "nvim -u NONE", Lazygit: "/bin/lazygit", Delta: "/bin/delta", Omp: "/bin/omp"}
+var fullTools = Tools{Ade: "/opt/ade/bin/ade", Lazygit: "/bin/lazygit", Delta: "/bin/delta", Omp: "/bin/omp"}
 
 func baseSpec(layout string) LayoutSpec {
 	return LayoutSpec{
@@ -22,9 +24,7 @@ func baseSpec(layout string) LayoutSpec {
 }
 
 func TestBuildLayoutCode(t *testing.T) {
-	s := baseSpec(LayoutCode)
-	s.Overview = []string{"item", "acme/tracker#418", "--watch"}
-	got, err := BuildLayout(s)
+	got, err := BuildLayout(baseSpec(LayoutCode))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,19 +39,9 @@ func TestBuildLayoutCode(t *testing.T) {
         }
     }
     tab name="web/418-paginate" cwd="/projects/acme/web/418-paginate" focus=true {
-        pane size="70%" split_direction="vertical" {
-            pane name="editor" size="60%" focus=true command="nvim" {
-                args "-u" "NONE"
-            }
-            pane size="40%" split_direction="horizontal" {
-                pane name="overview" size="40%" command="/opt/ade/bin/ade" {
-                    args "item" "acme/tracker#418" "--watch"
-                }
-                pane stacked=true {
-                    pane name="lazygit" expanded=true command="/bin/lazygit"
-                    pane name="shell"
-                }
-            }
+        pane size="70%" stacked=true {
+            pane name="shell" expanded=true focus=true
+            pane name="lazygit" command="/bin/lazygit"
         }
         pane size="30%" split_direction="vertical" {
             pane name="services" start_suspended=true command="/opt/ade/bin/ade" {
@@ -72,31 +62,68 @@ func TestBuildLayoutCode(t *testing.T) {
 	}
 }
 
-func TestBuildLayoutWithoutAnItemHasNoOverviewPane(t *testing.T) {
-	for _, l := range []string{LayoutCode, LayoutAgent, LayoutManual} {
-		got, err := BuildLayout(baseSpec(l))
-		if err != nil {
-			t.Fatal(err)
+// The tab is a shell stacked with lazygit: no editor and no overview, and
+// manual is the same tab as code.
+func TestBuildLayoutCodeAndManualAreTheShellStack(t *testing.T) {
+	code, err := BuildLayout(baseSpec(LayoutCode))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manual, err := BuildLayout(baseSpec(LayoutManual))
+	if err != nil || manual != code {
+		t.Fatalf("manual must lay out as code: %v\n%s", err, manual)
+	}
+	for _, l := range []string{LayoutCode, LayoutAgent, LayoutReview} {
+		got, _ := BuildLayout(baseSpec(l))
+		if strings.Contains(got, "overview") || strings.Contains(got, `"--watch"`) || strings.Contains(got, `name="editor"`) {
+			t.Errorf("%s: no overview or editor pane in the tab:\n%s", l, got)
 		}
-		if strings.Contains(got, "overview") || strings.Contains(got, `"--watch"`) {
-			t.Errorf("%s: no item, no overview:\n%s", l, got)
-		}
-		if !strings.Contains(got, `pane size="40%" stacked=true {`) {
-			t.Errorf("%s: the stack takes the whole right column:\n%s", l, got)
-		}
+	}
+	// Without lazygit the shell is the whole stack.
+	s := baseSpec(LayoutCode)
+	s.Tools.Lazygit = ""
+	got, _ := BuildLayout(s)
+	if !strings.Contains(got, "pane size=\"70%\" stacked=true {\n            pane name=\"shell\" expanded=true focus=true\n        }") {
+		t.Fatalf("shell alone:\n%s", got)
 	}
 }
 
-func TestBuildLayoutEveryDevLayoutShowsTheOverview(t *testing.T) {
-	for _, l := range []string{LayoutCode, LayoutAgent, LayoutManual} {
+// The shell pane runs the user's shell itself, not whatever zellij's
+// environment would start.
+func TestBuildLayoutShellPaneRunsTheUserShell(t *testing.T) {
+	for _, l := range []string{LayoutCode, LayoutAgent} {
 		s := baseSpec(l)
-		s.Overview = []string{"item", "acme/tracker#418", "--watch"}
+		s.Tools.Shell = "/usr/bin/zsh"
 		got, err := BuildLayout(s)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(got, `pane name="overview"`) || !strings.Contains(got, `args "item" "acme/tracker#418" "--watch"`) {
-			t.Errorf("%s lacks the overview pane:\n%s", l, got)
+		if !strings.Contains(got, `name="shell"`) || !strings.Contains(got, `command="/usr/bin/zsh"`) {
+			t.Errorf("%s: shell pane:\n%s", l, got)
+		}
+	}
+}
+
+func TestUserShell(t *testing.T) {
+	passwd := filepath.Join(t.TempDir(), "passwd")
+	if err := os.WriteFile(passwd, []byte("root:x:0:0:root:/root:/bin/sh\ndev:x:1000:100::/home/dev:/run/current-system/sw/bin/zsh\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	devBash := "/nix/store/abc-bash-interactive-5.2/bin/bash"
+	for _, tc := range []struct {
+		env  string
+		uid  int
+		want string
+	}{
+		{"/bin/fish", 1000, "/bin/fish"},                                           // $SHELL wins
+		{"/nix/store/abc-zsh-5.9/bin/zsh", 1000, "/nix/store/abc-zsh-5.9/bin/zsh"}, // a Nix-installed shell of the user's own
+		{devBash, 1000, "/run/current-system/sw/bin/zsh"},                          // nix develop's bash: the login shell
+		{"", 1000, "/run/current-system/sw/bin/zsh"},
+		{devBash, 4242, devBash}, // no passwd entry: keep what there is
+		{"", 4242, ""},
+	} {
+		if got := userShell(tc.env, passwd, tc.uid); got != tc.want {
+			t.Errorf("userShell(%q, uid %d) = %q, want %q", tc.env, tc.uid, got, tc.want)
 		}
 	}
 }
@@ -157,9 +184,9 @@ func TestBuildLayoutVariants(t *testing.T) {
 		want   []string
 		not    []string
 	}{
-		{LayoutAgent, []string{`name="agent"`, `"ADE_AGENT_RUN=1" "/bin/omp"`, `name="lazygit"`, `name="api.dev"`, `name="web.dev"`}, []string{`name="editor"`}},
+		{LayoutAgent, []string{`name="agent" size="60%" focus=true`, `"ADE_AGENT_RUN=1" "/bin/omp"`, `pane name="lazygit" expanded=true`, `name="api.dev"`, `name="web.dev"`}, []string{`name="editor"`}},
 		{LayoutReview, []string{`name="diff"`, `command="sh"`, `args "-c" "git diff 'origin/main'...HEAD | '/bin/delta'"`}, []string{`name="editor"`, `"/bin/omp"`}},
-		{LayoutManual, []string{`name="shell" size="60%"`, `name="lazygit"`, `name="web.dev"`}, []string{`"/bin/omp"`, `ADE_AGENT_RUN`, `name="editor"`}},
+		{LayoutManual, []string{`name="shell" expanded=true focus=true`, `name="lazygit"`, `name="web.dev"`}, []string{`"/bin/omp"`, `ADE_AGENT_RUN`, `name="editor"`}},
 	}
 	for _, tc := range tests {
 		got, err := BuildLayout(baseSpec(tc.layout))
@@ -193,8 +220,8 @@ func TestBuildLayoutWithoutToolsFallsBackToShells(t *testing.T) {
 	if strings.Contains(got, "command=") {
 		t.Fatalf("no tool, no command pane:\n%s", got)
 	}
-	if !strings.Contains(got, `pane name="editor"`) || !strings.Contains(got, `pane name="shell" expanded=true`) {
-		t.Fatalf("expected shell fallbacks:\n%s", got)
+	if !strings.Contains(got, `pane name="shell" expanded=true focus=true`) || strings.Contains(got, "lazygit") {
+		t.Fatalf("expected a lone shell:\n%s", got)
 	}
 }
 
@@ -263,6 +290,7 @@ type fakeZellij struct {
 	sessions string
 	tabs     string
 	panes    string // list-panes --json
+	tabList  string // list-tabs --json
 	failOn   string // an action whose arguments contain this fails
 	calls    [][]string
 }
@@ -279,6 +307,8 @@ func (f *fakeZellij) run(_ context.Context, args ...string) (string, error) {
 		return f.sessions, nil
 	case len(args) > 3 && args[3] == "query-tab-names":
 		return f.tabs, nil
+	case len(args) > 3 && args[3] == "list-tabs":
+		return f.tabList, nil
 	}
 	return "", nil
 }
@@ -409,16 +439,84 @@ func TestSlugIsASingleSafePathElement(t *testing.T) {
 	}
 }
 
-func TestCodeLayoutEditorPaneOpensTheVSCodeWindowAndKeepsAShell(t *testing.T) {
-	s := baseSpec(LayoutCode)
-	s.Tools.Editor, s.Tools.EditorArgs = editor.Editor{Kind: editor.Code, Cmd: "/bin/code"}.PaneCommand(s.Dir)
-	got, err := BuildLayout(s)
-	if err != nil {
+func TestOpenTabCreatesTheHomeTabFirstWhenItIsMissing(t *testing.T) {
+	home := tabLayout{name: "home", file: "/tmp/home.kdl"}
+	services := tabLayout{name: "web/418 · services", file: "/tmp/s.kdl"}
+	z := &fakeZellij{sessions: "ade [Created 5s ago]\n", tabs: "api/9\n"}
+	if created, errs, err := openTab(context.Background(), z.run, "ade", "web/418", "/tmp/x.kdl", home, services); err != nil || errs != nil || !created {
+		t.Fatalf("created=%v errs=%v err=%v", created, errs, err)
+	}
+	want := "new-tab --layout /tmp/home.kdl --name home|new-tab --layout /tmp/s.kdl --name web/418 · services|new-tab --layout /tmp/x.kdl --name web/418"
+	if got := strings.Join(actions(z), "|"); got != want {
+		t.Fatalf("actions %q, want %q: the dashboard first, the workspace tab last so it ends focused", got, want)
+	}
+	z = &fakeZellij{sessions: "ade [Created 5s ago]\n", tabs: "home\n"}
+	if _, _, err := openTab(context.Background(), z.run, "ade", "web/418", "/tmp/x.kdl", home); err != nil {
 		t.Fatal(err)
 	}
-	for _, w := range []string{`name="editor"`, `command="sh"`, `"/bin/code"`, `"/projects/acme/web/418-paginate"`, `exec`} {
-		if !strings.Contains(got, w) {
-			t.Errorf("layout lacks %s\n%s", w, got)
+	if got := strings.Join(actions(z), "|"); got != "new-tab --layout /tmp/x.kdl --name web/418" {
+		t.Fatalf("a running dashboard is left alone: %q", got)
+	}
+}
+
+func TestRecordTabKeepsEveryTabOfATreeOnce(t *testing.T) {
+	dir := t.TempDir()
+	for _, tab := range []string{"web/418-paginate", "web/feature/418", "web/418-paginate"} {
+		if err := recordTab(dir, "/p/web/418", "ade", tab); err != nil {
+			t.Fatal(err)
 		}
+	}
+	got := readTabs(dir, "/p/web/418")
+	if len(got) != 2 || got[0].Tab != "web/418-paginate" || got[1].Tab != "web/feature/418" || got[0].Session != "ade" {
+		t.Fatalf("records: %+v", got)
+	}
+	if readTabs(dir, "/p/web/other") != nil {
+		t.Fatal("another tree has no tabs")
+	}
+}
+
+// The caller's own tab closes last: closing it ends the caller.
+func TestFindTabsPutsTheCallersTabLast(t *testing.T) {
+	z := &fakeZellij{
+		sessions: "ade [Created 5s ago]\ngone [Created 2d ago] (EXITED - attach to resurrect)\n",
+		tabList:  `[{"name":"home","tab_id":0},{"name":"web/418","tab_id":3},{"name":"web/418 · services","tab_id":2},{"name":"api/9","tab_id":5}]`,
+		panes:    `[{"id":7,"is_plugin":true,"tab_id":2},{"id":7,"is_plugin":false,"tab_id":3}]`,
+	}
+	recs := []tabRecord{{"ade", "web/418"}, {"ade", "web/main"}, {"gone", "web/418"}}
+	got, warn := findTabs(context.Background(), z.run, recs, pane{session: "ade", id: "7"})
+	if len(warn) != 0 || len(got) != 1 {
+		t.Fatalf("got %+v warn %v: only the live session", got, warn)
+	}
+	if st := got[0]; st.session != "ade" || fmt.Sprint(st.ids) != "[2 3]" || strings.Join(st.names, "|") != "web/418 · services|web/418" {
+		t.Fatalf("tabs %+v: the services tab, then the caller's own; web/main was closed by hand", st)
+	}
+	for _, c := range z.calls {
+		if c[0] == "--session" && c[1] == "gone" {
+			t.Fatalf("acted on a session that is not running: %v", c)
+		}
+	}
+}
+
+func TestCloseTabsShowsTheHomeTabFirst(t *testing.T) {
+	targets := []sessionTabs{{session: "ade", ids: []int{2, 3}, names: []string{"web/418 · services", "web/418"}}}
+	z := &fakeZellij{sessions: "ade [Created 5s ago]\n", tabs: "home\nweb/418\n"}
+	if err := closeTabs(context.Background(), z.run, targets, "/tmp/home.kdl"); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(actions(z), "|"); got != "go-to-tab-name home|close-tab-by-id 2|close-tab-by-id 3" {
+		t.Fatalf("actions %q", got)
+	}
+	// No dashboard: it is created, so the session keeps a tab.
+	z = &fakeZellij{sessions: "ade [Created 5s ago]\n", tabs: "web/418\n"}
+	if err := closeTabs(context.Background(), z.run, targets, "/tmp/home.kdl"); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(actions(z), "|"); got != "new-tab --layout /tmp/home.kdl --name home|close-tab-by-id 2|close-tab-by-id 3" {
+		t.Fatalf("actions %q", got)
+	}
+	// The home tab cannot be shown: nothing closes.
+	z = &fakeZellij{sessions: "ade [Created 5s ago]\n", tabs: "web/418\n", failOn: "new-tab"}
+	if err := closeTabs(context.Background(), z.run, targets, "/tmp/home.kdl"); err == nil || slices.Contains(actions(z), "close-tab-by-id 3") {
+		t.Fatalf("err %v, actions %q", err, actions(z))
 	}
 }

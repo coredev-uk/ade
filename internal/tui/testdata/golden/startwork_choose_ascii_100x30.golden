@@ -19,7 +19,7 @@
 |   o always  always a child issue                                                                 |
 |   o never   none: branch and MR reference the tracker issue                                      |
 |                                                                                                  |
-|  Main pane  * editor  o omp  o shell  a toggles - your editor beside lazygit, the overview an... |
+|  Main pane  * shell  o omp  a toggles - shell + lazygit in the dev shell; ade ws edit opens y... |
 |                                                                                                  |
 | space select   b branch   B base   m mode   c child   a main pane   enter continue   esc cancel  |
 +--------------------------------------------------------------------------------------------------+

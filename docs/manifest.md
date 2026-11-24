@@ -375,10 +375,8 @@ validated together. Hooks run inside the tree and failures raise notifications. 
 `services`, `kind = "oneshot"`, ports and templates, is [PLAN.md §2](PLAN.md#2-configuration-core-function-4) and
 [§2.1](PLAN.md#21-repo-and-task-dependencies).
 
-`workspaces.<name>.layout` is the main pane of the tab ADE opens for a worktree: `code` (your editor), `agent` (omp
-started with an ADE-generated implement skill that carries the ticket, MR, conventions and your notes, and stops for
-review without pushing) or `manual` (a shell). Every layout also shows the item's live overview, lazygit, a shell and
-the workspace's own tasks of the `run` group (none starts on its own: a pane waits for Enter; Ctrl-C in a running pane stops it, Enter starts it again). The services it requires start in the background services tab described below.
+`workspaces.<name>.layout` is the layout of the tab ADE opens for a worktree: `code` (a shell in one full-width stack with lazygit, one keystroke away; no editor pane, `ade ws edit` in the shell opens your editor) or `agent` (omp, started with an ADE-generated implement skill that carries the ticket, MR, conventions and your notes, and stops for
+review without pushing, next to a stack of lazygit and a shell). `manual` renders exactly the same tab as `code` and is kept only so existing manifests stay valid. No layout shows the item's live overview (`ade item <ref> --watch` still runs standalone). Every layout has the workspace's own tasks of the `run` group below (none starts on its own: a pane waits for Enter; Ctrl-C in a running pane stops it, Enter starts it again). The services it requires start in the background services tab described below.
 Each person can override the default with `host.layout` in their own config; `ade start --layout` and `W` on Home
 choose per tab. A service runs from the work item's own worktree when it has one in that repo, else from the shared
 baseline (default-branch) tree, so `{api.dev.port}` in web's `API_URL` follows the item's api when it has one. See

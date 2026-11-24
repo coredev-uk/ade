@@ -258,7 +258,7 @@ func TestOpenWrapsPanesInTheProjectShellAndBriefsTheAgentWithItsAgents(t *testin
 	}
 }
 
-func TestOpenFallsBackToTheEditorLayoutWhenAIIsOff(t *testing.T) {
+func TestOpenFallsBackToTheCodeLayoutWhenAIIsOff(t *testing.T) {
 	f := newFixture(t, appManifest, "api/main", "web/main")
 	a := newApp(t, f, "plain")
 	a.Config.AI.Mode = "off"
@@ -276,7 +276,7 @@ func TestOpenFallsBackToTheEditorLayoutWhenAIIsOff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(kdl, `name="agent"`) || !strings.Contains(kdl, `name="editor"`) {
+	if strings.Contains(kdl, `name="agent"`) || !strings.Contains(kdl, `name="shell" expanded=true focus=true`) {
 		t.Fatalf("layout:\n%s", kdl)
 	}
 }
@@ -293,7 +293,7 @@ func TestOpenSaysWhenOmpIsMissingForTheAgentLayout(t *testing.T) {
 	}
 }
 
-func TestOpenFallsBackToTheEditorLayoutWithoutAUsableAIProfile(t *testing.T) {
+func TestOpenFallsBackToTheCodeLayoutWithoutAUsableAIProfile(t *testing.T) {
 	f := newFixture(t, appManifest, "api/main", "web/main")
 	a := newApp(t, f, "plain")
 	a.Config.AI.Profile = ""
@@ -305,5 +305,45 @@ func TestOpenFallsBackToTheEditorLayoutWithoutAUsableAIProfile(t *testing.T) {
 	}
 	if res.Layout != LayoutCode || res.Notice != NoticeAIUnavailable(why) {
 		t.Fatalf("%+v", res)
+	}
+}
+
+// Close stops the workspace. Without zellij on PATH the tabs cannot be reached,
+// so their record is kept for a later close; with a zellij whose session is
+// gone there is nothing to close, and the record goes.
+func TestCloseKeepsTheTabRecordOnlyWhileZellijIsUnreachable(t *testing.T) {
+	f := newFixture(t, appManifest, "api/main", "web/main")
+	a := newApp(t, f, "plain") // PATH is empty: no zellij
+	tree := filepath.Join(f.root, "demo", "web", "main")
+	if err := recordTab(a.Paths.CacheDir, tree, "ade", "web/main"); err != nil {
+		t.Fatal(err)
+	}
+	var seen *CloseResult
+	res, err := Close(context.Background(), a, tree, func(r CloseResult) { seen = &r })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seen == nil || res.Tree != tree || len(res.Tabs) != 0 || len(res.Stopped) != 0 || len(res.Warnings) != 1 {
+		t.Fatalf("res %+v, ready called: %v", res, seen != nil)
+	}
+	if readTabs(a.Paths.CacheDir, tree) == nil {
+		t.Fatal("the tabs may still be open: the record must stay")
+	}
+	entries, err := a.Audit.Query(audit.Filter{Action: "workspace.close"})
+	if err != nil || len(entries) != 1 || entries[0].Target != tree || entries[0].Outcome != "ok" {
+		t.Fatalf("audit: %v %+v", err, entries)
+	}
+
+	// A zellij with no live session: list-sessions fails, the session is gone.
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "zellij"), []byte("#!/bin/sh\necho 'No active zellij sessions found.' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	if res, err = Close(context.Background(), a, tree, nil); err != nil || len(res.Tabs) != 0 || len(res.Warnings) != 0 {
+		t.Fatalf("res %+v err %v", res, err)
+	}
+	if readTabs(a.Paths.CacheDir, tree) != nil {
+		t.Fatal("the session is gone: the record must go")
 	}
 }

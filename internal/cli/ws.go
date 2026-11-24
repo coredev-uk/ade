@@ -80,7 +80,7 @@ func newWsCmd() *cobra.Command {
 		Use:   "ws",
 		Short: "Workspaces: run graph, instances and tabs for a worktree",
 	}
-	cmd.AddCommand(newWsUpCmd(), newWsDownCmd(), newWsStatusCmd(), newWsRestartCmd(), newWsLayoutCmd(), newWsInstallCmd(), newWsHookCmd())
+	cmd.AddCommand(newWsUpCmd(), newWsDownCmd(), newWsCloseCmd(), newWsEditCmd(), newWsStatusCmd(), newWsRestartCmd(), newWsLayoutCmd(), newWsInstallCmd(), newWsHookCmd())
 	return cmd
 }
 

@@ -70,7 +70,7 @@ func launch(cmd *cobra.Command, dry bool) error {
 		return fmt.Errorf("locate ade executable: %w", err)
 	}
 	layout := zellij.Layout(ade)
-	layoutFile := filepath.Join(a.Paths.CacheDir, "layout.kdl")
+	layoutFile := workspace.HomeLayoutFile(a.Paths.CacheDir)
 	if action == host.FocusHome || action == host.OpenHome {
 		return showHomeTab(cmd, action, env.CurrentSession, layout, layoutFile, dry)
 	}

@@ -2,7 +2,7 @@
 # Dev environment (docs/PLAN.md §6.3, §6.6, §6.7, §2.2): the tab ADE opens for a ticket's
 # worktree, end to end, offline.
 #
-#   start work -> a tab with  [omp briefed by the ADE implement skill | overview | lazygit + shell]
+#   start work -> a tab with  [omp briefed by the ADE implement skill | stack of lazygit + shell]
 #                 and a strip with one pane per task of the workspace itself, all waiting for Enter;
 #                 an unfocused "<tab> · services" tab whose panes start by themselves: install first,
 #                 then each service once what it requires is ready (the port gate);
@@ -76,13 +76,13 @@ screen_has() {
 }
 
 step "unit tests of every piece"
-check "layout KDL (overview pane, omp pane, services strip), skill rendering, layout precedence, code-workspace JSON, run graph" \
+check "layout KDL (omp pane, shell/lazygit stack, no editor or overview pane, services strip), skill rendering, layout precedence, code-workspace JSON, run graph" \
   go test -count=1 ./internal/workspace/... ./internal/itemdoc/... ./internal/commitmsg/... ./internal/commitprefix/...
-check "issue overview view and refresh" go test -count=1 ./internal/overview/...
+check "issue overview view and refresh (the standalone ade item --watch)" go test -count=1 ./internal/overview/...
 check "start work passes the item and layout; commit prefix in start work, agent commits, merges; config validation + schema" \
   go test -count=1 ./internal/startwork/... ./internal/agent/... ./internal/config/... ./internal/review/... ./internal/forge/...
 check "CLI: ade item --watch, ade vscode workspace, ade mr merge prefix" go test -count=1 ./internal/cli/...
-check "TUI: main pane toggle, W, v, merge dialog prefix" go test -count=1 ./internal/tui/... -run 'Start|Workspace|CodeWorkspace|Merge'
+check "TUI: layout toggle, W, v, merge dialog prefix" go test -count=1 ./internal/tui/... -run 'Start|Workspace|CodeWorkspace|Merge'
 
 step "the demo setup: fake GitLab with real git remotes, stub omp"
 build_ade
@@ -109,7 +109,7 @@ grep -q '^commit_prefix = "GL-{parent}"' "$T/manifest.ade.toml" || fail "manifes
 export XDG_DATA_HOME="$T/data" XDG_CACHE_HOME="$T/cache" XDG_CONFIG_HOME="$T/xdgcfg"
 export ADE_CONFIG="$T/config.toml" FAKE_GITLAB_TOKEN=fake-token FAKEOMP_RECORD="$T/omp"
 unset ZELLIJ ZELLIJ_SESSION_NAME ZELLIJ_PANE_ID TERM_PROGRAM
-export EDITOR=cat # a long-lived stand-in for the editor pane
+export EDITOR=cat # a long-lived stand-in for the editor that ade ws edit runs
 export PATH="$T/bin:$PATH"
 export GOCACHE=${GOCACHE:-$(go env GOCACHE)} GOMODCACHE=${GOMODCACHE:-$(go env GOMODCACHE)}
 cat >"$ADE_CONFIG" <<EOF
@@ -168,7 +168,7 @@ mapfile -t PRE < <(ZS action query-tab-names)
 [[ ${#PRE[@]} -ge 3 ]] && pass "the session has ${#PRE[@]} tabs before: ${PRE[*]}" || fail "tabs before: ${PRE[*]}"
 CLIENT_OFF=$(stat -c %s "$T/client.log")
 
-step "start work (child issues, branches, draft MRs, worktrees) opens the tab with the omp main pane"
+step "start work (child issues, branches, draft MRs, worktrees) opens the tab with omp and the lazygit + shell stack"
 "$ADE" start "$REF" --repo api --repo web --layout agent --session "$SESSION" --json >"$T/start.json" || {
   cat "$T/start.json" >&2
   fail "ade start"
@@ -185,26 +185,26 @@ expect_json "start work created the child, branch, draft MR and worktrees in bot
 expect_json "the workspace step opened a tab" "$T/start.json" '[.steps[] | select(.kind == "workspace")] | length == 1 and all(.[]; .outcome == "created")'
 [[ $(ZS action query-tab-names | grep -cx "$TAB") == 1 ]] && pass "zellij lists the tab $TAB" || fail "no tab $TAB"
 [[ $(ZS action query-tab-names | grep -cxF "$STAB") == 1 ]] && pass "and its services tab '$STAB'" || fail "no tab '$STAB'"
-wait_for 30 bash -c "$(declare -f pane_id ZS Z); SESSION=$SESSION; [[ -n \$(pane_id '$TAB' agent) && -n \$(pane_id '$TAB' overview) && -n \$(pane_id '$TAB' api.dev) && -n \$(pane_id '$STAB' web.dev) ]]" \
+wait_for 30 bash -c "$(declare -f pane_id ZS Z); SESSION=$SESSION; [[ -n \$(pane_id '$TAB' agent) && -n \$(pane_id '$TAB' lazygit) && -n \$(pane_id '$TAB' api.dev) && -n \$(pane_id '$STAB' web.dev) ]]" \
   || { ZS action list-panes --json | jq -c '.[] | {tab_name, title}' >&2; fail "the tab's panes were not created"; }
 # Panes are created first and sized a moment later: wait for the layout to settle.
 settled() {
   ZS action list-panes --json >"$T/panes.json"
-  jq -e --arg t "$TAB" '.[] | select(.tab_name == $t and .title == "overview") | .pane_columns >= 60 and .pane_rows >= 12' "$T/panes.json"
+  jq -e --arg t "$TAB" '.[] | select(.tab_name == $t and .title == "agent") | .pane_columns >= 60 and .pane_rows >= 12' "$T/panes.json"
 }
 wait_for 20 settled || true
 ZS action list-panes --json >"$T/panes.json"
-expect_json "the tab has the main (omp), overview, lazygit and shell panes and one pane per task of the api tree" "$T/panes.json" \
-  "[.[] | select(.tab_name == \"$TAB\" and .is_plugin == false) | .title] | (index(\"agent\") != null and index(\"overview\") != null and index(\"lazygit\") != null and index(\"shell\") != null and index(\"api.db\") != null and index(\"api.dev\") != null and index(\"web.dev\") == null and index(\"services\") == null)"
+expect_json "the tab has the omp, lazygit and shell panes (no overview, no editor) and one pane per task of the api tree" "$T/panes.json" \
+  "[.[] | select(.tab_name == \"$TAB\" and .is_plugin == false) | .title] | (index(\"agent\") != null and index(\"overview\") == null and index(\"editor\") == null and index(\"lazygit\") != null and index(\"shell\") != null and index(\"api.db\") != null and index(\"api.dev\") != null and index(\"web.dev\") == null and index(\"services\") == null)"
 expect_json "web.dev, which runs from another tree, has its pane in the services tab" "$T/panes.json" \
   "[.[] | select(.tab_name == \"$STAB\" and .is_plugin == false) | .title] | index(\"web.dev\") != null"
 jq -r --arg t "$TAB" '.[] | select(.tab_name == $t and .is_plugin == false) | "\(.title)\t\(.pane_columns)x\(.pane_rows) at \(.pane_x),\(.pane_y)"' "$T/panes.json" >"$OUT/devenv-panes.txt"
-expect_json "the overview pane has room to read (at least 60 columns x 12 rows in a 200x52 terminal)" "$T/panes.json" \
-  ".[] | select(.tab_name == \"$TAB\" and .title == \"overview\") | .pane_columns >= 60 and .pane_rows >= 12"
+expect_json "the omp pane has room to read (at least 60 columns x 12 rows in a 200x52 terminal)" "$T/panes.json" \
+  ".[] | select(.tab_name == \"$TAB\" and .title == \"agent\") | .pane_columns >= 60 and .pane_rows >= 12"
 expect_json "every running pane starts in the worktree (waiting service panes have no process yet)" "$T/panes.json" \
-  "[.[] | select(.tab_name == \"$TAB\" and .is_plugin == false and .exited == false and .pane_cwd != null) | .pane_cwd] | length >= 4 and all(. == \"$API_WT\")"
-expect_json "the overview pane runs ade item <tracker ref> --watch" "$T/panes.json" \
-  ".[] | select(.tab_name == \"$TAB\" and .title == \"overview\") | .terminal_command | endswith(\"item $REF --watch\")"
+  "[.[] | select(.tab_name == \"$TAB\" and .is_plugin == false and .exited == false and .pane_cwd != null) | .pane_cwd] | length >= 3 and all(. == \"$API_WT\")"
+expect_json "no pane of the tab runs ade item --watch (the overview is no longer in any tab)" "$T/panes.json" \
+  "[.[] | select(.tab_name == \"$TAB\") | .terminal_command // \"\"] | all(contains(\"--watch\") | not)"
 expect_json "lazygit runs in its pane" "$T/panes.json" \
   ".[] | select(.tab_name == \"$TAB\" and .title == \"lazygit\") | .terminal_command | endswith(\"lazygit\")"
 expect_json "the strip runs 'ade task run' for api.db and api.dev" "$T/panes.json" \
@@ -212,7 +212,7 @@ expect_json "the strip runs 'ade task run' for api.db and api.dev" "$T/panes.jso
 expect_json "the services tab runs web.dev after the install and waits for its requirements (no suspended pane)" "$T/panes.json" \
   ".[] | select(.tab_name == \"$STAB\" and .title == \"web.dev\") | .terminal_command | contains(\"task run web.dev\") and contains(\"--after-install\") and contains(\"--wait-requires\")"
 ZS action dump-layout >"$OUT/devenv-layout.txt"
-grep -q 'name="overview"\|name "overview"\|overview' "$OUT/devenv-layout.txt" && pass "zellij dump-layout saved to .impeccable/review/devenv-layout.txt" || fail "dump-layout lacks the overview pane"
+grep -q 'overview' "$OUT/devenv-layout.txt" && fail "dump-layout still has an overview pane" || pass "zellij dump-layout saved to .impeccable/review/devenv-layout.txt (no overview pane)"
 "$ADE" ws status --json >"$T/status-open.json"
 expect_json "nothing is running when the tab opened: web.dev waits for api.dev, whose strip pane waits for Enter (ws status is empty)" "$T/status-open.json" 'length == 0'
 expect_json "the strip's task panes wait for Enter (start_suspended)" "$T/panes.json" \
@@ -233,7 +233,7 @@ sleep 1
 tail -c +"$((CLIENT_OFF + 1))" "$T/client.log" >"$T/client-since-open.log"
 for t in scratch-1 scratch-2; do grep -aqF "$t" "$T/client-since-open.log" && pass "the client drew tab '$t' in the tab bar" || fail "tab bar never showed '$t'"; done
 
-step "main pane: omp started with the ADE implement skill (stub omp records its args, env and the skill)"
+step "agent layout: omp started with the ADE implement skill (stub omp records its args, env and the skill)"
 wait_for 20 test -s "$T/omp/SKILL.md" || { cat "$T/omp/args" >&2; fail "the stub omp never saw the skill"; }
 mapfile -t OMPARGS <"$T/omp/args"
 [[ ${OMPARGS[0]} == --config && ${OMPARGS[1]} == "$XDG_CACHE_HOME"/ade/ws/agent/*/omp.yml ]] \
@@ -265,22 +265,17 @@ printf '\nUse the exponential backoff helper, not a new loop (note for the proof
 expect_json "opening again focuses the existing tab" "$T/open2.json" '.created == false'
 grep -q "exponential backoff helper" "$(dirname "${OMPARGS[1]}")/skills/ade-implement/SKILL.md" && pass "the skill holds the developer's notes after the next open" || fail "notes missing from the regenerated skill"
 
-step "overview pane: the item live from the cache"
-wait_for 20 screen_has "$TAB" overview 'Retry failed webhook deliveries' || { dump "$TAB" overview /dev/stderr; fail "overview lacks the title"; }
-pass "the overview shows the ticket title"
+step "ade item --watch runs standalone: the item live from the cache (off a terminal it prints once)"
+"$ADE" item "$REF" --watch >"$OUT/devenv-overview.txt"
+grep -q 'Retry failed webhook deliveries' "$OUT/devenv-overview.txt" && pass "the view shows the ticket title" || fail "the view lacks the title"
 "$ADE" sync >/dev/null
-wait_for 30 screen_has "$TAB" overview 'draft' || { dump "$TAB" overview /dev/stderr; fail "the overview did not follow the sync"; }
-dump "$TAB" overview "$OUT/devenv-overview.txt"
+"$ADE" item "$REF" --watch >"$OUT/devenv-overview.txt"
 grep -q "$REF" "$OUT/devenv-overview.txt" && grep -q 'Retry failed webhook deliveries' "$OUT/devenv-overview.txt" && grep -Eq 'draft' "$OUT/devenv-overview.txt" \
-  && pass "after a sync the overview shows the stage (draft) and the MR without being restarted" || fail "overview content"
-grep -Eq "$(basename "$API_MR" | sed 's/.*!//')|!" "$OUT/devenv-overview.txt" && pass "it lists the MR" || fail "no MR in the overview"
-ZS action send-keys --pane-id "$(pane_id "$TAB" overview)" "G" # scroll to the end: description, acceptance, notes
-wait_for 10 screen_has "$TAB" overview 'Acceptance' || { dump "$TAB" overview /dev/stderr; fail "no acceptance in the overview"; }
-dump "$TAB" overview "$OUT/devenv-overview-description.txt"
-grep -Eq 'Description' "$OUT/devenv-overview-description.txt" && grep -q 'Exponential backoff, max 6 attempts' "$OUT/devenv-overview-description.txt" \
-  && pass "scrolled down it shows the description and the acceptance criteria" || fail "no description in the overview"
-grep -q 'exponential backoff helper' "$OUT/devenv-overview-description.txt" && pass "and your notes (live: written to the record a moment ago)" || fail "no notes in the overview"
-ZS action send-keys --pane-id "$(pane_id "$TAB" overview)" "g"
+  && pass "after a sync the view shows the stage (draft) and the MR" || fail "view content"
+grep -Eq "$(basename "$API_MR" | sed 's/.*!//')|!" "$OUT/devenv-overview.txt" && pass "it lists the MR" || fail "no MR in the view"
+grep -Eq 'Description' "$OUT/devenv-overview.txt" && grep -q 'Exponential backoff, max 6 attempts' "$OUT/devenv-overview.txt" \
+  && pass "it shows the description and the acceptance criteria" || fail "no description in the view"
+grep -q 'exponential backoff helper' "$OUT/devenv-overview.txt" && pass "and your notes" || fail "no notes in the view"
 
 step "services: the strip's tasks wait for Enter; the services tab starts web.dev once api.dev is ready"
 dump "$TAB" api.dev "$OUT/devenv-services-idle.txt"
@@ -321,10 +316,10 @@ step "a second tab for the web worktree (w): the item's api tree is found withou
 WEB_TAB=$(jq -r .tab "$T/open-web.json")
 WEB_STAB="$WEB_TAB · services"
 expect_json "a code-layout tab is created for the web worktree" "$T/open-web.json" '.created == true and .layout == "code" and .host == "zellij"'
-wait_for 30 bash -c "$(declare -f pane_id ZS Z); SESSION=$SESSION; [[ -n \$(pane_id '$WEB_TAB' editor) && -n \$(pane_id '$WEB_TAB' overview) && -n \$(pane_id '$WEB_TAB' web.dev) && -n \$(pane_id '$WEB_STAB' api.dev) ]]" || fail "web tab panes missing"
+wait_for 30 bash -c "$(declare -f pane_id ZS Z); SESSION=$SESSION; [[ -n \$(pane_id '$WEB_TAB' shell) && -n \$(pane_id '$WEB_TAB' lazygit) && -n \$(pane_id '$WEB_TAB' web.dev) && -n \$(pane_id '$WEB_STAB' api.dev) ]]" || fail "web tab panes missing"
 ZS action list-panes --json >"$T/panes2.json"
-expect_json "the code layout has editor, overview, lazygit and shell panes" "$T/panes2.json" \
-  "[.[] | select(.tab_name == \"$WEB_TAB\" and .is_plugin == false) | .title] | (index(\"editor\") != null and index(\"overview\") != null and index(\"lazygit\") != null and index(\"shell\") != null)"
+expect_json "the code layout has a shell and lazygit in one stack, and no editor or overview pane" "$T/panes2.json" \
+  "[.[] | select(.tab_name == \"$WEB_TAB\" and .is_plugin == false) | .title] | (index(\"shell\") != null and index(\"lazygit\") != null and index(\"editor\") == null and index(\"overview\") == null)"
 expect_json "web.dev's pane carries --item-tree api=<the item's api worktree> (found from the cache)" "$T/panes2.json" \
   ".[] | select(.tab_name == \"$WEB_TAB\" and .title == \"web.dev\") | .terminal_command | contains(\"--item-tree api=$API_WT\")"
 expect_json "the web tab's own task stays in its strip and api.dev, which runs from the api tree, is in its services tab" "$T/panes2.json" \
@@ -335,7 +330,6 @@ pass "the services tab's api.dev pane reuses the instance the first tab started 
 press_enter "$WEB_TAB" web.dev
 wait_for 120 screen_has "$WEB_TAB" web.dev 'ade: ready web.dev' || { dump "$WEB_TAB" web.dev /dev/stderr; fail "web.dev did not start in the web tab's strip"; }
 pass "Enter in the web tab's web.dev pane starts it (or joins the running one)"
-dump "$WEB_TAB" overview "$OUT/devenv-web-tab-overview.txt"
 "$ADE" ws status --json >"$T/status2.json"
 expect_json "web.dev of the item's web worktree is one instance, held by both tabs" "$T/status2.json" \
   "[.[] | select(.node == \"web.dev\" and .tree == \"$WEB_WT\" and .alive)] | length == 1 and (.[0].holders | length) >= 2"

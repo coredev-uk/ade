@@ -1,7 +1,7 @@
 // Package editor resolves which editor ADE opens files in (PLAN 6.7) and builds
 // the command for it. One resolution serves every place ADE spawns an editor:
-// the workspace's editor pane and the VS Code window, the MR body in the start
-// dialog, the agent plan, and `ade item --edit`.
+// `ade ws edit` and the VS Code window, the MR body in the start dialog, the
+// agent plan, and `ade item --edit`.
 package editor
 
 import (
@@ -261,28 +261,6 @@ func (e Editor) Environ() []string {
 		return nil
 	}
 	return append(os.Environ(), extra...)
-}
-
-// PaneCommand is the program line a zellij editor pane runs in dir. A GUI
-// launcher returns at once, which would close the pane, so the pane opens
-// the window and stays a shell.
-func (e Editor) PaneCommand(dir string) (prog string, args []string) {
-	if e.Kind == Code {
-		if e.Session != "" {
-			return "sh", append([]string{"-c", `"$@"; exec "${SHELL:-sh}"`, "sh"}, e.ArgvDir(dir)...)
-		}
-		if e.IPC != "" {
-			return "sh", []string{"-c", `export VSCODE_IPC_HOOK_CLI="$3"; "$1" "$2"; exec "${SHELL:-sh}"`, "sh", e.Cmd, dir, e.IPC}
-		}
-		return "sh", []string{"-c", `"$1" "$2"; exec "${SHELL:-sh}"`, "sh", e.Cmd, dir}
-	}
-	if e.Kind == Shell {
-		return "sh", []string{"-c", e.Cmd + ` "$1"`, "sh", dir}
-	}
-	if e.AppName != "" {
-		return "env", []string{"NVIM_APPNAME=" + e.AppName, e.Cmd}
-	}
-	return e.Cmd, nil
 }
 
 // String is the editor for display, e.g. in doctor: name and program.

@@ -117,15 +117,15 @@ var swChildren = []struct {
 	{startwork.ChildNever, "none: branch and MR reference the tracker issue"},
 }
 
-// swLayouts are the choices for the workspace tab's main pane.
+// swLayouts are the choices for the workspace tab's main pane. manual lays the
+// tab out as code does, so it is not offered.
 var swLayouts = []struct {
 	layout string
 	label  string
 	what   string
 }{
-	{workspace.LayoutCode, "editor", "your editor beside lazygit, the overview and the services"},
+	{workspace.LayoutCode, "shell", "shell + lazygit in the dev shell; ade ws edit opens your editor"},
 	{workspace.LayoutAgent, "omp", "an agent briefed on the ticket (ADE implement skill); stops for review"},
-	{workspace.LayoutManual, "shell", "a plain shell"},
 }
 
 // swLayoutChoices are the main-pane choices on offer: the agent pane needs
@@ -292,8 +292,8 @@ func (m model) swResolved(msg swResolvedMsg) (model, tea.Cmd, bool) {
 }
 
 // swDefaultLayout is the main-pane choice the dialog starts on: host.layout,
-// else the manifest's workspace, else the editor. Layouts the dialog does not
-// offer (review) fall back to the editor.
+// else the manifest's workspace, else the shell. Layouts the dialog does not
+// offer (review, manual) fall back to the shell.
 func swDefaultLayout(user string, m *config.Manifest, aiOff bool) string {
 	l := workspace.DefaultLayout(user, m.Workspaces[workspace.DefaultWorkspace].Layout)
 	if slices.ContainsFunc(swLayoutChoices(aiOff), func(x struct{ layout, label, what string }) bool { return x.layout == l }) {

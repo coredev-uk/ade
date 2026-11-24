@@ -82,6 +82,8 @@ var agentRefused = map[string]string{
 
 	"ws hook install": "changes the user's git hooks: an agent must not rewire how the user's commits are made",
 	"ws hook remove":  "changes the user's git hooks: an agent must not rewire how the user's commits are made",
+	"ws close":        "closes the user's workspace tabs, the agent's own included: closing a workspace is the user's call",
+	"ws edit":         "opens an editor for the user: a terminal editor would block the run, VS Code opens a window",
 }
 
 // annAgentAllowed marks a command that was looked at and is fine for an agent

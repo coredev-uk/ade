@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Capture the Work-tab overview pane (`ade item <ref> --watch`) for visual
+# Capture the standalone item view (`ade item <ref> --watch`) for visual
 # review with VHS. Output: .impeccable/review/overview-*.png
 #
 #   scripts/verify/capture-overview.sh      # desktop, narrow, no-colour, ascii sets
