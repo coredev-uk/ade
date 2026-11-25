@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.5.0](https://github.com/coredev-uk/ade/compare/v0.4.0...v0.5.0) (2026-11-25)
+
+
+### ⚠ BREAKING CHANGES
+
+* **workspace:** the workspace tab no longer has an editor pane or the item's overview pane. Run `ade ws edit` in the tab's shell to open your editor, and use the dashboard's home tab (or `ade item <ref> --watch` in a pane) for the overview.
+
+### Features
+
+* **cleanup:** ade gc and ade cleanup stop a worktree's services and close its tabs before removing it ([#57](https://github.com/coredev-uk/ade/issues/57)) ([3fbfd6e](https://github.com/coredev-uk/ade/commit/3fbfd6e21202a5db02c59e5a1135eaffb325f5ac))
+* **project:** ade project remove stops the project's services and closes its tabs before deleting it ([#58](https://github.com/coredev-uk/ade/issues/58)) ([ad914f1](https://github.com/coredev-uk/ade/commit/ad914f1e28df1d0c7866a8965b62dcf14fbb5b72))
+* **workspace:** a shell and lazygit replace the editor and overview panes, and ade ws close ends a workspace ([#52](https://github.com/coredev-uk/ade/issues/52)) ([3d92514](https://github.com/coredev-uk/ade/commit/3d925149e19b38ea9a7ef30c18bb35decec9ea36))
+
+
+### Fixes
+
+* **workspace:** a service that dies while ADE checks it no longer reads as running ([#59](https://github.com/coredev-uk/ade/issues/59)) ([5d0b94e](https://github.com/coredev-uk/ade/commit/5d0b94e93fe9f0801c4cc0d10123f3f6979703e5))
+* **workspace:** ade ws close keeps the record of tabs it could not close ([#54](https://github.com/coredev-uk/ade/issues/54)) ([a1e95d6](https://github.com/coredev-uk/ade/commit/a1e95d688919fd6843dacd928b8bf405dd1dd106))
+* **workspace:** opening a workspace replaces a home tab whose dashboard has exited ([#56](https://github.com/coredev-uk/ade/issues/56)) ([2572546](https://github.com/coredev-uk/ade/commit/25725462adcc218b21824cb4cf18e9c668f2259e))
+
 ## [0.4.0](https://github.com/coredev-uk/ade/compare/v0.3.0...v0.4.0) (2026-11-23)
 
 
