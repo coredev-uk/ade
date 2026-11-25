@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 )
@@ -460,18 +459,52 @@ func TestOpenTabCreatesTheHomeTabFirstWhenItIsMissing(t *testing.T) {
 }
 
 func TestRecordTabKeepsEveryTabOfATreeOnce(t *testing.T) {
-	dir := t.TempDir()
+	dir, tree := t.TempDir(), t.TempDir()
 	for _, tab := range []string{"web/418-paginate", "web/feature/418", "web/418-paginate"} {
-		if err := recordTab(dir, "/p/web/418", "ade", tab); err != nil {
+		if err := recordTab(dir, tree, "ade", tab); err != nil {
 			t.Fatal(err)
 		}
 	}
-	got := readTabs(dir, "/p/web/418")
+	got := readTabs(dir, tree)
 	if len(got) != 2 || got[0].Tab != "web/418-paginate" || got[1].Tab != "web/feature/418" || got[0].Session != "ade" {
 		t.Fatalf("records: %+v", got)
 	}
-	if readTabs(dir, "/p/web/other") != nil {
+	if readTabs(dir, filepath.Join(tree, "other")) != nil {
 		t.Fatal("another tree has no tabs")
+	}
+}
+
+// gc, cleanup and git remove worktrees without a close: their records go the
+// next time a tab is recorded, and so do records that cannot be read.
+func TestRecordTabPrunesTheRecordsOfRemovedWorktrees(t *testing.T) {
+	dir, live := t.TempDir(), t.TempDir()
+	gone := filepath.Join(t.TempDir(), "web", "418")
+	if err := os.MkdirAll(gone, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, tree := range []string{live, gone} {
+		if err := recordTab(dir, tree, "ade", "web/418"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	junk := filepath.Join(tabRecordDir(dir), "junk.json")
+	if err := os.WriteFile(junk, []byte(`[{"session":"ade","tab":"web/1"}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(gone); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordTab(dir, live, "ade", "web/feature/418"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(tabRecordFile(dir, gone)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the removed worktree's record must go: %v", err)
+	}
+	if _, err := os.Stat(junk); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("an unreadable record must go: %v", err)
+	}
+	if got := readTabs(dir, live); len(got) != 2 {
+		t.Fatalf("the live worktree keeps its tabs: %+v", got)
 	}
 }
 
@@ -483,11 +516,11 @@ func TestFindTabsPutsTheCallersTabLast(t *testing.T) {
 		panes:    `[{"id":7,"is_plugin":true,"tab_id":2},{"id":7,"is_plugin":false,"tab_id":3}]`,
 	}
 	recs := []tabRecord{{"ade", "web/418"}, {"ade", "web/main"}, {"gone", "web/418"}}
-	got, warn := findTabs(context.Background(), z.run, recs, pane{session: "ade", id: "7"})
-	if len(warn) != 0 || len(got) != 1 {
-		t.Fatalf("got %+v warn %v: only the live session", got, warn)
+	got, unreached, warn := findTabs(context.Background(), z.run, recs, pane{session: "ade", id: "7"})
+	if len(warn) != 0 || len(unreached) != 0 || len(got) != 1 {
+		t.Fatalf("got %+v unreached %v warn %v: only the live session", got, unreached, warn)
 	}
-	if st := got[0]; st.session != "ade" || fmt.Sprint(st.ids) != "[2 3]" || strings.Join(st.names, "|") != "web/418 · services|web/418" {
+	if st := got[0]; st.session != "ade" || !st.own || fmt.Sprint(st.ids) != "[2 3]" || strings.Join(st.names, "|") != "web/418 · services|web/418" {
 		t.Fatalf("tabs %+v: the services tab, then the caller's own; web/main was closed by hand", st)
 	}
 	for _, c := range z.calls {
@@ -497,26 +530,66 @@ func TestFindTabsPutsTheCallersTabLast(t *testing.T) {
 	}
 }
 
+// A live session whose tabs cannot be listed may still show them: the close
+// must keep its record.
+func TestFindTabsReturnsTheSessionsItCannotList(t *testing.T) {
+	z := &fakeZellij{sessions: "ade [Created 5s ago]\nwork [Created 1h ago]\n", tabList: `[{"name":"web/418","tab_id":3}]`, failOn: "work action list-tabs"}
+	recs := []tabRecord{{"ade", "web/418"}, {"work", "web/418"}}
+	got, unreached, warn := findTabs(context.Background(), z.run, recs, pane{})
+	if len(got) != 1 || got[0].session != "ade" || fmt.Sprint(unreached) != "[work]" || len(warn) != 1 {
+		t.Fatalf("got %+v unreached %v warn %v", got, unreached, warn)
+	}
+}
+
+// settleInto records each settle call as an action of z, so its order against
+// the closes shows.
+func settleInto(z *fakeZellij) func([]string) error {
+	return func(failed []string) error {
+		z.calls = append(z.calls, []string{"--session", "", "action", "settle " + strings.Join(failed, ",")})
+		return nil
+	}
+}
+
 func TestCloseTabsShowsTheHomeTabFirst(t *testing.T) {
-	targets := []sessionTabs{{session: "ade", ids: []int{2, 3}, names: []string{"web/418 · services", "web/418"}}}
+	targets := []sessionTabs{{session: "ade", ids: []int{2, 3}, names: []string{"web/418 · services", "web/418"}, own: true}}
 	z := &fakeZellij{sessions: "ade [Created 5s ago]\n", tabs: "home\nweb/418\n"}
-	if err := closeTabs(context.Background(), z.run, targets, "/tmp/home.kdl"); err != nil {
+	if err := closeTabs(context.Background(), z.run, targets, "/tmp/home.kdl", settleInto(z)); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(actions(z), "|"); got != "go-to-tab-name home|close-tab-by-id 2|close-tab-by-id 3" {
-		t.Fatalf("actions %q", got)
+	if got := strings.Join(actions(z), "|"); got != "go-to-tab-name home|close-tab-by-id 2|settle |close-tab-by-id 3" {
+		t.Fatalf("actions %q: the record is settled before the caller's own tab closes", got)
 	}
 	// No dashboard: it is created, so the session keeps a tab.
 	z = &fakeZellij{sessions: "ade [Created 5s ago]\n", tabs: "web/418\n"}
-	if err := closeTabs(context.Background(), z.run, targets, "/tmp/home.kdl"); err != nil {
+	if err := closeTabs(context.Background(), z.run, targets, "/tmp/home.kdl", settleInto(z)); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(actions(z), "|"); got != "new-tab --layout /tmp/home.kdl --name home|close-tab-by-id 2|close-tab-by-id 3" {
+	if got := strings.Join(actions(z), "|"); got != "new-tab --layout /tmp/home.kdl --name home|close-tab-by-id 2|settle |close-tab-by-id 3" {
 		t.Fatalf("actions %q", got)
 	}
-	// The home tab cannot be shown: nothing closes.
-	z = &fakeZellij{sessions: "ade [Created 5s ago]\n", tabs: "web/418\n", failOn: "new-tab"}
-	if err := closeTabs(context.Background(), z.run, targets, "/tmp/home.kdl"); err == nil || slices.Contains(actions(z), "close-tab-by-id 3") {
-		t.Fatalf("err %v, actions %q", err, actions(z))
+}
+
+// A session where a tab may still be open keeps its record, so a second
+// `ade ws close` can finish the job.
+func TestCloseTabsKeepsTheRecordOfSessionsItCouldNotClose(t *testing.T) {
+	targets := []sessionTabs{{session: "ade", ids: []int{2, 3}, names: []string{"web/418 · services", "web/418"}, own: true}}
+	for _, c := range []struct{ failOn, want string }{
+		// The home tab cannot be shown: nothing closes.
+		{"new-tab", "new-tab --layout /tmp/home.kdl --name home|settle ade"},
+		{"close-tab-by-id 2", "go-to-tab-name home|close-tab-by-id 2|settle ade|close-tab-by-id 3"},
+		// The caller survives a failed close of its own tab and records it again.
+		{"close-tab-by-id 3", "go-to-tab-name home|close-tab-by-id 2|settle |close-tab-by-id 3|settle ade"},
+	} {
+		tabs := "home\nweb/418\n"
+		if c.failOn == "new-tab" {
+			tabs = "web/418\n"
+		}
+		z := &fakeZellij{sessions: "ade [Created 5s ago]\n", tabs: tabs, failOn: c.failOn}
+		if err := closeTabs(context.Background(), z.run, targets, "/tmp/home.kdl", settleInto(z)); err == nil {
+			t.Fatalf("%s: no error", c.failOn)
+		}
+		if got := strings.Join(actions(z), "|"); got != c.want {
+			t.Errorf("%s: actions %q, want %q", c.failOn, got, c.want)
+		}
 	}
 }

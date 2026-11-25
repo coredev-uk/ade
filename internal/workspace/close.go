@@ -22,9 +22,19 @@ type tabRecord struct {
 	Tab     string `json:"tab"`
 }
 
+// tabRecords is the record file of one worktree: the tree, so the record of a
+// worktree that is gone can be pruned, and its tabs.
+type tabRecords struct {
+	Tree string      `json:"tree"`
+	Tabs []tabRecord `json:"tabs"`
+}
+
+// tabRecordDir holds one record file per worktree.
+func tabRecordDir(cacheDir string) string { return filepath.Join(cacheDir, "ws", "tabs") }
+
 // tabRecordFile is where the tabs of tree are recorded.
 func tabRecordFile(cacheDir, tree string) string {
-	return filepath.Join(cacheDir, "ws", "tabs", slugOf(tree)+".json")
+	return filepath.Join(tabRecordDir(cacheDir), slugOf(tree)+".json")
 }
 
 // readTabs returns the tabs recorded for tree; none when the file is missing or unreadable.
@@ -33,31 +43,90 @@ func readTabs(cacheDir, tree string) []tabRecord {
 	if err != nil {
 		return nil
 	}
-	var recs []tabRecord
-	if json.Unmarshal(data, &recs) != nil {
+	var r tabRecords
+	if json.Unmarshal(data, &r) != nil {
 		return nil
 	}
-	return recs
+	return r.Tabs
 }
 
-// recordTab adds session/tab to the tabs recorded for tree. A worktree can
-// have more than one tab: the dashboard names it after the branch, `ade ws up`
-// after the directory.
-func recordTab(cacheDir, tree, session, tab string) error {
-	recs := readTabs(cacheDir, tree)
-	rec := tabRecord{Session: session, Tab: tab}
-	if slices.Contains(recs, rec) {
+// writeTabs replaces the tabs recorded for tree with recs; none removes the record.
+func writeTabs(cacheDir, tree string, recs []tabRecord) error {
+	file := tabRecordFile(cacheDir, tree)
+	if len(recs) == 0 {
+		if err := os.Remove(file); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("forget the tabs: %w", err)
+		}
 		return nil
 	}
-	file := tabRecordFile(cacheDir, tree)
 	if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
 		return err
 	}
-	data, err := json.Marshal(append(recs, rec))
+	data, err := json.Marshal(tabRecords{Tree: tree, Tabs: recs})
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(file, data, 0o600)
+}
+
+// recordTab adds session/tab to the tabs recorded for tree. A worktree can
+// have more than one tab: the dashboard names it after the branch, `ade ws up`
+// after the directory. The records of worktrees that are gone are pruned first.
+func recordTab(cacheDir, tree, session, tab string) error {
+	pruneErr := pruneTabRecords(cacheDir)
+	recs := readTabs(cacheDir, tree)
+	rec := tabRecord{Session: session, Tab: tab}
+	if slices.Contains(recs, rec) {
+		return pruneErr
+	}
+	return errors.Join(pruneErr, writeTabs(cacheDir, tree, append(recs, rec)))
+}
+
+// pruneTabRecords removes the records of worktrees that no longer exist
+// (`ade gc`, `ade cleanup`, `ade project remove` or git removed them), and
+// records that cannot be read, which no close would use.
+func pruneTabRecords(cacheDir string) error {
+	dir := tabRecordDir(cacheDir)
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
+			continue
+		}
+		file := filepath.Join(dir, e.Name())
+		data, err := os.ReadFile(file)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		var r tabRecords
+		if json.Unmarshal(data, &r) == nil && r.Tree != "" {
+			if _, err := os.Stat(r.Tree); !errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+		}
+		if err := os.Remove(file); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// tabsIn are the records of recs in one of sessions.
+func tabsIn(recs []tabRecord, sessions []string) []tabRecord {
+	var out []tabRecord
+	for _, r := range recs {
+		if slices.Contains(sessions, r.Session) {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // CloseResult says what Close did.
@@ -74,6 +143,7 @@ type sessionTabs struct {
 	session string
 	ids     []int    // the caller's own tab, when among them, last
 	names   []string // parallel to ids
+	own     bool     // the last of ids is the caller's own tab
 }
 
 // Close stops the workspace of worktree and closes its zellij tabs. It
@@ -83,7 +153,9 @@ type sessionTabs struct {
 // there and the session keeps a tab) and closes every tab Open recorded for
 // the worktree, with its services tab. ready runs with the outcome right
 // before the first tab closes: the caller may run inside one of those tabs,
-// and closing it ends the caller, so whatever it prints goes there.
+// and closing it ends the caller, so whatever it prints goes there. The record
+// keeps the tabs of every session where they could not be listed or closed,
+// for a later close.
 func Close(ctx context.Context, a *app.App, worktree string, ready func(CloseResult)) (CloseResult, error) {
 	loc, err := Locate(a.Root, worktree)
 	if err != nil {
@@ -97,6 +169,7 @@ func Close(ctx context.Context, a *app.App, worktree string, ready func(CloseRes
 	stopped, err := mgr.Release(ctx, loc.Tree)
 	res.Stopped = append(res.Stopped, stopped...)
 	var targets []sessionTabs
+	var unreached []string // live sessions whose tabs could not be listed
 	recs := readTabs(a.Paths.CacheDir, loc.Tree)
 	// Without zellij on PATH no session can be asked about its tabs: they may
 	// well be open, so the record stays for a close that can reach them.
@@ -107,7 +180,7 @@ func Close(ctx context.Context, a *app.App, worktree string, ready func(CloseRes
 	}
 	if err == nil && !keep {
 		var warn []string
-		targets, warn = findTabs(ctx, runZellij, recs, ownPane(os.Getenv))
+		targets, unreached, warn = findTabs(ctx, runZellij, recs, ownPane(os.Getenv))
 		res.Warnings = append(res.Warnings, warn...)
 		for _, t := range targets {
 			res.Tabs = append(res.Tabs, t.names...)
@@ -126,11 +199,11 @@ func Close(ctx context.Context, a *app.App, worktree string, ready func(CloseRes
 	if err != nil {
 		return res, err
 	}
-	// Forgotten before the tabs close: closing the caller's own tab ends it.
-	if !keep {
-		if rerr := os.Remove(tabRecordFile(a.Paths.CacheDir, loc.Tree)); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
-			res.Warnings = append(res.Warnings, "forget the tabs: "+rerr.Error())
+	if keep {
+		if ready != nil {
+			ready(res)
 		}
+		return res, nil
 	}
 	var homeFile string
 	if len(targets) > 0 {
@@ -145,7 +218,10 @@ func Close(ctx context.Context, a *app.App, worktree string, ready func(CloseRes
 	if ready != nil {
 		ready(res)
 	}
-	return res, closeTabs(ctx, runZellij, targets, homeFile)
+	settle := func(failed []string) error {
+		return writeTabs(a.Paths.CacheDir, loc.Tree, tabsIn(recs, append(slices.Clone(unreached), failed...)))
+	}
+	return res, closeTabs(ctx, runZellij, targets, homeFile, settle)
 }
 
 // pane is the zellij pane the caller runs in: its session and pane id, both
@@ -162,8 +238,9 @@ func ownPane(getenv func(string) string) pane {
 // findTabs looks up the ids of the recorded tabs, and of their services tabs,
 // in every session that is still running. The session the caller runs in
 // comes last, and in it the caller's own tab. Tabs closed by hand since are
-// simply not found; a session whose tabs cannot be listed is a warning.
-func findTabs(ctx context.Context, run zellijRunner, recs []tabRecord, own pane) ([]sessionTabs, []string) {
+// simply not found. A live session whose tabs cannot be listed is a warning
+// and is returned in unreached: its tabs may still be open.
+func findTabs(ctx context.Context, run zellijRunner, recs []tabRecord, own pane) (out []sessionTabs, unreached, warn []string) {
 	want := map[string]map[string]bool{}
 	var sessions []string
 	for _, r := range recs {
@@ -175,7 +252,7 @@ func findTabs(ctx context.Context, run zellijRunner, recs []tabRecord, own pane)
 		want[r.Session][r.Tab+ServicesTabSuffix] = true
 	}
 	if len(sessions) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	// The caller's session goes last: closing its own tab ends the caller.
 	slices.SortStableFunc(sessions, func(x, y string) int {
@@ -188,25 +265,21 @@ func findTabs(ctx context.Context, run zellijRunner, recs []tabRecord, own pane)
 		return 0
 	})
 	listing, _ := run(ctx, "list-sessions", "--no-formatting")
-	var (
-		out  []sessionTabs
-		warn []string
-	)
 	for _, session := range sessions {
 		if zellij.SessionState(listing, session) != zellij.Live {
 			continue
 		}
 		data, err := run(ctx, "--session", session, "action", "list-tabs", "--json")
-		if err != nil {
-			warn = append(warn, fmt.Sprintf("list the tabs of session %s: %v", session, err))
-			continue
-		}
 		var tabs []struct {
 			Name  string `json:"name"`
 			TabID int    `json:"tab_id"`
 		}
-		if err := json.Unmarshal([]byte(data), &tabs); err != nil {
+		if err == nil {
+			err = json.Unmarshal([]byte(data), &tabs)
+		}
+		if err != nil {
 			warn = append(warn, fmt.Sprintf("list the tabs of session %s: %v", session, err))
+			unreached = append(unreached, session)
 			continue
 		}
 		mine := -1
@@ -228,12 +301,13 @@ func findTabs(ctx context.Context, run zellijRunner, recs []tabRecord, own pane)
 		if lastName != "" {
 			st.ids = append(st.ids, mine)
 			st.names = append(st.names, lastName)
+			st.own = true
 		}
 		if len(st.ids) > 0 {
 			out = append(out, st)
 		}
 	}
-	return out, warn
+	return out, unreached, warn
 }
 
 // paneTab is the id of the tab that holds terminal pane id; -1 when unknown.
@@ -260,16 +334,45 @@ func paneTab(ctx context.Context, run zellijRunner, session, id string) int {
 
 // closeTabs focuses the home tab of each session (creating it from homeFile
 // when it is missing or its dashboard has exited) and closes the tabs by id.
-func closeTabs(ctx context.Context, run zellijRunner, targets []sessionTabs, homeFile string) error {
-	var errs []error
-	for _, t := range targets {
+// settle runs with the sessions where a tab may still be open, before the
+// caller's own tab closes (that ends the caller), and again with its session
+// added when that close fails.
+func closeTabs(ctx context.Context, run zellijRunner, targets []sessionTabs, homeFile string, settle func(failed []string) error) error {
+	var (
+		errs   []error
+		failed []string
+		own    *sessionTabs
+	)
+	for i := range targets {
+		t := &targets[i]
 		if _, err := focusTab(ctx, run, t.session, zellij.HomeTab, homeFile); err != nil {
 			errs = append(errs, fmt.Errorf("session %s: show the home tab: %w", t.session, err))
+			failed = append(failed, t.session)
 			continue // closing the last tab would end the session
 		}
-		for _, id := range t.ids {
+		ids := t.ids
+		if t.own {
+			ids, own = ids[:len(ids)-1], t
+		}
+		for _, id := range ids {
 			if _, err := run(ctx, "--session", t.session, "action", "close-tab-by-id", strconv.Itoa(id)); err != nil {
 				errs = append(errs, err)
+				if !slices.Contains(failed, t.session) {
+					failed = append(failed, t.session)
+				}
+			}
+		}
+	}
+	if err := settle(failed); err != nil {
+		errs = append(errs, err)
+	}
+	if own != nil {
+		if _, err := run(ctx, "--session", own.session, "action", "close-tab-by-id", strconv.Itoa(own.ids[len(own.ids)-1])); err != nil {
+			errs = append(errs, err)
+			if !slices.Contains(failed, own.session) {
+				if err := settle(append(failed, own.session)); err != nil {
+					errs = append(errs, err)
+				}
 			}
 		}
 	}

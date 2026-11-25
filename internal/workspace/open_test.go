@@ -334,12 +334,24 @@ func TestCloseKeepsTheTabRecordOnlyWhileZellijIsUnreachable(t *testing.T) {
 		t.Fatalf("audit: %v %+v", err, entries)
 	}
 
-	// A zellij with no live session: list-sessions fails, the session is gone.
+	// A live session whose tabs cannot be listed: they may be open, the record stays.
 	bin := t.TempDir()
-	if err := os.WriteFile(filepath.Join(bin, "zellij"), []byte("#!/bin/sh\necho 'No active zellij sessions found.' >&2\nexit 1\n"), 0o755); err != nil {
+	script := "#!/bin/sh\n[ \"$1\" = list-sessions ] && { echo 'ade [Created 5s ago]'; exit 0; }\necho 'no list-tabs here' >&2\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(bin, "zellij"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin)
+	if res, err = Close(context.Background(), a, tree, nil); err != nil || len(res.Tabs) != 0 || len(res.Warnings) != 1 {
+		t.Fatalf("res %+v err %v", res, err)
+	}
+	if readTabs(a.Paths.CacheDir, tree) == nil {
+		t.Fatal("the tabs of a session that could not be listed may be open: the record must stay")
+	}
+
+	// A zellij with no live session: list-sessions fails, the session is gone.
+	if err := os.WriteFile(filepath.Join(bin, "zellij"), []byte("#!/bin/sh\necho 'No active zellij sessions found.' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if res, err = Close(context.Background(), a, tree, nil); err != nil || len(res.Tabs) != 0 || len(res.Warnings) != 0 {
 		t.Fatalf("res %+v err %v", res, err)
 	}
