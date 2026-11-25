@@ -363,6 +363,12 @@ func openProjectTab(ctx context.Context, run zellijRunner, a *app.App, loc Locat
 	}
 	res.LayoutFile = file
 	res.Created, _, err = openTab(ctx, run, session, res.Tab, file, tabLayout{})
+	// `ade project remove` closes it: recorded under the project directory.
+	if err == nil {
+		if rerr := recordTab(a.Paths.CacheDir, loc.ProjectDir, session, res.Tab); rerr != nil {
+			res.Warnings = append(res.Warnings, "record the tab for ade project remove: "+rerr.Error())
+		}
+	}
 	entry := audit.Entry{
 		Action: "workspace.open", Target: loc.ProjectDir, Project: loc.Project, Outcome: "ok",
 		Params: map[string]any{"host": HostZellij, "layout": res.Layout, "tab": res.Tab},

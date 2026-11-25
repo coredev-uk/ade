@@ -209,74 +209,177 @@ func closeTree(ctx context.Context, a *app.App, loc Location, retire bool, ready
 	}
 	stopped, err := mgr.Release(ctx, loc.Tree)
 	res.Stopped = append(res.Stopped, stopped...)
-	var targets []sessionTabs
-	var unreached []string // live sessions whose tabs could not be listed
 	recs := readTabs(a.Paths.CacheDir, loc.Tree)
-	// Without zellij on PATH no session can be asked about its tabs: they may
-	// well be open, so the record stays for a close that can reach them.
-	_, lookErr := exec.LookPath("zellij")
-	keep := len(recs) > 0 && lookErr != nil
-	if keep {
-		res.Warnings = append(res.Warnings, "zellij is not on PATH: the workspace's tabs were left open")
+	var found recorded
+	if err == nil {
+		found = findRecorded(ctx, recs, retire, &res)
 	}
-	if err == nil && !keep {
-		var warn []string
-		targets, unreached, warn = findTabs(ctx, runZellij, recs, ownPane(os.Getenv))
-		res.Warnings = append(res.Warnings, warn...)
-		if retire {
-			targets, res.KeptTab = keepOwnTab(targets)
-		}
-		for _, t := range targets {
-			res.Tabs = append(res.Tabs, t.names...)
-		}
-	}
-	entry := audit.Entry{
-		Action: "workspace.close", Target: loc.Tree, Project: loc.Project, Outcome: "ok",
-		Params: map[string]any{"stopped": len(res.Stopped), "tabs": res.Tabs},
-	}
+	reason := ""
 	if retire {
-		entry.Params["reason"] = "worktree removal"
+		reason = "worktree removal"
 	}
-	if err != nil {
-		entry.Outcome, entry.Error = "error", err.Error()
-	}
-	if aerr := a.Audit.Append(entry); aerr != nil && err == nil {
-		err = aerr
-	}
-	if err != nil {
+	if err = auditClose(a, loc.Tree, loc.Project, reason, res, err); err != nil {
 		return res, err
 	}
-	if keep {
+	if found.keep {
 		if ready != nil {
 			ready(res)
 		}
 		return res, nil
 	}
-	err = func() error {
-		var homeFile string
-		if len(targets) > 0 {
-			ade, err := os.Executable()
-			if err != nil {
-				return fmt.Errorf("locate ade executable: %w", err)
-			}
-			if homeFile, err = WriteHomeLayout(a.Paths.CacheDir, ade); err != nil {
-				return err
-			}
-		}
+	settle := func(failed []string) error {
+		return writeTabs(a.Paths.CacheDir, loc.Tree, tabsIn(recs, append(slices.Clone(found.unreached), failed...)))
+	}
+	err = shutTabs(ctx, a, found.targets, func() {
 		if ready != nil {
 			ready(res)
 		}
-		settle := func(failed []string) error {
-			return writeTabs(a.Paths.CacheDir, loc.Tree, tabsIn(recs, append(slices.Clone(unreached), failed...)))
-		}
-		return closeTabs(ctx, runZellij, targets, homeFile, settle)
-	}()
+	}, settle)
 	// The instances are stopped: tabs left open do not keep a removal from going ahead.
 	if retire && err != nil {
 		res.Warnings = append(res.Warnings, "close the tabs: "+err.Error())
 		err = nil
 	}
 	return res, err
+}
+
+// RetireProject is Retire for a whole project about to be removed (`ade
+// project remove`): every instance of the project stops, `keep` ones and
+// those a workspace holds included, since their trees go, and the tabs ADE
+// recorded for its worktrees and for its services tab close, except the
+// caller's own. An error means the instances could not be stopped, so the
+// project must stay; a tab that does not close is a warning. CloseResult.Tree
+// is the project directory.
+func RetireProject(ctx context.Context, a *app.App, project string) (CloseResult, error) {
+	root := a.Root
+	if resolved, err := resolve(root); err == nil {
+		root = resolved // as Locate and LocateProject record trees
+	}
+	dir := filepath.Join(root, project)
+	res := CloseResult{Tree: dir, Stopped: []Stopped{}, Tabs: []string{}}
+	mgr, err := NewManager(a)
+	if err != nil {
+		return res, err
+	}
+	down, err := mgr.Down(ctx, project, DownOptions{Force: true})
+	res.Stopped = append(res.Stopped, down.Stopped...)
+	files, recs := projectTabRecords(a.Paths.CacheDir, dir)
+	var found recorded
+	if err == nil {
+		found = findRecorded(ctx, recs, true, &res)
+	}
+	if err = auditClose(a, dir, project, "project removal", res, err); err != nil {
+		return res, err
+	}
+	if found.keep {
+		return res, nil
+	}
+	// The trees go with the project: no record is kept for a later close.
+	settle := func([]string) error {
+		var errs []error
+		for _, f := range files {
+			if err := os.Remove(f); err != nil && !errors.Is(err, os.ErrNotExist) {
+				errs = append(errs, err)
+			}
+		}
+		return errors.Join(errs...)
+	}
+	if err := shutTabs(ctx, a, found.targets, nil, settle); err != nil {
+		res.Warnings = append(res.Warnings, "close the tabs: "+err.Error())
+	}
+	return res, nil
+}
+
+// projectTabRecords returns the record files of the trees under dir (the
+// project's worktrees, and dir itself for its services tab) and their tabs.
+func projectTabRecords(cacheDir, dir string) (files []string, recs []tabRecord) {
+	entries, _ := os.ReadDir(tabRecordDir(cacheDir)) // none recorded yet: nothing to close
+	for _, e := range entries {
+		file := filepath.Join(tabRecordDir(cacheDir), e.Name())
+		data, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+		var r tabRecords
+		if json.Unmarshal(data, &r) != nil || r.Tree != dir && !strings.HasPrefix(r.Tree, dir+string(filepath.Separator)) {
+			continue
+		}
+		files = append(files, file)
+		for _, t := range r.Tabs {
+			if !slices.Contains(recs, t) {
+				recs = append(recs, t)
+			}
+		}
+	}
+	return files, recs
+}
+
+// recorded is what findRecorded learned about the recorded tabs.
+type recorded struct {
+	targets   []sessionTabs
+	unreached []string // live sessions whose tabs could not be listed
+	keep      bool     // zellij is not on PATH: the tabs may be open, the record stays
+}
+
+// findRecorded looks up the tabs of recs (findTabs) and adds what it found to
+// res; with keepOwn the caller's own tab is left out and named in KeptTab.
+func findRecorded(ctx context.Context, recs []tabRecord, keepOwn bool, res *CloseResult) recorded {
+	var f recorded
+	// Without zellij on PATH no session can be asked about its tabs: they may
+	// well be open, so the record stays for a close that can reach them.
+	if _, err := exec.LookPath("zellij"); err != nil && len(recs) > 0 {
+		f.keep = true
+		res.Warnings = append(res.Warnings, "zellij is not on PATH: the workspace's tabs were left open")
+		return f
+	}
+	var warn []string
+	f.targets, f.unreached, warn = findTabs(ctx, runZellij, recs, ownPane(os.Getenv))
+	res.Warnings = append(res.Warnings, warn...)
+	if keepOwn {
+		f.targets, res.KeptTab = keepOwnTab(f.targets)
+	}
+	for _, t := range f.targets {
+		res.Tabs = append(res.Tabs, t.names...)
+	}
+	return f
+}
+
+// auditClose records a close as workspace.close; err is the close's own
+// error, returned unless the audit fails where the close did not.
+func auditClose(a *app.App, target, project, reason string, res CloseResult, err error) error {
+	entry := audit.Entry{
+		Action: "workspace.close", Target: target, Project: project, Outcome: "ok",
+		Params: map[string]any{"stopped": len(res.Stopped), "tabs": res.Tabs},
+	}
+	if reason != "" {
+		entry.Params["reason"] = reason
+	}
+	if err != nil {
+		entry.Outcome, entry.Error = "error", err.Error()
+	}
+	if aerr := a.Audit.Append(entry); aerr != nil && err == nil {
+		return aerr
+	}
+	return err
+}
+
+// shutTabs focuses each session's home tab and closes targets (closeTabs);
+// ready, when set, runs right before the first tab closes.
+func shutTabs(ctx context.Context, a *app.App, targets []sessionTabs, ready func(), settle func([]string) error) error {
+	var homeFile string
+	if len(targets) > 0 {
+		ade, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("locate ade executable: %w", err)
+		}
+		if homeFile, err = WriteHomeLayout(a.Paths.CacheDir, ade); err != nil {
+			return err
+		}
+	}
+	if ready != nil {
+		ready()
+	}
+	return closeTabs(ctx, runZellij, targets, homeFile, settle)
 }
 
 // keepOwnTab takes the caller's own tab out of targets and returns its name.
