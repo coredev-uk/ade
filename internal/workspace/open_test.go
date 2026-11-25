@@ -438,3 +438,83 @@ func TestRetireStopsTheWorkspaceAndKeepsTheCallersTab(t *testing.T) {
 		t.Fatalf("audit: %v %+v", err, entries)
 	}
 }
+
+// Before `ade project remove` deletes a project, everything it runs stops,
+// shared baseline services included, and the tabs of its worktrees and its
+// services tab close.
+func TestRetireProjectStopsEverythingAndClosesItsTabs(t *testing.T) {
+	f := newFixture(t, appManifest, "api/main", "web/main")
+	path := os.Getenv("PATH")
+	a := newApp(t, f, "zellij")
+	t.Setenv("PATH", path) // the services run on the real PATH
+	ctx := context.Background()
+	tree := filepath.Join(f.root, "demo", "web", "main")
+	mgr, err := NewManager(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr.Grace = 2 * time.Second
+	t.Cleanup(func() {
+		rows, _ := mgr.Status(context.Background())
+		for _, r := range rows {
+			stopGroup(r.PID, r.pstart, time.Second)
+		}
+	})
+	plan, err := mgr.Plan(ctx, f.loc("web/main"), PlanOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	up, err := mgr.Up(ctx, plan, UpOptions{Holder: tree})
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := byNode(up, "api.dev")
+	if api.PID == 0 || !processAlive(api.PID, 0) {
+		t.Fatalf("api.dev is not running: %+v", api)
+	}
+	if err := recordTab(a.Paths.CacheDir, tree, "ade", "web/main"); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordTab(a.Paths.CacheDir, filepath.Join(f.root, "demo"), "ade", "demo · services"); err != nil {
+		t.Fatal(err)
+	}
+
+	bin := t.TempDir()
+	log := filepath.Join(bin, "calls")
+	script := "#!/bin/sh\necho \"$*\" >> " + log + "\ncase \"$*\" in\n" +
+		"list-sessions*) echo 'ade [Created 5s ago]' ;;\n" +
+		"*list-tabs*) echo '[{\"name\":\"home\",\"tab_id\":0},{\"name\":\"web/main\",\"tab_id\":3},{\"name\":\"web/main · services\",\"tab_id\":2},{\"name\":\"demo · services\",\"tab_id\":5}]' ;;\n" +
+		"*query-tab-names*) printf 'home\\nweb/main\\n' ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(filepath.Join(bin, "zellij"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	t.Setenv("ZELLIJ", "") // run from outside zellij: no tab of the caller's to keep
+
+	res, err := RetireProject(ctx, a, "demo")
+	if err != nil || len(res.Warnings) != 0 {
+		t.Fatalf("res %+v err %v", res, err)
+	}
+	if processAlive(api.PID, 0) {
+		t.Fatal("the project's api.dev still runs")
+	}
+	if rows, _ := mgr.Status(ctx); len(rows) != 0 {
+		t.Fatalf("instances left behind: %+v", rows)
+	}
+	if got := strings.Join(res.Tabs, "|"); got != "web/main|web/main · services|demo · services" {
+		t.Fatalf("tabs %q", got)
+	}
+	calls, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"3", "2", "5"} {
+		if !strings.Contains(string(calls), "close-tab-by-id "+id) {
+			t.Errorf("tab %s not closed:\n%s", id, calls)
+		}
+	}
+	if readTabs(a.Paths.CacheDir, tree) != nil || readTabs(a.Paths.CacheDir, filepath.Join(f.root, "demo")) != nil {
+		t.Fatal("the project's tab records must go with it")
+	}
+}

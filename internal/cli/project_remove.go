@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/coredev-uk/ade/internal/project"
+	"github.com/coredev-uk/ade/internal/workspace"
 )
 
 func newProjectRemoveCmd() *cobra.Command {
@@ -19,6 +20,12 @@ func newProjectRemoveCmd() *cobra.Command {
 baseline trees and feature worktrees. It refuses when a worktree has uncommitted
 changes or commits that no remote branch has (or a local branch nobody pushed),
 and says where; --force deletes anyway. Item records and the audit log are kept.
+
+Before the directory goes, every task and service of the project stops (those
+workspaces hold and keep = true ones included: their trees go) and the zellij
+tabs ADE opened for its worktrees and its services tab close; the tab this
+command runs in stays open. When the services cannot be stopped nothing is
+deleted.
 
 --dry-run only reports. Without --yes it asks first (and refuses to run unattended).`,
 		Args: cobra.ExactArgs(1),
@@ -51,11 +58,21 @@ and says where; --force deletes anyway. Item records and the audit log are kept.
 					return err
 				}
 			}
+			retired, err := workspace.RetireProject(cmd.Context(), a, plan.Name)
+			if err != nil {
+				return fmt.Errorf("stop the project's services: %w (nothing was deleted)", err)
+			}
 			if err := ps.Remove(cmd.Context(), plan, force); err != nil {
 				return err
 			}
 			if jsonOut {
-				return printJSON(w, plan)
+				return printJSON(w, struct {
+					project.RemovePlan
+					Workspace []string `json:"workspace,omitempty"`
+				}{plan, retired.RetireNotes()})
+			}
+			for _, n := range retired.RetireNotes() {
+				fmt.Fprintln(w, "  "+n)
 			}
 			fmt.Fprintf(w, "removed project %s\n", plan.Name)
 			return nil

@@ -251,6 +251,10 @@ func TestProjectRemoveGuardsAndForces(t *testing.T) {
 	if strings.Contains(string(cfg), "demo-gl.ade.toml") {
 		t.Errorf("config still registers the project:\n%s", cfg)
 	}
+	// Only the real removal stopped the project's workspaces; the refused and dry runs did not.
+	if es := e.audited("workspace.close"); len(es) != 1 || es[0].Outcome != "ok" || es[0].Params["reason"] != "project removal" {
+		t.Errorf("audit workspace.close = %+v", es)
+	}
 }
 
 func isExit(err error, code int) bool {
