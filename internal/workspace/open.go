@@ -415,7 +415,7 @@ func openZellij(ctx context.Context, a *app.App, p *prepared, res *OpenResult) e
 	if err != nil {
 		return err
 	}
-	before := []tabLayout{{name: zellij.HomeTab, file: homeFile}}
+	before := []tabLayout{{name: zellij.HomeTab, file: homeFile, replaceExited: true}}
 	if spec.HasServicesTab() {
 		svc, err := BuildServicesLayout(spec)
 		if err != nil {
@@ -523,13 +523,19 @@ func exitedTabs(ctx context.Context, run zellijRunner, session, tab string) []in
 }
 
 // tabLayout is a tab to create from a layout file; the zero value is none.
-type tabLayout struct{ name, file string }
+// replaceExited marks a tab that runs one command that stays up (the
+// dashboard): openTab replaces it when that command has exited, as focusTab does.
+type tabLayout struct {
+	name, file    string
+	replaceExited bool
+}
 
 // openTab focuses the tab when it exists, otherwise creates it from layoutFile.
 // A new tab also gets each of the before tabs created ahead of it, in order,
-// unless that one exists: zellij focuses every tab it creates, so the tab the
-// user asked for goes last and ends up focused. A before tab that fails is
-// returned in beforeErrs and does not stop the main tab.
+// unless that one exists (and, for replaceExited, still runs its command):
+// zellij focuses every tab it creates, so the tab the user asked for goes last
+// and ends up focused. A before tab that fails is returned in beforeErrs and
+// does not stop the main tab.
 func openTab(ctx context.Context, run zellijRunner, session, tab, layoutFile string, before ...tabLayout) (created bool, beforeErrs []error, err error) {
 	listing, _ := run(ctx, "list-sessions", "--no-formatting") // no server yet: no sessions
 	if zellij.SessionState(listing, session) != zellij.Live {
@@ -548,11 +554,27 @@ func openTab(ctx context.Context, run zellijRunner, session, tab, layoutFile str
 		return false, nil, err
 	}
 	for _, t := range before {
-		if t.name == "" || have[t.name] {
+		if t.name == "" {
 			continue
 		}
+		var stale []int
+		if have[t.name] {
+			if t.replaceExited {
+				stale = exitedTabs(ctx, run, session, t.name)
+			}
+			if len(stale) == 0 {
+				continue
+			}
+		}
+		// The new tab goes first: closing the session's last tab would end the session.
 		if _, err := run(ctx, "--session", session, "action", "new-tab", "--layout", t.file, "--name", t.name); err != nil {
 			beforeErrs = append(beforeErrs, fmt.Errorf("%s tab: %w", t.name, err))
+			continue
+		}
+		for _, id := range stale {
+			if _, err := run(ctx, "--session", session, "action", "close-tab-by-id", strconv.Itoa(id)); err != nil {
+				beforeErrs = append(beforeErrs, fmt.Errorf("%s tab: close the exited one: %w", t.name, err))
+			}
 		}
 	}
 	_, err = run(ctx, "--session", session, "action", "new-tab", "--layout", layoutFile, "--name", tab)

@@ -439,7 +439,7 @@ func TestSlugIsASingleSafePathElement(t *testing.T) {
 }
 
 func TestOpenTabCreatesTheHomeTabFirstWhenItIsMissing(t *testing.T) {
-	home := tabLayout{name: "home", file: "/tmp/home.kdl"}
+	home := tabLayout{name: "home", file: "/tmp/home.kdl", replaceExited: true}
 	services := tabLayout{name: "web/418 · services", file: "/tmp/s.kdl"}
 	z := &fakeZellij{sessions: "ade [Created 5s ago]\n", tabs: "api/9\n"}
 	if created, errs, err := openTab(context.Background(), z.run, "ade", "web/418", "/tmp/x.kdl", home, services); err != nil || errs != nil || !created {
@@ -449,12 +449,35 @@ func TestOpenTabCreatesTheHomeTabFirstWhenItIsMissing(t *testing.T) {
 	if got := strings.Join(actions(z), "|"); got != want {
 		t.Fatalf("actions %q, want %q: the dashboard first, the workspace tab last so it ends focused", got, want)
 	}
-	z = &fakeZellij{sessions: "ade [Created 5s ago]\n", tabs: "home\n"}
+	z = &fakeZellij{sessions: "ade [Created 5s ago]\n", tabs: "home\n", panes: aliveHomePane}
 	if _, _, err := openTab(context.Background(), z.run, "ade", "web/418", "/tmp/x.kdl", home); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.Join(actions(z), "|"); got != "new-tab --layout /tmp/x.kdl --name web/418" {
 		t.Fatalf("a running dashboard is left alone: %q", got)
+	}
+}
+
+// A home tab whose dashboard has exited is no dashboard one tab away: it is
+// replaced. A services tab whose install pane has finished is left alone.
+func TestOpenTabReplacesAnExitedHomeTab(t *testing.T) {
+	home := tabLayout{name: "home", file: "/tmp/home.kdl", replaceExited: true}
+	z := &fakeZellij{sessions: "ade [Created 5s ago]\n", tabs: "home\n", panes: deadHomePane}
+	if _, errs, err := openTab(context.Background(), z.run, "ade", "web/418", "/tmp/x.kdl", home); err != nil || errs != nil {
+		t.Fatalf("errs=%v err=%v", errs, err)
+	}
+	want := "new-tab --layout /tmp/home.kdl --name home|close-tab-by-id 7|new-tab --layout /tmp/x.kdl --name web/418"
+	if got := strings.Join(actions(z), "|"); got != want {
+		t.Fatalf("actions %q, want %q: a fresh dashboard before the dead one closes, the workspace tab last", got, want)
+	}
+
+	services := tabLayout{name: "web/418 · services", file: "/tmp/s.kdl"}
+	z = &fakeZellij{sessions: "ade [Created 5s ago]\n", tabs: "home\nweb/418 · services\n", panes: `[{"is_plugin":false,"exited":true,"tab_id":4,"tab_name":"web/418 · services"}]`}
+	if _, _, err := openTab(context.Background(), z.run, "ade", "web/418", "/tmp/x.kdl", home, services); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(actions(z), "|"); got != "new-tab --layout /tmp/x.kdl --name web/418" {
+		t.Fatalf("actions %q: only the workspace tab is new", got)
 	}
 }
 
