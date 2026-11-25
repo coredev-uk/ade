@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/coredev-uk/ade/internal/app"
 	"github.com/coredev-uk/ade/internal/audit"
@@ -357,5 +358,83 @@ func TestCloseKeepsTheTabRecordOnlyWhileZellijIsUnreachable(t *testing.T) {
 	}
 	if readTabs(a.Paths.CacheDir, tree) != nil {
 		t.Fatal("the session is gone: the record must go")
+	}
+}
+
+// Before gc or cleanup removes a worktree, Retire stops what its workspace runs
+// and closes its tabs, but not the tab the removal runs in: closing that one
+// would end the removal half way.
+func TestRetireStopsTheWorkspaceAndKeepsTheCallersTab(t *testing.T) {
+	f := newFixture(t, appManifest, "api/main", "web/main")
+	path := os.Getenv("PATH")
+	a := newApp(t, f, "zellij")
+	t.Setenv("PATH", path) // the services run on the real PATH
+	ctx := context.Background()
+	tree := filepath.Join(f.root, "demo", "web", "main")
+	mgr, err := NewManager(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr.Grace = 2 * time.Second
+	t.Cleanup(func() {
+		rows, _ := mgr.Status(context.Background())
+		for _, r := range rows {
+			stopGroup(r.PID, r.pstart, time.Second)
+		}
+	})
+	plan, err := mgr.Plan(ctx, f.loc("web/main"), PlanOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	up, err := mgr.Up(ctx, plan, UpOptions{Holder: tree})
+	if err != nil {
+		t.Fatal(err)
+	}
+	web := byNode(up, "web.dev")
+	if web.PID == 0 || !processAlive(web.PID, 0) {
+		t.Fatalf("web.dev is not running: %+v", web)
+	}
+	if err := recordTab(a.Paths.CacheDir, tree, "ade", "web/main"); err != nil {
+		t.Fatal(err)
+	}
+
+	// A zellij whose session shows the workspace tab (3, holding the caller's
+	// pane 7) and its services tab (2).
+	bin := t.TempDir()
+	log := filepath.Join(bin, "calls")
+	script := "#!/bin/sh\necho \"$*\" >> " + log + "\ncase \"$*\" in\n" +
+		"list-sessions*) echo 'ade [Created 5s ago]' ;;\n" +
+		"*list-tabs*) echo '[{\"name\":\"home\",\"tab_id\":0},{\"name\":\"web/main\",\"tab_id\":3},{\"name\":\"web/main · services\",\"tab_id\":2}]' ;;\n" +
+		"*list-panes*) echo '[{\"id\":7,\"is_plugin\":false,\"tab_id\":3}]' ;;\n" +
+		"*query-tab-names*) printf 'home\\nweb/main\\n' ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(filepath.Join(bin, "zellij"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	t.Setenv("ZELLIJ", "0")
+	t.Setenv("ZELLIJ_SESSION_NAME", "ade")
+	t.Setenv("ZELLIJ_PANE_ID", "7")
+
+	res, err := Retire(ctx, a, tree)
+	if err != nil || len(res.Warnings) != 0 {
+		t.Fatalf("res %+v err %v", res, err)
+	}
+	if processAlive(web.PID, 0) {
+		t.Fatal("web.dev still runs from a worktree about to be removed")
+	}
+	if strings.Join(res.Tabs, "|") != "web/main · services" || res.KeptTab != "web/main" {
+		t.Fatalf("tabs %q kept %q: the services tab closes, the caller's own stays", res.Tabs, res.KeptTab)
+	}
+	calls, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(calls), "close-tab-by-id 2") || strings.Contains(string(calls), "close-tab-by-id 3") {
+		t.Fatalf("zellij calls:\n%s", calls)
+	}
+	entries, err := a.Audit.Query(audit.Filter{Action: "workspace.close"})
+	if err != nil || len(entries) != 1 || entries[0].Params["reason"] != "worktree removal" {
+		t.Fatalf("audit: %v %+v", err, entries)
 	}
 }

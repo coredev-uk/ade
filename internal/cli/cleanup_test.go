@@ -101,7 +101,8 @@ func TestCleanupRemovesTreeFastForwardsBaselineAndDeletesBranch(t *testing.T) {
 	if branches := gitOut(t, bare, "branch", "--list", cleanupWebBranch); branches != "" {
 		t.Errorf("local branch survived: %q", branches)
 	}
-	for _, action := range []string{"worktree.remove", "git.branch.delete", "git.pull"} {
+	// The workspace is closed before the worktree goes (services stopped, tabs closed).
+	for _, action := range []string{"workspace.close", "worktree.remove", "git.branch.delete", "git.pull"} {
 		if es := e.audited(action); len(es) != 1 || es[0].Outcome != "ok" {
 			t.Errorf("audit %s = %+v", action, es)
 		}

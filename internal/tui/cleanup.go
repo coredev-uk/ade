@@ -7,10 +7,12 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/coredev-uk/ade/internal/app"
 	"github.com/coredev-uk/ade/internal/config"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/forgesync"
 	"github.com/coredev-uk/ade/internal/project"
+	"github.com/coredev-uk/ade/internal/workspace"
 )
 
 // `x` on a Home item cleans up its finished work, and the palette's "Clean up
@@ -152,7 +154,7 @@ func cleanupPlan(ctx context.Context, ps *project.Service, trees []project.Tree,
 	}
 	return actionPlan{
 		lines: lines, verb: verb,
-		note: "Only worktrees that are clean, pushed, and whose merge requests are merged or closed are removed, and git refuses one that changed since. A branch git does not see as merged is deleted with -D only when all its commits are in a merged MR's head (the rows above say which).",
+		note: "Only worktrees that are clean, pushed, and whose merge requests are merged or closed are removed, and git refuses one that changed since. Each one's services stop and its tabs close first, as ade ws close does. A branch git does not see as merged is deleted with -D only when all its commits are in a merged MR's head (the rows above say which).",
 		apply: func(ctx context.Context) ([]string, error) {
 			if item {
 				return applyCleanup(ctx, ps, doomed)
@@ -172,11 +174,31 @@ func branchPlanLine(branch string, forced bool, why string) string {
 	return fmt.Sprintf("branch %s: deleted if git sees it merged, else kept (%s)", branch, why)
 }
 
+// retireTrees closes the workspace of each tree about to be removed
+// (workspace.Retire). It returns the trees that may go, the lines that say what
+// was done, and how many stay because their instances could not be stopped.
+func retireTrees(ctx context.Context, a *app.App, trees []project.Tree) (ready []project.Tree, out []string, failed int) {
+	for _, t := range trees {
+		res, err := workspace.Retire(ctx, a, t.Path)
+		for _, n := range res.RetireNotes() {
+			out = append(out, t.Label()+": "+n)
+		}
+		if err != nil {
+			out = append(out, "failed  "+t.Label()+"  stop its workspace: "+err.Error())
+			failed++
+			continue
+		}
+		ready = append(ready, t)
+	}
+	return ready, out, failed
+}
+
 func applyCleanup(ctx context.Context, ps *project.Service, doomed []project.Tree) ([]string, error) {
-	cleaned, baselines, failed := ps.CleanTrees(ctx, doomed, false)
-	var out []string
+	ready, out, failed := retireTrees(ctx, ps.App, doomed)
+	cleaned, baselines, removeFailed := ps.CleanTrees(ctx, ready, false)
+	failed += removeFailed
 	for i, c := range cleaned {
-		t := doomed[i]
+		t := ready[i]
 		switch {
 		case c.Error != "":
 			out = append(out, "failed  "+t.Label()+"  "+c.Error)
@@ -196,9 +218,8 @@ func applyCleanup(ctx context.Context, ps *project.Service, doomed []project.Tre
 }
 
 func applyGC(ctx context.Context, ps *project.Service, doomed []project.Tree) ([]string, error) {
-	var out []string
-	failed := 0
-	for _, t := range doomed {
+	ready, out, failed := retireTrees(ctx, ps.App, doomed)
+	for _, t := range ready {
 		fate, err := ps.RemoveTree(ctx, t)
 		if err != nil {
 			out = append(out, "failed  "+t.Label()+"  "+err.Error())
