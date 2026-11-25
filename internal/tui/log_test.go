@@ -262,7 +262,9 @@ func TestLogSelectionSurvivesFiltering(t *testing.T) {
 func TestLogPageRendersAtEachSize(t *testing.T) {
 	useUTC(t)
 	l, now := logFixture(t)
-	today := fmtDay(now.Local().Format("2006-01-02"))
+	// The newest entry is 10 minutes old: its day header is yesterday's in the
+	// first minutes after midnight, so the header is taken from it, not from now.
+	newestDay := fmtDay(now.Add(-10 * time.Minute).Local().Format("2006-01-02"))
 	cases := []struct {
 		name string
 		g    glyphs
@@ -270,7 +272,7 @@ func TestLogPageRendersAtEachSize(t *testing.T) {
 		env  bool
 		want []string
 	}{
-		{"80x24", unicodeGlyphs, 80, 24, false, []string{"ADE", "Log", "8 entries", "since 1d", today, "forge.thread.reply", "✓ ok", "✕ error", "$0.0026", "✓ ok · cache hit", "○ skipped · dry run"}},
+		{"80x24", unicodeGlyphs, 80, 24, false, []string{"ADE", "Log", "8 entries", "since 1d", newestDay, "forge.thread.reply", "✓ ok", "✕ error", "$0.0026", "✓ ok · cache hit", "○ skipped · dry run"}},
 		{"120x40", unicodeGlyphs, 120, 40, false, []string{"Log", "forge.mr.merge", "✕ error", "$0.0026", "cache hit", "│", "forge.thread.reply", "Params", `"chars": 120`}},
 		{"80x24 ascii", asciiGlyphs, 80, 24, false, []string{"x error", "+ ok", "o skipped - dry run", "+ ok - cache hit"}},
 		{"120x40 NO_COLOR ascii", asciiGlyphs, 120, 40, true, []string{"x error", "+ ok - $0.0026", "o skipped - dry run"}},
