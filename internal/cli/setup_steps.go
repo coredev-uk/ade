@@ -15,8 +15,8 @@ import (
 	"github.com/coredev-uk/ade/internal/devshell"
 	"github.com/coredev-uk/ade/internal/forgesync"
 	"github.com/coredev-uk/ade/internal/host/zellij"
-	"github.com/coredev-uk/ade/internal/paths"
 	"github.com/coredev-uk/ade/internal/project"
+	"github.com/coredev-uk/ade/internal/workspace"
 )
 
 // checkTemplate rejects a --config-from file that ADE would not accept.
@@ -307,12 +307,9 @@ func startSession(ctx context.Context, a *app.App, name string) setupSession {
 		if err != nil {
 			return fail(fmt.Errorf("locate ade executable: %w", err))
 		}
-		if err := paths.EnsureDir(a.Paths.CacheDir); err != nil {
+		layoutFile, err := workspace.WriteHomeLayout(a.Paths.CacheDir, ade)
+		if err != nil {
 			return fail(err)
-		}
-		layoutFile := filepath.Join(a.Paths.CacheDir, "layout.kdl")
-		if err := os.WriteFile(layoutFile, []byte(zellij.Layout(ade)), 0o600); err != nil {
-			return fail(fmt.Errorf("write layout: %w", err))
 		}
 		argv = append(argv, "--layout", layoutFile, "attach", "--create-background", name)
 		s.Status = "started"
