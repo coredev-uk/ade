@@ -16,6 +16,7 @@ import (
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/forgesync"
 	"github.com/coredev-uk/ade/internal/project"
+	"github.com/coredev-uk/ade/internal/workspace"
 )
 
 func init() { register(newGCCmd) }
@@ -34,6 +35,9 @@ type gcRow struct {
 	BranchForced bool   `json:"branch_forced,omitempty"`
 	BranchWhy    string `json:"branch_why,omitempty"`
 	Error        string `json:"error,omitempty"`
+	// Workspace says what was done to the worktree's workspace before the
+	// removal: instances stopped, tabs closed, warnings (workspace.Retire).
+	Workspace []string `json:"workspace,omitempty"`
 }
 
 func newGCCmd() *cobra.Command {
@@ -54,6 +58,12 @@ baseline tree and worktrees whose branch has an open merge request or none are
 never touched. The local branch goes with the worktree when git sees it as merged, or
 (git branch -D) when every commit on it is in the head commit of a merged merge request,
 as after a squash merge; otherwise it stays, with the reason.
+
+Before a worktree goes, its workspace is closed as "ade ws close" does: the tasks
+and services it holds stop (an instance another workspace still holds keeps
+running) and the zellij tabs ADE opened for it close, its services tab too. The
+tab this command runs in stays open. A worktree whose instances cannot be stopped
+is not removed.
 
 --dry-run only reports, including which branches it would delete and why: it touches no worktree or branch, but still fetches. Without --yes it asks first (and refuses to run unattended).
 Exits 2 when a removal failed.`,
@@ -198,9 +208,13 @@ func isDevNull(f *os.File) bool {
 }
 
 // removeAll removes rows[idx...] and records the outcome on each row; it
-// returns how many failed.
+// returns how many failed. Each worktree's workspace is retired first.
 func removeAll(ctx context.Context, ps *project.Service, rows []gcRow, idx []int) (failed int) {
 	for _, i := range idx {
+		if !retireRow(ctx, ps.App, &rows[i]) {
+			failed++
+			continue
+		}
 		fate, err := ps.RemoveTree(ctx, rows[i].Tree)
 		if err != nil {
 			rows[i].Error = err.Error()
@@ -210,6 +224,19 @@ func removeAll(ctx context.Context, ps *project.Service, rows []gcRow, idx []int
 		rows[i].setBranchFate(fate)
 	}
 	return failed
+}
+
+// retireRow stops the workspace of a row about to be removed and closes its
+// tabs (workspace.Retire). False, with the row's error set, when its
+// instances could not be stopped: the worktree must stay.
+func retireRow(ctx context.Context, a *app.App, r *gcRow) bool {
+	res, err := workspace.Retire(ctx, a, r.Path)
+	r.Workspace = res.RetireNotes()
+	if err != nil {
+		r.Error = "stop its workspace: " + err.Error()
+		return false
+	}
+	return true
 }
 
 // setBranchFate records a removal and what became of its branch.
@@ -255,5 +282,13 @@ func printRemoved(w io.Writer, rows []gcRow, idx []int) {
 		default:
 			fmt.Fprintf(w, "removed %s\n", r.Label())
 		}
+		printWorkspace(w, r)
+	}
+}
+
+// printWorkspace lists, under a row, what was done to its workspace.
+func printWorkspace(w io.Writer, r gcRow) {
+	for _, n := range r.Workspace {
+		fmt.Fprintln(w, "  "+n)
 	}
 }

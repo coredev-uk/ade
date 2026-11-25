@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/coredev-uk/ade/internal/app"
 	"github.com/coredev-uk/ade/internal/audit"
@@ -134,7 +135,9 @@ type CloseResult struct {
 	Tree    string    `json:"tree"`
 	Stopped []Stopped `json:"stopped"`
 	// Tabs are the zellij tabs closed: the workspace's tabs and their services tabs.
-	Tabs     []string `json:"tabs"`
+	Tabs []string `json:"tabs"`
+	// KeptTab is the caller's own tab, which Retire leaves open.
+	KeptTab  string   `json:"kept_tab,omitempty"`
 	Warnings []string `json:"warnings,omitempty"`
 }
 
@@ -161,6 +164,44 @@ func Close(ctx context.Context, a *app.App, worktree string, ready func(CloseRes
 	if err != nil {
 		return CloseResult{}, err
 	}
+	return closeTree(ctx, a, loc, false, ready)
+}
+
+// Retire is Close for a worktree about to be removed (`ade gc`, `ade
+// cleanup`): its instances stop and its tabs close before the directory goes.
+// The tab the caller runs in, when it is one of them, stays open, since closing
+// it would end the removal half way; KeptTab names it. An error means the
+// instances could not be stopped, so the worktree must stay; a tab that does
+// not close is a warning. A path Locate rejects never had a workspace (Open
+// locates it too), so there is nothing to stop.
+func Retire(ctx context.Context, a *app.App, worktree string) (CloseResult, error) {
+	loc, err := Locate(a.Root, worktree)
+	if err != nil {
+		return CloseResult{Tree: worktree, Stopped: []Stopped{}, Tabs: []string{}}, nil
+	}
+	return closeTree(ctx, a, loc, true, nil)
+}
+
+// RetireNotes are the lines that say what Retire did, for the removal's report.
+func (r CloseResult) RetireNotes() []string {
+	var out []string
+	for _, s := range r.Stopped {
+		out = append(out, "stopped "+s.Node)
+	}
+	if len(r.Tabs) > 0 {
+		out = append(out, "closed tabs "+strings.Join(r.Tabs, ", "))
+	}
+	if r.KeptTab != "" {
+		out = append(out, "tab "+r.KeptTab+" left open: this command runs in it")
+	}
+	for _, w := range r.Warnings {
+		out = append(out, "warning: "+w)
+	}
+	return out
+}
+
+// closeTree is Close and, with retire set, Retire.
+func closeTree(ctx context.Context, a *app.App, loc Location, retire bool, ready func(CloseResult)) (CloseResult, error) {
 	res := CloseResult{Tree: loc.Tree, Stopped: []Stopped{}, Tabs: []string{}}
 	mgr, err := NewManager(a)
 	if err != nil {
@@ -182,6 +223,9 @@ func Close(ctx context.Context, a *app.App, worktree string, ready func(CloseRes
 		var warn []string
 		targets, unreached, warn = findTabs(ctx, runZellij, recs, ownPane(os.Getenv))
 		res.Warnings = append(res.Warnings, warn...)
+		if retire {
+			targets, res.KeptTab = keepOwnTab(targets)
+		}
 		for _, t := range targets {
 			res.Tabs = append(res.Tabs, t.names...)
 		}
@@ -189,6 +233,9 @@ func Close(ctx context.Context, a *app.App, worktree string, ready func(CloseRes
 	entry := audit.Entry{
 		Action: "workspace.close", Target: loc.Tree, Project: loc.Project, Outcome: "ok",
 		Params: map[string]any{"stopped": len(res.Stopped), "tabs": res.Tabs},
+	}
+	if retire {
+		entry.Params["reason"] = "worktree removal"
 	}
 	if err != nil {
 		entry.Outcome, entry.Error = "error", err.Error()
@@ -205,23 +252,48 @@ func Close(ctx context.Context, a *app.App, worktree string, ready func(CloseRes
 		}
 		return res, nil
 	}
-	var homeFile string
-	if len(targets) > 0 {
-		ade, err := os.Executable()
-		if err != nil {
-			return res, fmt.Errorf("locate ade executable: %w", err)
+	err = func() error {
+		var homeFile string
+		if len(targets) > 0 {
+			ade, err := os.Executable()
+			if err != nil {
+				return fmt.Errorf("locate ade executable: %w", err)
+			}
+			if homeFile, err = WriteHomeLayout(a.Paths.CacheDir, ade); err != nil {
+				return err
+			}
 		}
-		if homeFile, err = WriteHomeLayout(a.Paths.CacheDir, ade); err != nil {
-			return res, err
+		if ready != nil {
+			ready(res)
+		}
+		settle := func(failed []string) error {
+			return writeTabs(a.Paths.CacheDir, loc.Tree, tabsIn(recs, append(slices.Clone(unreached), failed...)))
+		}
+		return closeTabs(ctx, runZellij, targets, homeFile, settle)
+	}()
+	// The instances are stopped: tabs left open do not keep a removal from going ahead.
+	if retire && err != nil {
+		res.Warnings = append(res.Warnings, "close the tabs: "+err.Error())
+		err = nil
+	}
+	return res, err
+}
+
+// keepOwnTab takes the caller's own tab out of targets and returns its name.
+func keepOwnTab(targets []sessionTabs) ([]sessionTabs, string) {
+	var out []sessionTabs
+	kept := ""
+	for _, t := range targets {
+		if t.own {
+			last := len(t.ids) - 1
+			kept = t.names[last]
+			t.ids, t.names, t.own = t.ids[:last], t.names[:last], false
+		}
+		if len(t.ids) > 0 {
+			out = append(out, t)
 		}
 	}
-	if ready != nil {
-		ready(res)
-	}
-	settle := func(failed []string) error {
-		return writeTabs(a.Paths.CacheDir, loc.Tree, tabsIn(recs, append(slices.Clone(unreached), failed...)))
-	}
-	return res, closeTabs(ctx, runZellij, targets, homeFile, settle)
+	return out, kept
 }
 
 // pane is the zellij pane the caller runs in: its session and pane id, both

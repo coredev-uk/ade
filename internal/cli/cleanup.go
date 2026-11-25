@@ -40,6 +40,11 @@ ancestor of it; ade fetches the commit when the clone lacks it). A branch with c
 merged MR stays, with that reason. The default branch is never deleted, and git itself refuses a
 branch checked out in another worktree. Worktrees are never forced.
 
+Before a worktree goes, its workspace is closed as "ade ws close" does: the tasks and services it
+holds stop (an instance another workspace still holds keeps running) and the zellij tabs ADE opened
+for it close, its services tab too. The tab this command runs in stays open. A worktree whose
+instances cannot be stopped is not removed.
+
 A tree that fails a check stays, with the reason, and the command exits 2. --dry-run only
 reports (it still fetches) and says which branches it would delete and why. Without --yes it asks first and refuses to run unattended.
 <ref> is group/project#N or group/project!N, or N when one project is registered.`,
@@ -153,13 +158,25 @@ func keptWhy(rows []gcRow) string {
 }
 
 // cleanTrees runs project.CleanTrees on the doomed rows and records the outcome
-// on them and in res.Baselines. It returns how many removals failed.
+// on them and in res.Baselines. It returns how many removals failed. A real
+// run retires each worktree's workspace first; one that cannot be retired stays.
 func cleanTrees(ctx context.Context, ps *project.Service, res *cleanupOut, doomed []int, dry bool) (failed int) {
+	if !dry {
+		var ready []int
+		for _, i := range doomed {
+			if retireRow(ctx, ps.App, &res.Trees[i]) {
+				ready = append(ready, i)
+			} else {
+				failed++
+			}
+		}
+		doomed = ready
+	}
 	trees := make([]project.Tree, len(doomed))
 	for k, i := range doomed {
 		trees[k] = res.Trees[i].Tree
 	}
-	cleaned, baselines, failed := ps.CleanTrees(ctx, trees, dry)
+	cleaned, baselines, removeFailed := ps.CleanTrees(ctx, trees, dry)
 	res.Baselines = append(res.Baselines, baselines...)
 	for k, i := range doomed {
 		c := cleaned[k]
@@ -172,7 +189,7 @@ func cleanTrees(ctx context.Context, ps *project.Service, res *cleanupOut, doome
 			res.Trees[i].setBranchFate(c.Fate)
 		}
 	}
-	return failed
+	return failed + removeFailed
 }
 
 func printCleanup(w io.Writer, res cleanupOut, doomed []int) {
@@ -186,6 +203,7 @@ func printCleanup(w io.Writer, res cleanupOut, doomed []int) {
 		default:
 			fmt.Fprintln(w, r.branchLine())
 		}
+		printWorkspace(w, r)
 	}
 	for _, b := range res.Baselines {
 		name := b.Project + "/" + b.Repo + "/" + b.Branch
