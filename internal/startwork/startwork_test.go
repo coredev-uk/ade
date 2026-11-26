@@ -821,9 +821,10 @@ func TestStartPlacesTheChildUnderTheTrackerInTheHierarchy(t *testing.T) {
 	}
 }
 
-// GitLab nests only some pairs of types: a refusal is a note, the link and
-// Parent: line stand, and the next start does not ask again.
-func TestStartKeepsTheLinkWhenTheHierarchyRefusesAndDoesNotAskAgain(t *testing.T) {
+// GitLab nests only some pairs of types, decided per pair of work items: a
+// refusal is a note for that start, the link and Parent: line stand, and the
+// next start (another tracker issue, maybe another type) still tries.
+func TestStartKeepsTheLinkWhenTheHierarchyRefusesAndTriesAgainNextTime(t *testing.T) {
 	h := newHarness(t, fake.Free, fake.WithRefusedParents())
 	_, res, err := h.start(3, draftApi())
 	if err != nil {
@@ -840,25 +841,42 @@ func TestStartKeepsTheLinkWhenTheHierarchyRefusesAndDoesNotAskAgain(t *testing.T
 	if !slices.ContainsFunc(res.Notes, func(n string) bool { return strings.Contains(n, "hierarchy") && strings.Contains(n, "does not allow") }) {
 		t.Errorf("no warning about the refused hierarchy: %v", res.Notes)
 	}
-	if h.mutations() != 1 {
-		t.Fatalf("%d mutations, want the one refused attempt", h.mutations())
-	}
 
+	// The next tracker issue nests: it is placed, and nothing says otherwise.
+	h.srv.RefuseParents(false)
 	_, res2, err := h.start(4, draftApi())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if h.mutations() != 1 {
-		t.Errorf("the second start asked again (%d mutations)", h.mutations())
+	child := *target(t, res2, "api").Child
+	if got, ok := h.srv.Parent(child); !ok || got != issueRef(tracker, 4) {
+		t.Errorf("parent of %s = %v (%v), want %s", child, got, ok, issueRef(tracker, 4))
 	}
-	if !slices.ContainsFunc(res2.Notes, func(n string) bool { return strings.Contains(n, "refused earlier") }) {
-		t.Errorf("the remembered refusal is not mentioned: %v", res2.Notes)
+	if slices.ContainsFunc(res2.Notes, func(n string) bool { return strings.Contains(n, "not placed") }) {
+		t.Errorf("a placed child is reported as not placed: %v", res2.Notes)
+	}
+}
+
+// A note never says "not placed" about a child that is under the tracker
+// issue: an error answer is checked against the hierarchy first.
+func TestStartReadsTheHierarchyBackBeforeReportingAParentError(t *testing.T) {
+	h := newHarness(t, fake.Free, fake.WithParentErrorAfterPlacing("Something went wrong"))
+	_, res, err := h.start(3, draftApi())
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := *target(t, res, "api").Child
+	if got, ok := h.srv.Parent(child); !ok || got != issueRef(tracker, 3) {
+		t.Fatalf("parent of %s = %v (%v)", child, got, ok)
+	}
+	if slices.ContainsFunc(res.Notes, func(n string) bool { return strings.Contains(n, "not placed") }) {
+		t.Errorf("a placed child is reported as not placed: %v", res.Notes)
 	}
 }
 
 // An error that is not about the types (permission, a locked issue) is a note
-// for this start only: the next one asks again.
-func TestStartDoesNotRememberAParentErrorThatIsNotATypeRefusal(t *testing.T) {
+// on each start, and each start tries once.
+func TestStartNotesAParentErrorOnEveryStart(t *testing.T) {
 	h := newHarness(t, fake.Free, fake.WithParentError("You do not have permission to update this work item"))
 	for i, iid := range []int{3, 4} {
 		_, res, err := h.start(iid, draftApi())
@@ -869,9 +887,6 @@ func TestStartDoesNotRememberAParentErrorThatIsNotATypeRefusal(t *testing.T) {
 			return strings.Contains(n, "not placed under") && strings.Contains(n, "permission")
 		}) {
 			t.Errorf("start %d: no note about the parent: %v", i+1, res.Notes)
-		}
-		if slices.ContainsFunc(res.Notes, func(n string) bool { return strings.Contains(n, "refused earlier") }) {
-			t.Errorf("start %d: an ordinary error was remembered as a refusal: %v", i+1, res.Notes)
 		}
 	}
 	if h.mutations() != 2 {

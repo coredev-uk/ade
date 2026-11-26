@@ -89,11 +89,14 @@ type options struct {
 	noHierarchy   bool
 	refuseParents bool
 	parentError   string // workItemUpdate answers this payload error
-	forbidParents bool   // workItemUpdate answers 403, as a read-only token gets
-	workItemPage  int    // caps workItems page size below the requested one; 0 = no cap
-	userNamespace bool
-	rateLimit     int
-	rateWindow    time.Duration
+	// parentErrorPlaced is a payload error workItemUpdate answers after it has
+	// placed the child, so the answer and the hierarchy disagree.
+	parentErrorPlaced string
+	forbidParents     bool // workItemUpdate answers 403, as a read-only token gets
+	workItemPage      int  // caps workItems page size below the requested one; 0 = no cap
+	userNamespace     bool
+	rateLimit         int
+	rateWindow        time.Duration
 
 	selfHosted
 }

@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/coredev-uk/ade/internal/audit"
 	"github.com/coredev-uk/ade/internal/commitprefix"
@@ -17,7 +16,6 @@ import (
 	"github.com/coredev-uk/ade/internal/events"
 	"github.com/coredev-uk/ade/internal/forge"
 	"github.com/coredev-uk/ade/internal/git"
-	"github.com/coredev-uk/ade/internal/store"
 	"github.com/coredev-uk/ade/internal/workspace"
 )
 
@@ -332,56 +330,43 @@ func (e *Env) link(ctx context.Context, p Plan, rt *runtime, res *Result) error 
 	return nil
 }
 
-// parentRefusedTTL is how long a forge's refusal to nest one project's issues
-// under another's is remembered: types do not change between starts, and a
-// retry on every start would only repeat the refusal.
-const parentRefusedTTL = 7 * 24 * time.Hour
-
-// ParentRefusedKey is the kv key of a remembered refusal to place issues of
-// childProject under issues of trackerProject.
-func ParentRefusedKey(forgeName, trackerProject, childProject string) string {
-	return "startwork:parent-refused:" + forgeName + ":" + trackerProject + ":" + childProject
-}
-
 // setParent also places the child under the tracker issue in the forge's
 // hierarchy, where it has one. It is best effort: the relates_to link and the
 // Parent: line already tie the two together, so a refusal (the forge only
 // nests some pairs of types, such as an issue under an epic) or an unreachable
-// hierarchy is a note, not a failed step, and a refusal of the pair of types is
-// remembered (a success forgets it).
+// hierarchy is a note, not a failed step. It is tried on every start: GitLab
+// decides by each pair's work item types, not by project, so one refusal says
+// nothing about the next tracker issue. Before an error becomes a note the
+// hierarchy is read back, so a child that is under the tracker issue after all
+// is never reported as not placed.
 func (e *Env) setParent(ctx context.Context, p Plan, child forge.Ref, res *Result) {
 	pr, ok := e.Forge.(forge.Parenter)
 	if !ok {
 		return
 	}
-	st, serr := e.App.Cache()
-	key := ParentRefusedKey(p.in.Manifest.Forge, p.Item.Project, child.Project)
-	now := time.Now()
-	if serr == nil {
-		if refused, ok := store.Peek[bool](st, key, parentRefusedTTL, now); ok && refused {
-			res.Notes = append(res.Notes, fmt.Sprintf("%s not placed under %s in the hierarchy: refused earlier (the relates_to link and Parent: line stand)", child, p.Item))
-			return
-		}
-	}
 	err := pr.SetParent(ctx, child, p.Item)
 	if errors.Is(err, forge.ErrUnavailable) {
 		return // an instance without a hierarchy has nothing to warn about
 	}
-	e.audit(p, "forge.issue.parent", child.String(), map[string]any{"parent": p.Item.String()}, "", err)
+	placed := err == nil
+	if !placed {
+		if parents, perr := pr.Parents(ctx, []forge.Ref{child}); perr == nil && sameIssue(parents[child], p.Item) {
+			placed = true
+		}
+	}
+	e.audit(p, "forge.issue.parent", child.String(), map[string]any{"parent": p.Item.String(), "placed": placed}, "", err)
 	switch {
-	case err == nil:
-		if serr == nil {
-			store.Put(st, key, now, false) // a pair that nests after all is not refused
-		}
+	case placed:
 	case errors.Is(err, forge.ErrParentRefused):
-		if serr == nil {
-			store.Put(st, key, now, true)
-		}
 		res.Notes = append(res.Notes, fmt.Sprintf("%s not placed under %s in the hierarchy: the forge does not allow that pair of types (the relates_to link and Parent: line stand)", child, p.Item))
 	default:
 		res.Notes = append(res.Notes, fmt.Sprintf("%s not placed under %s in the hierarchy: %v (the relates_to link and Parent: line stand)", child, p.Item, err))
 	}
 }
+
+// sameIssue compares two issue refs by project and iid, whatever kind each
+// was read with.
+func sameIssue(a, b forge.Ref) bool { return a.IID == b.IID && strings.EqualFold(a.Project, b.Project) }
 
 func (e *Env) copyIteration(ctx context.Context, p Plan, rt *runtime, sr *StepResult, res *Result) error {
 	it := rt.tp.Child.Iteration

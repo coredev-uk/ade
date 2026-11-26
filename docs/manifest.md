@@ -182,9 +182,9 @@ mr          = { create = "ask", template = "Default", draft = true, closes = "ch
   - On GitLab, `ade start` also places the child under the tracker issue in GitLab's work item hierarchy
     (GraphQL `workItemUpdate`), where the instance has one. GitLab nests only some pairs of types (an issue
     under an epic, a task under an issue), so it may refuse an issue under an issue. A refusal is a warning,
-    not a failure: the `relates_to` link and the `Parent:` line stay, and ADE remembers a refusal of the pair
-    of types for a week so later starts do not ask again. Any other error (a permission problem, say) is a
-    warning for that start only and is not remembered.
+    not a failure: the `relates_to` link and the `Parent:` line stay. Every start tries again, since GitLab
+    decides by the two work items' types and another tracker issue may nest. Before warning, ADE reads the
+    hierarchy back, so a child that is under the tracker issue is never reported as not placed.
   - To decide which tracker issue a code-repo issue belongs to, ADE asks in this order: the hierarchy parent
     (GraphQL, skipped silently where the instance or forge has none), the `Parent:` line, then a `relates_to`
     link from the child to a tracker issue. The hierarchy is read for every code-repo issue ADE lists, so a
