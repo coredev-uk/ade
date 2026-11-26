@@ -438,6 +438,11 @@ func (e *Env) createMR(ctx context.Context, p Plan, m *config.Manifest, rt *runt
 		CommitPrefix: commitprefix.ForBranch(m, p.Item.IID, rt.child.IID, rt.branch),
 	}
 	spec := rt.tp.MR
+	var assignees []string
+	if spec.Assignee != nil {
+		d.Assignees = []forge.User{*spec.Assignee}
+		assignees = []string{spec.Assignee.Username}
+	}
 	reviewers := make([]string, len(spec.ReviewerUsers))
 	for i, u := range spec.ReviewerUsers {
 		d.ReviewerIDs = append(d.ReviewerIDs, u.ID)
@@ -461,6 +466,9 @@ func (e *Env) createMR(ctx context.Context, p Plan, m *config.Manifest, rt *runt
 	params := map[string]any{
 		"source": d.Source, "target": d.Target, "draft": d.Draft, "template": rt.tp.MR.Template,
 		"stripped": rt.tp.MR.Stripped, "quick_actions": len(rt.tp.MR.Actions), "outcome": sr.Outcome,
+	}
+	if len(assignees) > 0 && sr.Outcome != OutcomeExists {
+		params["assignees"] = assignees
 	}
 	if spec.ReviewerGroup != "" && sr.Outcome != OutcomeExists {
 		params["reviewer_group"], params["reviewers"] = spec.ReviewerGroup, reviewers

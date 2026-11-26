@@ -386,7 +386,11 @@ func TestMRStepNamesTheReviewerGroup(t *testing.T) {
 					text = s.Text
 				}
 			}
-			if got := strings.TrimPrefix(text, "open draft MR "+p.Targets[0].Branch+" → "+p.Targets[0].MR.Target); got != tc.want {
+			head := "open draft MR " + p.Targets[0].Branch + " → " + p.Targets[0].MR.Target + ", assigned to you"
+			if !strings.HasPrefix(text, head) {
+				t.Errorf("MR step = %q, want it to start %q", text, head)
+			}
+			if got := strings.TrimPrefix(text, head); got != tc.want {
 				t.Errorf("MR step tail = %q, want %q", got, tc.want)
 			}
 		})

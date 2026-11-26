@@ -37,6 +37,10 @@ type MRDraft struct {
 	Description string
 	Draft       bool
 	Labels      []string
+	// Assignees are the users the MR is assigned to: GitLab takes them on
+	// create (assignee_ids), GitHub right after it (the pull request's issue
+	// assignees, by login).
+	Assignees []User
 	// CommitPrefix is the prefix for any commit the forge must create to open
 	// the MR (GitHub's empty start commit); empty means none.
 	CommitPrefix string
