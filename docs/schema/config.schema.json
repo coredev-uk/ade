@@ -269,7 +269,7 @@
           "type": "string"
         },
         "layout": {
-          "description": "Default tab layout: code (a shell in the dev shell, stacked with lazygit), agent (omp with the ADE implement skill) or manual (the same tab as code). Overrides the manifest workspace's layout; empty keeps it.",
+          "description": "Default tab layout: code (a shell in the dev shell, stacked with lazygit), agent (the same stack plus omp with the ADE implement skill, in front) or manual (the same tab as code). Overrides the manifest workspace's layout; empty keeps it.",
           "enum": [
             "code",
             "agent",
@@ -285,6 +285,10 @@
             "vscode",
             "plain"
           ],
+          "type": "string"
+        },
+        "shell": {
+          "description": "Shell of the workspace tab's shell pane and of new panes in the ADE zellij session: a path or a name on PATH (zsh). Empty: $SHELL, unless that is a Nix dev shell's bash, then the login shell from /etc/passwd.",
           "type": "string"
         }
       },

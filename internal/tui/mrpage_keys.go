@@ -538,7 +538,7 @@ func mrHelpRows(ai bool) [][2]string {
 		{"v", "ask for a review again: reviewers, or @users"},
 		{"u", "update the branch from the target (rebase or merge)"},
 		{"E", "edit the MR description by hand (no AI)"},
-		{"w W", "open this MR's worktree (W: other main pane)"},
+		{"w W", "open this MR's worktree (W: with omp)"},
 		{"p", "push this MR's branch (shows the commits first)"},
 		{"P", "agent menu: plan, address comments"},
 		{"l", "CI: job log (full screen, / searches)"},

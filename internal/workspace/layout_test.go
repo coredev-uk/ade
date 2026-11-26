@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -127,6 +128,32 @@ func TestUserShell(t *testing.T) {
 	}
 }
 
+// host.shell picks the shell: a name is looked up on PATH, a path is kept; one
+// that does not exist falls back to the usual shell and says so.
+func TestShellForHonoursHostShell(t *testing.T) {
+	bin := t.TempDir()
+	zsh := filepath.Join(bin, "zsh")
+	if err := os.WriteFile(zsh, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	t.Setenv("SHELL", "/bin/bash")
+	for _, setting := range []string{"zsh", zsh} {
+		if got, err := ShellFor(setting); err != nil || got != zsh {
+			t.Errorf("ShellFor(%q) = %q, %v; want %q", setting, got, err, zsh)
+		}
+	}
+	if got, err := ShellFor(""); err != nil || got != "/bin/bash" {
+		t.Errorf("unset: %q, %v; want $SHELL", got, err)
+	}
+	if got, err := ShellFor("fish"); err == nil || got != "/bin/bash" || !strings.Contains(err.Error(), `host.shell "fish"`) {
+		t.Errorf("missing: %q, %v; want $SHELL and an error naming host.shell", got, err)
+	}
+	if tools := DetectTools("/ade", "zsh"); tools.Shell != zsh {
+		t.Errorf("DetectTools shell = %q, want %q", tools.Shell, zsh)
+	}
+}
+
 func TestBuildLayoutAgentPaneStartsOmpWithTheSkillOverlay(t *testing.T) {
 	s := baseSpec(LayoutAgent)
 	s.Agent = []string{"--config", "/cache/ws/agent/x/omp.yml", `Read skill://ade-implement and implement "it"`}
@@ -134,7 +161,7 @@ func TestBuildLayoutAgentPaneStartsOmpWithTheSkillOverlay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `pane name="agent" size="60%" focus=true command="env" {
+	want := `pane name="agent" expanded=true focus=true command="env" {
                 args "ADE_AGENT_RUN=1" "/bin/omp" "--config" "/cache/ws/agent/x/omp.yml" "Read skill://ade-implement and implement \"it\""
             }`
 	if !strings.Contains(got, want) {
@@ -156,7 +183,7 @@ func TestBuildLayoutAgentPaneUnsetsHiddenVariables(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `pane name="agent" size="60%" focus=true command="env" {
+	want := `pane name="agent" expanded=true focus=true command="env" {
                 args "-u" "GITLAB_TOKEN" "-u" "GH_TOKEN" "ADE_AGENT_RUN=1" "/bin/omp" "--config" "/cache/omp.yml"
             }`
 	if !strings.Contains(got, want) {
@@ -183,7 +210,7 @@ func TestBuildLayoutVariants(t *testing.T) {
 		want   []string
 		not    []string
 	}{
-		{LayoutAgent, []string{`name="agent" size="60%" focus=true`, `"ADE_AGENT_RUN=1" "/bin/omp"`, `pane name="lazygit" expanded=true`, `name="api.dev"`, `name="web.dev"`}, []string{`name="editor"`}},
+		{LayoutAgent, []string{"pane size=\"70%\" stacked=true {\n            pane name=\"shell\"\n            pane name=\"lazygit\" command=\"/bin/lazygit\"\n            pane name=\"agent\" expanded=true focus=true command=\"env\"", `"ADE_AGENT_RUN=1" "/bin/omp"`, `name="api.dev"`, `name="web.dev"`}, []string{`name="editor"`, `size="60%"`}},
 		{LayoutReview, []string{`name="diff"`, `command="sh"`, `args "-c" "git diff 'origin/main'...HEAD | '/bin/delta'"`}, []string{`name="editor"`, `"/bin/omp"`}},
 		{LayoutManual, []string{`name="shell" expanded=true focus=true`, `name="lazygit"`, `name="web.dev"`}, []string{`"/bin/omp"`, `ADE_AGENT_RUN`, `name="editor"`}},
 	}
@@ -330,6 +357,29 @@ func TestOpenTabCreatesThenFocuses(t *testing.T) {
 	}
 	if last := strings.Join(z.calls[len(z.calls)-1], " "); last != "--session ade action go-to-tab-name web/418" {
 		t.Fatalf("must focus, not create: %s", last)
+	}
+}
+
+// A worktree's tab opened under another name (`ade ws up` names it after the
+// directory, the dashboard after the branch) is focused, not opened twice.
+func TestOpenTabAsFocusesTheTabUnderAnotherName(t *testing.T) {
+	z := &fakeZellij{sessions: "ade [Created 5s ago]\n", tabs: "home\nweb/feat-x\n"}
+	tab, created, _, err := openTabAs(context.Background(), z.run, "ade", "web/feat/x", []string{"web/gone", "web/feat-x"}, "/tmp/x.kdl")
+	if err != nil || created || tab != "web/feat-x" {
+		t.Fatalf("tab=%q created=%v err=%v", tab, created, err)
+	}
+	for _, c := range z.calls {
+		if slices.Contains(c, "new-tab") {
+			t.Fatalf("created a second tab: %v", c)
+		}
+	}
+	if last := strings.Join(z.calls[len(z.calls)-1], " "); last != "--session ade action go-to-tab-name web/feat-x" {
+		t.Fatalf("must focus the open tab: %s", last)
+	}
+	// None of the names open: the tab is created under its own name.
+	z = &fakeZellij{sessions: "ade [Created 5s ago]\n", tabs: "home\n"}
+	if tab, created, _, err = openTabAs(context.Background(), z.run, "ade", "web/feat/x", []string{"web/feat-x"}, "/tmp/x.kdl"); err != nil || !created || tab != "web/feat/x" {
+		t.Fatalf("tab=%q created=%v err=%v", tab, created, err)
 	}
 }
 
@@ -538,7 +588,7 @@ func TestFindTabsPutsTheCallersTabLast(t *testing.T) {
 		tabList:  `[{"name":"home","tab_id":0},{"name":"web/418","tab_id":3},{"name":"web/418 · services","tab_id":2},{"name":"api/9","tab_id":5}]`,
 		panes:    `[{"id":7,"is_plugin":true,"tab_id":2},{"id":7,"is_plugin":false,"tab_id":3}]`,
 	}
-	recs := []tabRecord{{"ade", "web/418"}, {"ade", "web/main"}, {"gone", "web/418"}}
+	recs := []tabRecord{{Session: "ade", Tab: "web/418"}, {Session: "ade", Tab: "web/main"}, {Session: "gone", Tab: "web/418"}}
 	got, unreached, warn := findTabs(context.Background(), z.run, recs, pane{session: "ade", id: "7"})
 	if len(warn) != 0 || len(unreached) != 0 || len(got) != 1 {
 		t.Fatalf("got %+v unreached %v warn %v: only the live session", got, unreached, warn)
@@ -557,7 +607,7 @@ func TestFindTabsPutsTheCallersTabLast(t *testing.T) {
 // must keep its record.
 func TestFindTabsReturnsTheSessionsItCannotList(t *testing.T) {
 	z := &fakeZellij{sessions: "ade [Created 5s ago]\nwork [Created 1h ago]\n", tabList: `[{"name":"web/418","tab_id":3}]`, failOn: "work action list-tabs"}
-	recs := []tabRecord{{"ade", "web/418"}, {"work", "web/418"}}
+	recs := []tabRecord{{Session: "ade", Tab: "web/418"}, {Session: "work", Tab: "web/418"}}
 	got, unreached, warn := findTabs(context.Background(), z.run, recs, pane{})
 	if len(got) != 1 || got[0].session != "ade" || fmt.Sprint(unreached) != "[work]" || len(warn) != 1 {
 		t.Fatalf("got %+v unreached %v warn %v", got, unreached, warn)

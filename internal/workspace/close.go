@@ -21,6 +21,9 @@ import (
 type tabRecord struct {
 	Session string `json:"session"`
 	Tab     string `json:"tab"`
+	// Review marks a review tab (the diff): opening the worktree's workspace
+	// does not reopen it in place of a dev tab, nor the other way round.
+	Review bool `json:"review,omitempty"`
 }
 
 // tabRecords is the record file of one worktree: the tree, so the record of a
@@ -74,9 +77,13 @@ func writeTabs(cacheDir, tree string, recs []tabRecord) error {
 // have more than one tab: the dashboard names it after the branch, `ade ws up`
 // after the directory. The records of worktrees that are gone are pruned first.
 func recordTab(cacheDir, tree, session, tab string) error {
+	return recordTabOf(cacheDir, tree, tabRecord{Session: session, Tab: tab})
+}
+
+// recordTabOf is recordTab for a full record.
+func recordTabOf(cacheDir, tree string, rec tabRecord) error {
 	pruneErr := pruneTabRecords(cacheDir)
 	recs := readTabs(cacheDir, tree)
-	rec := tabRecord{Session: session, Tab: tab}
 	if slices.Contains(recs, rec) {
 		return pruneErr
 	}

@@ -123,7 +123,7 @@ func (m model) paletteEntries() []palEntry {
 	if m.page == pageTrees && !m.isAgilePage() {
 		trees := []palEntry{
 			pressEntry("Open workspace", "w", "ade ws up", false),
-			pressEntry("Open workspace with the other main pane (omp or editor)", "W", "ade ws up --layout agent", false),
+			pressEntry("Open workspace with omp (or without, when omp is your default)", "W", "ade ws up --layout agent", false),
 			{name: "VS Code workspace", key: "v", cli: "ade vscode workspace <ref> --open", run: func(m model) (model, tea.Cmd) { return m.press("v") }},
 			pressEntry("Copy the tree's path", "y", "", false),
 		}
@@ -155,7 +155,7 @@ func (m model) paletteEntries() []palEntry {
 		pressEntry("Agents: every run", "A", "ade agent list", true),
 		pressEntry("Open workspace", "w", "ade ws up", true),
 		{name: "VS Code workspace for " + m.paletteSubject(), key: "v", cli: "ade vscode workspace <ref> --open", needHome: true, run: func(m model) (model, tea.Cmd) { return m.press("v") }},
-		pressEntry("Open workspace with the other main pane (omp or editor)", "W", "ade ws up --layout agent", true),
+		pressEntry("Open workspace with omp (or without, when omp is your default)", "W", "ade ws up --layout agent", true),
 		pressEntry("Restart blocked services", "r", "ade ws restart", true),
 		pressEntry("Copy link", "y", "", true),
 		pressEntry("Open in browser", "o", "", true),

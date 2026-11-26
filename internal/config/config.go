@@ -216,6 +216,10 @@ type Host struct {
 	// lazygit), agent (omp with the ADE implement skill) or manual (the same tab
 	// as code). Empty: the manifest's workspace layout, else code.
 	Layout string `toml:"layout"`
+	// Shell is the shell of the workspace tab's shell pane and of the panes
+	// you open in the session: a path or a name on PATH (zsh). Empty: $SHELL,
+	// unless that is a Nix dev shell's bash, then the login shell.
+	Shell string `toml:"shell"`
 }
 
 // Duration decodes TOML strings like "10m".

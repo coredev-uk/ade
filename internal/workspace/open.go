@@ -207,6 +207,8 @@ type prepared struct {
 	background, install bool
 	// agentUnset are the write-token variables the agent pane must not inherit.
 	agentUnset []string
+	// shell is host.shell, the shell pane's program when set.
+	shell string
 }
 
 // agentFiles is the skill and overlay the agent layout's omp loads.
@@ -280,6 +282,10 @@ func prepare(ctx context.Context, a *app.App, project, repo, worktree string, op
 		title = filepath.Base(loc.Tree)
 	}
 	p.res = OpenResult{Tab: repo + "/" + title, Layout: layout, Notice: notice}
+	p.shell = a.Config.Host.Shell
+	if _, err := ShellFor(p.shell); err != nil {
+		p.res.Warnings = append(p.res.Warnings, err.Error())
+	}
 	if p.ade, err = os.Executable(); err != nil {
 		return nil, fmt.Errorf("locate ade executable: %w", err)
 	}
@@ -427,8 +433,19 @@ func openZellij(ctx context.Context, a *app.App, p *prepared, res *OpenResult) e
 		}
 		before = append(before, services)
 	}
-	created, beforeErrs, err := openTab(ctx, runZellij, session, res.Tab, file, before...)
-	res.Created = created
+	// A tab this worktree already has is focused, also when it was opened
+	// under another name (`ade ws up` names it after the directory, the
+	// dashboard after the branch): the workspace is reopened, not doubled. A
+	// review tab only stands in for a review tab, a dev tab for a dev tab.
+	review := res.Layout == LayoutReview
+	var aliases []string
+	for _, r := range readTabs(a.Paths.CacheDir, p.loc.Tree) {
+		if r.Session == session && r.Review == review {
+			aliases = append(aliases, r.Tab)
+		}
+	}
+	tab, created, beforeErrs, err := openTabAs(ctx, runZellij, session, res.Tab, aliases, file, before...)
+	res.Tab, res.Created = tab, created
 	for _, e := range beforeErrs {
 		res.Warnings = append(res.Warnings, e.Error())
 	}
@@ -437,7 +454,7 @@ func openZellij(ctx context.Context, a *app.App, p *prepared, res *OpenResult) e
 	}
 	// `ade ws close` finds the tab again from the worktree: its name comes from
 	// a branch or a title, not from the path.
-	if rerr := recordTab(a.Paths.CacheDir, p.loc.Tree, session, res.Tab); rerr != nil {
+	if rerr := recordTabOf(a.Paths.CacheDir, p.loc.Tree, tabRecord{Session: session, Tab: res.Tab, Review: review}); rerr != nil {
 		res.Warnings = append(res.Warnings, "record the tab for ade ws close: "+rerr.Error())
 	}
 	return nil
@@ -537,21 +554,31 @@ type tabLayout struct {
 // and ends up focused. A before tab that fails is returned in beforeErrs and
 // does not stop the main tab.
 func openTab(ctx context.Context, run zellijRunner, session, tab, layoutFile string, before ...tabLayout) (created bool, beforeErrs []error, err error) {
+	_, created, beforeErrs, err = openTabAs(ctx, run, session, tab, nil, layoutFile, before...)
+	return created, beforeErrs, err
+}
+
+// openTabAs is openTab for a tab that may also exist under one of aliases: the
+// first of tab and aliases the session has is focused, and focused names it;
+// only when it has none is tab created.
+func openTabAs(ctx context.Context, run zellijRunner, session, tab string, aliases []string, layoutFile string, before ...tabLayout) (focused string, created bool, beforeErrs []error, err error) {
 	listing, _ := run(ctx, "list-sessions", "--no-formatting") // no server yet: no sessions
 	if zellij.SessionState(listing, session) != zellij.Live {
-		return false, nil, fmt.Errorf("%w: %q (start it with `ade`)", ErrNoSession, session)
+		return tab, false, nil, fmt.Errorf("%w: %q (start it with `ade`)", ErrNoSession, session)
 	}
 	names, err := run(ctx, "--session", session, "action", "query-tab-names")
 	if err != nil {
-		return false, nil, err
+		return tab, false, nil, err
 	}
 	have := map[string]bool{}
 	for name := range strings.SplitSeq(names, "\n") {
 		have[name] = true
 	}
-	if have[tab] {
-		_, err := run(ctx, "--session", session, "action", "go-to-tab-name", tab)
-		return false, nil, err
+	for _, name := range append([]string{tab}, aliases...) {
+		if name != "" && have[name] {
+			_, err := run(ctx, "--session", session, "action", "go-to-tab-name", name)
+			return name, false, nil, err
+		}
 	}
 	for _, t := range before {
 		if t.name == "" {
@@ -578,13 +605,13 @@ func openTab(ctx context.Context, run zellijRunner, session, tab, layoutFile str
 		}
 	}
 	_, err = run(ctx, "--session", session, "action", "new-tab", "--layout", layoutFile, "--name", tab)
-	return err == nil, beforeErrs, err
+	return tab, err == nil, beforeErrs, err
 }
 
 // layoutSpec assembles the layout input: tools found on PATH, a pane per
 // run-graph node.
 func layoutSpec(ctx context.Context, p *prepared) LayoutSpec {
-	spec := LayoutSpec{Layout: p.res.Layout, Tab: p.res.Tab, Dir: p.loc.Tree, Tools: DetectTools(p.ade), BaseRef: p.cfg.baseRef}
+	spec := LayoutSpec{Layout: p.res.Layout, Tab: p.res.Tab, Dir: p.loc.Tree, Tools: DetectTools(p.ade, p.shell), BaseRef: p.cfg.baseRef}
 	spec.Devshell = p.cfg.devshell.WithProject(
 		p.cfg.devshell.Detect(p.loc.Tree, p.loc.Manifest.Repos[p.loc.Repo].Devshell), p.loc.ProjectDir, p.loc.Manifest.Project)
 	// Every agent pane drops the write token, with or without a work item.
@@ -634,15 +661,32 @@ func layoutSpec(ctx context.Context, p *prepared) LayoutSpec {
 	return spec
 }
 
-// DetectTools looks up the programs the layouts use on PATH; the shell is UserShell.
-func DetectTools(ade string) Tools {
+// DetectTools looks up the programs the layouts use on PATH; the shell is
+// ShellFor's answer for shell (host.shell).
+func DetectTools(ade, shell string) Tools {
 	find := func(name string) string {
 		if p, err := exec.LookPath(name); err == nil {
 			return p
 		}
 		return ""
 	}
-	return Tools{Ade: ade, Lazygit: find("lazygit"), Delta: find("delta"), Omp: find("omp"), Shell: UserShell()}
+	sh, _ := ShellFor(shell)
+	return Tools{Ade: ade, Lazygit: find("lazygit"), Delta: find("delta"), Omp: find("omp"), Shell: sh}
+}
+
+// ShellFor is the shell panes run for the host.shell setting: the program it
+// names (a path, or a name looked up on PATH), else UserShell. A setting that
+// names no executable falls back to UserShell and the error says so.
+func ShellFor(setting string) (string, error) {
+	if setting == "" {
+		return UserShell(), nil
+	}
+	p, err := exec.LookPath(setting)
+	if err != nil {
+		sh := UserShell()
+		return sh, fmt.Errorf("host.shell %q is not an executable on PATH: using %q", setting, sh)
+	}
+	return p, nil
 }
 
 // UserShell is the shell the user works in: $SHELL, unless it is unset or the

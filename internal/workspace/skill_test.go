@@ -177,7 +177,7 @@ func TestRenderLayoutAgentLayoutOfAnItemStartsOmpWithTheSkill(t *testing.T) {
 		t.Fatal(err)
 	}
 	// No omp on the empty PATH: the pane is a shell; the overview lives in the dashboard, not the tab.
-	if !strings.Contains(kdl, `pane name="agent" size="60%" focus=true`) || strings.Contains(kdl, `"--watch"`) {
+	if !strings.Contains(kdl, `pane name="agent" expanded=true focus=true`) || strings.Contains(kdl, `"--watch"`) {
 		t.Fatalf("agent tab:\n%s", kdl)
 	}
 	p, err := prepare(context.Background(), a, "demo", "web", tree, []OpenOption{WithLayout(LayoutAgent), WithItem(it)})

@@ -783,6 +783,9 @@ func (c *Config) Validate() []Issue {
 	if !oneOf(c.Host.Layout, "", "code", "agent", "manual") {
 		s.errorf("host.layout", "unknown value %q: want code, agent or manual", c.Host.Layout)
 	}
+	if strings.HasPrefix(c.Host.Shell, "-") {
+		s.errorf("host.shell", "%q must be a shell's path or name, not an option", c.Host.Shell)
+	}
 	if strings.HasPrefix(c.Dotfiles.Repo, "-") {
 		s.errorf("dotfiles.repo", "%q must be a git URL, not an option", c.Dotfiles.Repo)
 	}

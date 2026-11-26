@@ -17,10 +17,10 @@ import (
 	"github.com/coredev-uk/ade/internal/workspace"
 )
 
-// `w` opens the selected row's workspace: the work item's own worktree when it
-// has one (else its repo's baseline), an MR's source branch tree, or the tree
-// under the cursor on the Worktrees page. The tab opens in the zellij session;
-// every other host answers with a hint.
+// `w` opens the selected row's workspace: the work item's own worktree (an
+// item without one has not been started and opens nothing: `s` starts it), an
+// MR's source branch tree, or the tree under the cursor on the Worktrees page.
+// The tab opens in the zellij session; every other host answers with a hint.
 
 // wsOpen is workspace.Open; tests replace it so no host is ever touched.
 var wsOpen = workspace.Open
@@ -197,6 +197,10 @@ func (m *model) onWsOpened(msg wsOpenedMsg) tea.Cmd {
 		e.Subject = "start ADE with `ade`, then press w"
 		e.Detail = "the zellij session " + host.SessionName + " is not running; start ADE with `ade` (it creates the session), then press w again"
 		e.Transient = true
+	case errors.As(msg.err, new(errNotStarted)):
+		e = events.New("workspace.hint", events.Warn, msg.err.Error())
+		e.Subject = "press s to start work, then w opens its worktree"
+		e.Transient = true
 	case msg.err != nil:
 		e = events.New("workspace.failed", events.Error, "workspace not opened")
 		e.Subject = popupText(msg.err)
@@ -218,6 +222,13 @@ func (m *model) onWsOpened(msg wsOpenedMsg) tea.Cmd {
 	m.nc.push(e)
 	if msg.err == nil && msg.res.Notice != "" {
 		n := events.New("workspace.hint", events.Warn, msg.res.Notice)
+		n.Transient = true
+		m.nc.push(n)
+	}
+	// What did not stop the tab opening (host.shell not found, the services
+	// tab failing) still needs saying.
+	for _, w := range msg.res.Warnings {
+		n := events.New("workspace.hint", events.Warn, w)
 		n.Transient = true
 		m.nc.push(n)
 	}
@@ -263,6 +274,12 @@ type recoverable struct {
 
 func (e *recoverable) Error() string { return e.msg }
 func (e *recoverable) Unwrap() error { return e.cause }
+
+// errNotStarted is `w` on a work item with no worktree: work on it has not
+// started, and a repo's baseline is not its workspace.
+type errNotStarted struct{ ref string }
+
+func (e errNotStarted) Error() string { return e.ref + ": work not started, no worktree to open" }
 
 // popupText is the error as a pop-up shows it: a recoverable error whole (it
 // already says what to do), any other error's first line.
