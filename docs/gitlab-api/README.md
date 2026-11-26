@@ -6,7 +6,7 @@ ADE's GitLab driver is built from the official docs, not from a paid test instan
 |---|---|
 | [planning.md](planning.md) | issues (list/filter/create/edit), iterations + cadences, milestones, labels and scoped labels, boards, epics, GraphQL issue queries |
 | [workflow.md](workflow.md) | issue links, work-item hierarchy (GraphQL), issue ↔ MR, branches, MRs, discussions and draft notes, approvals, diffs, pipelines and jobs |
-| [reviewers.md](reviewers.md) | reviewers: list with verdicts, add (`reviewer_ids`), re-request (GraphQL `mergeRequestReviewerRereview`), username lookup |
+| [reviewers.md](reviewers.md) | reviewers: list with verdicts, add (`reviewer_ids`), re-request (GraphQL `mergeRequestReviewerRereview`), username lookup, reviewer group members (direct and invited, never inherited) |
 | [platform.md](platform.md) | auth and scopes, `/user`, events, pagination, rate limits, caching, GraphQL limits, tier detection |
 
 ## Decisions these docs force

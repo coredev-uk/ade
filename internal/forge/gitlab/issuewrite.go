@@ -241,17 +241,39 @@ type wireGroupMember struct {
 	Bot             bool   `json:"bot"`
 }
 
-// ReviewerGroupMembers implements forge.ReviewerGroupReader
-// (GET /groups/:id/members/all, which includes members inherited from parent
-// groups). Blocked and deactivated users, invitations still awaiting
-// acceptance and bots are left out.
+// ReviewerGroupMembers implements forge.ReviewerGroupReader: the group's
+// direct members (GET /groups/:id/members) and the direct members of every
+// group invited into it (shared_with_groups of GET /groups/:id). Members
+// inherited from ancestor groups are left out on purpose: GET
+// /groups/:id/members/all would turn a nested group into everyone in the
+// parent organisation. Blocked and deactivated users, invitations still
+// awaiting acceptance and bots are left out too. An invited group this token
+// cannot see is skipped.
 func (c *Client) ReviewerGroupMembers(ctx context.Context, group string) ([]forge.User, error) {
 	if group == "" {
 		return nil, errors.New("gitlab: ReviewerGroupMembers needs a group")
 	}
-	raw, err := getAll[wireGroupMember](ctx, c, groupPath(group)+"/members/all", nil, false)
+	var g struct {
+		SharedWithGroups []struct {
+			GroupFullPath string `json:"group_full_path"`
+		} `json:"shared_with_groups"`
+	}
+	if err := c.getJSON(ctx, groupPath(group), url.Values{"with_projects": {"false"}}, false, &g); err != nil {
+		return nil, err
+	}
+	raw, err := getAll[wireGroupMember](ctx, c, groupPath(group)+"/members", nil, false)
 	if err != nil {
 		return nil, err
+	}
+	for _, s := range g.SharedWithGroups {
+		invited, err := getAll[wireGroupMember](ctx, c, groupPath(s.GroupFullPath)+"/members", nil, false)
+		if errors.Is(err, forge.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("members of invited group %s: %w", s.GroupFullPath, err)
+		}
+		raw = append(raw, invited...)
 	}
 	var out []forge.User
 	for _, m := range raw {
