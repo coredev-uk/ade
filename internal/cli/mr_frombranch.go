@@ -33,6 +33,8 @@ type mrFromBranch struct {
 	Draft   bool   `json:"draft"`
 	// Template is the MR template the body came from, when one applied.
 	Template string `json:"template,omitempty"`
+	// Assignee is your username: the MR is assigned to you.
+	Assignee string `json:"assignee,omitempty"`
 	// Body is the MR description, shown in dry runs.
 	Body    string                  `json:"body,omitempty"`
 	Actions []startwork.QuickAction `json:"quick_actions,omitempty"`
@@ -176,11 +178,18 @@ func openMRFromBranch(ctx context.Context, a *app.App, dir string, o mrFromBranc
 		Project: repoPath, Source: branch, Target: res.Target, Title: res.Title,
 		Description: body, Draft: res.Draft, CommitPrefix: commitprefix.Read(ctx, loc.Tree),
 	}
+	// The MR is yours: it is assigned to you. An account that cannot be read
+	// leaves it unassigned rather than not opened.
+	if me, err := fg.Me(ctx); err != nil {
+		res.Notes = append(res.Notes, fmt.Sprintf("not assigned to you: %v", err))
+	} else {
+		d.Assignees, res.Assignee = []forge.User{me}, me.Username
+	}
 	if o.dry {
 		res.Body = body
 		_ = a.Audit.Append(audit.Entry{
 			Actor: "user", Action: "forge.mr.create", Target: repoPath + ":" + branch, Project: loc.Project,
-			Params: map[string]any{"source": branch, "target": res.Target, "draft": res.Draft, "template": res.Template},
+			Params: map[string]any{"source": branch, "target": res.Target, "draft": res.Draft, "template": res.Template, "assignee": res.Assignee},
 			DryRun: true, Outcome: "skipped",
 		})
 		return res, nil
@@ -197,7 +206,7 @@ func openMRFromBranch(ctx context.Context, a *app.App, dir string, o mrFromBranc
 	e := audit.Entry{
 		Actor: "user", Action: "forge.mr.create", Target: mr.Ref.String(), Project: loc.Project, URL: mr.WebURL,
 		Params: map[string]any{
-			"source": branch, "target": res.Target, "draft": res.Draft, "template": res.Template,
+			"source": branch, "target": res.Target, "draft": res.Draft, "template": res.Template, "assignee": res.Assignee,
 			"stripped": res.Stripped, "quick_actions": len(res.Actions), "outcome": map[bool]string{true: "created", false: "exists"}[res.Created],
 		},
 		Outcome: "ok",
@@ -312,6 +321,9 @@ func printMRFromBranch(w interface{ Write([]byte) (int, error) }, r mrFromBranch
 	switch {
 	case r.DryRun:
 		fmt.Fprintf(w, "dry-run: would open %s %s → %s: %s\n", kind, r.Branch, r.Target, r.Title)
+		if r.Assignee != "" {
+			fmt.Fprintf(w, "  assigned to %s\n", r.Assignee)
+		}
 		for line := range strings.SplitSeq(strings.TrimRight(r.Body, "\n"), "\n") {
 			fmt.Fprintln(w, "  │ "+line)
 		}

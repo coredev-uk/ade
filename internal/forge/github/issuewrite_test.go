@@ -255,9 +255,14 @@ func TestCreateMR(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		me, err := c.Me(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
 		mr, err := c.CreateMR(ctx, forge.MRDraft{
 			Project: apiProj, Source: b.Name, Target: "main", Title: "Retry failed webhook deliveries",
 			Description: "Closes #3", Draft: true, Labels: []string{"type:story"}, CommitPrefix: "GL-3",
+			Assignees: []forge.User{me},
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -273,6 +278,9 @@ func TestCreateMR(t *testing.T) {
 		}
 		if got, _ := srv.Labels(mr.Ref); !slices.Equal(got, []string{"type:story"}) {
 			t.Errorf("labels = %v", got)
+		}
+		if got, err := c.MR(ctx, mr.Ref); err != nil || len(got.Assignees) != 1 || got.Assignees[0].Username != me.Username {
+			t.Errorf("assignees = %+v, %v; want %s", got.Assignees, err, me.Username)
 		}
 		d, err := c.MRDiff(ctx, mr.Ref)
 		if err != nil || len(d.Files) != 0 {

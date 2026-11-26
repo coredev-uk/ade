@@ -74,6 +74,9 @@ func TestMRFromBranchOpensADraftFromTheTemplate(t *testing.T) {
 	if title, _ := e.srv.Title(mrs[0].Ref); !strings.HasPrefix(title, "Draft:") {
 		t.Errorf("title %q: not a draft", title)
 	}
+	if me, _ := gitlab.New(e.srv.URL, fake.Token).Me(context.Background()); len(mrs[0].Assignees) != 1 || mrs[0].Assignees[0].ID != me.ID {
+		t.Errorf("assignees = %+v, want you (%s)", mrs[0].Assignees, me.Username)
+	}
 	if es := e.audited("forge.mr.create"); len(es) != 2 || !es[0].DryRun || es[1].Outcome != "ok" || es[1].Params["draft"] != true {
 		t.Fatalf("audit = %+v", es)
 	}

@@ -89,6 +89,9 @@ func TestStartDraftCreatesLinkedChildMRAndWorktree(t *testing.T) {
 			if !mr.Draft || mr.SourceBranch != wantBranch || mr.TargetBranch != "main" {
 				t.Errorf("mr = %+v", mr)
 			}
+			if len(mr.Assignees) != 1 || mr.Assignees[0].Username != "sandbox-dev" {
+				t.Errorf("MR assignees = %+v, want you (sandbox-dev)", mr.Assignees)
+			}
 			for _, want := range []string{"Closes #3", "Part of " + tracker + "#3", "## Testing"} {
 				if !strings.Contains(mr.Description, want) {
 					t.Errorf("MR description missing %q:\n%s", want, mr.Description)

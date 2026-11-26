@@ -297,10 +297,13 @@ type MRSpec struct {
 	ReviewerGroup   string       `json:"reviewer_group,omitempty"`
 	ReviewerUsers   []forge.User `json:"reviewer_users,omitempty"`
 	ReviewerMembers int          `json:"reviewer_members,omitempty"`
-	closes          string       // conventions.mr.closes
-	mention         string       // conventions.mr.mention
-	templateBody    string
-	override        string
+	// Assignee is who the MR is assigned to on create: you, the user who
+	// starts the work. Nil when your account is unknown.
+	Assignee     *forge.User `json:"assignee,omitempty"`
+	closes       string      // conventions.mr.closes
+	mention      string      // conventions.mr.mention
+	templateBody string
+	override     string
 }
 
 // reviewText is the confirm-screen tail of the MR step: who the MR asks for
@@ -594,6 +597,10 @@ func planTarget(in PlanInput, t Target) TargetPlan {
 		closes: conv.Closes, mention: conv.Mention, templateBody: f.TemplateBody, override: ch.MRBody,
 		Stripped: ch.StripActions,
 	}
+	if in.Me.ID != 0 {
+		me := in.Me
+		tp.MR.Assignee = &me
+	}
 	if f.TemplateBody != "" {
 		tp.MR.Actions = ParseQuickActions(f.TemplateBody)
 	}
@@ -875,6 +882,9 @@ func mrStep(tp TargetPlan) Step {
 	text := fmt.Sprintf("open %s %s → %s", kind, tp.Branch, tp.MR.Target)
 	if tp.MR.Template != "" {
 		text += " from template " + tp.MR.Template
+	}
+	if tp.MR.Assignee != nil {
+		text += ", assigned to you"
 	}
 	text += tp.MR.reviewText()
 	return Step{Kind: StepMR, Repo: tp.Target.Name, Write: true, Text: text}

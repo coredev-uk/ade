@@ -496,6 +496,17 @@ func (s *Server) createMR(w http.ResponseWriter, r *http.Request) {
 			m.Reviewers = append(m.Reviewers, u)
 		}
 	}
+	if ids, _ := p["assignee_ids"].([]any); len(ids) > 0 {
+		for _, raw := range ids {
+			f, _ := raw.(float64)
+			u := s.userByID(int64(f))
+			if u == nil {
+				badRequest(w, "assignee_ids is invalid")
+				return
+			}
+			m.Assignees = append(m.Assignees, u)
+		}
+	}
 	m.Desc = s.runQuickActions(m, str(p, "description"))
 	s.linkReferences(m)
 	s.st.mrs = append(s.st.mrs, m)

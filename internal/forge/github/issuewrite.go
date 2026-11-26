@@ -316,6 +316,12 @@ func (c *Client) CreateMR(ctx context.Context, d forge.MRDraft) (forge.MR, error
 			return mr, fmt.Errorf("labelling %s: %w", mr.Ref, err)
 		}
 	}
+	if len(d.Assignees) > 0 {
+		if err := c.SetAssignees(ctx, forge.Ref{Project: d.Project, IID: w.Number, Kind: forge.KindIssue}, d.Assignees); err != nil {
+			return mr, fmt.Errorf("assigning %s: %w", mr.Ref, err)
+		}
+		mr.Assignees = d.Assignees
+	}
 	if teamSlug != "" {
 		in := map[string]any{"team_reviewers": []string{teamSlug}}
 		if err := c.send(ctx, http.MethodPost, pullPath(mr.Ref)+"/requested_reviewers", in, nil); err != nil {

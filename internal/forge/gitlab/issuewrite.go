@@ -227,6 +227,13 @@ func (c *Client) CreateMR(ctx context.Context, d forge.MRDraft) (forge.MR, error
 	if len(d.ReviewerIDs) > 0 {
 		body["reviewer_ids"] = d.ReviewerIDs
 	}
+	if len(d.Assignees) > 0 {
+		ids := make([]int64, len(d.Assignees))
+		for i, u := range d.Assignees {
+			ids[i] = u.ID
+		}
+		body["assignee_ids"] = ids
+	}
 	var w wireMR
 	if err := c.send(ctx, http.MethodPost, projectPath(d.Project)+"/merge_requests", body, &w); err != nil {
 		return forge.MR{}, existsError(err, "already exists")
