@@ -286,7 +286,8 @@ var schemaDocs = map[string]string{
 	"manifest:workspaces.*.services":              "background (default) starts the run group's services in a tab of their own, after the install hooks, when the workspace first opens; manual keeps them in the workspace tab's strip, each waiting for Enter.",
 
 	// Its own alignment block: the longer key would realign the whole table.
-	"manifest:conventions.mr.reviewer_group": "Group whose members start work asks to review the MR: a GitLab group path (acme/reviewers) or, on GitHub, org/team-slug of the repository's owner. Empty requests nobody.",
+	"manifest:conventions.mr.reviewer_group":   "Group whose members start work asks to review the MR: a GitLab group path (acme/reviewers) or, on GitHub, org/team-slug of the repository's owner. Empty requests nobody.",
+	"manifest:conventions.mr.template_project": "Project whose MR templates (.gitlab/merge_request_templates/*.md, or GitHub's pull request template files) every repo can use, read from its default branch, e.g. acme/templates. A repo's own template of the same name wins.",
 }
 
 // schemaHasKey reports whether the schema of the kind in key ("config:a.b.*")

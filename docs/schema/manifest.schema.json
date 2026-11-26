@@ -72,6 +72,10 @@
             },
             "template": {
               "type": "string"
+            },
+            "template_project": {
+              "description": "Project whose MR templates (.gitlab/merge_request_templates/*.md, or GitHub's pull request template files) every repo can use, read from its default branch, e.g. acme/templates. A repo's own template of the same name wins.",
+              "type": "string"
             }
           },
           "type": "object"
