@@ -489,6 +489,7 @@ It never touches your real config. `--record` additionally writes `demo.gif`.
 - **Stale or odd data:** `ade cache reset` deletes the cache and rebuilds the AI cache and spend ledger from your records. It tells you what is lost (unsubmitted review drafts, unread notifications) and asks first. It is safe: the forge remains the source of truth.
 - **Updates arrive a couple of seconds late:** the dashboard and `ade item --watch` follow `cache.db`, the item records and the audit log with fsnotify and re-read the moment one changes. Where fsnotify is unavailable (inotify limit reached, some network filesystems) they poll the files every 2 s instead, which works the same but later; `ade doctor` reports `file watching: polling` then. On Linux, raising `fs.inotify.max_user_watches` and `fs.inotify.max_user_instances` restores instant updates.
 - **No tabs appear:** zellij is missing or `host.mode` is `plain`/`vscode`; check `ade doctor`.
+- **Text too small or too large:** zellij has no scaling or font setting; text size is your terminal's font size (Ghostty, kitty, WezTerm, iTerm2, the VS Code terminal's `terminal.integrated.fontSize`). ADE's dashboard and workspace tabs lay out to whatever size the terminal reports, so change the font and they follow.
 - **Where files live** (XDG):
 
 | What | Path |

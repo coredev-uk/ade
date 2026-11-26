@@ -11,7 +11,7 @@ import (
 // Layout names a workspace layout (PLAN 6.6).
 const (
 	LayoutCode   = "code"   // a shell in the dev shell and lazygit, stacked, full width
-	LayoutAgent  = "agent"  // omp with the ADE implement skill 60% | shell + lazygit stacked
+	LayoutAgent  = "agent"  // the code stack plus omp with the ADE implement skill, in front
 	LayoutReview = "review" // diff through delta 60% | lazygit + shell stacked
 	// LayoutManual lays out the tab as code does. It was the shell layout
 	// beside an editor layout; with the editor pane gone the two are one, and
@@ -106,7 +106,8 @@ const (
 // from the file system or user config, so all of them are escaped.
 //
 //	code, manual:   shell / lazygit (stacked, the shell in front), full width
-//	agent, review:  main (omp | diff) | lazygit / shell (stacked)
+//	agent:          shell / lazygit / omp (stacked, omp in front), full width
+//	review:         diff | lazygit / shell (stacked)
 //	services and tasks, one pane each (when the workspace runs any), all waiting for Enter
 //
 // The work item's overview is not part of the tab: the dashboard's home tab
@@ -136,16 +137,16 @@ func BuildLayout(s LayoutSpec) (string, error) {
 	if hasStrip {
 		topAttr = fmt.Sprintf(` size="%d%%"`, 100-stripPct)
 	}
-	if s.Layout == LayoutCode || s.Layout == LayoutManual {
-		b.line(2, `pane%s stacked=true {`, topAttr)
-		s.stackPanes(&b, 3, true)
-		b.line(2, "}")
-	} else {
+	if s.Layout == LayoutReview {
 		b.line(2, `pane%s split_direction="vertical" {`, topAttr)
 		b.pane(3, fmt.Sprintf(`size="%d%%" focus=true`, mainPct), s.wrap(s.primary()))
 		b.line(3, `pane size="%d%%" stacked=true {`, 100-mainPct)
-		s.stackPanes(&b, 4, false)
+		s.stackPanes(&b, 4)
 		b.line(3, "}")
+		b.line(2, "}")
+	} else {
+		b.line(2, `pane%s stacked=true {`, topAttr)
+		s.stackPanes(&b, 3)
 		b.line(2, "}")
 	}
 	if hasStrip {
@@ -208,23 +209,32 @@ func BuildServicesLayout(s LayoutSpec) (string, error) {
 	return b.String(), nil
 }
 
-// stackPanes writes the stack of a shell and lazygit (when installed). As the
-// tab's main pane (shellMain) the shell is in front and focused; beside omp or
-// a diff lazygit is.
-func (s LayoutSpec) stackPanes(b *kdl, depth int, shellMain bool) {
+// stackPanes writes the stack of a shell and lazygit (when installed). In the
+// code layout the shell is in front and focused; the agent layout adds omp
+// after lazygit, in front and focused; beside the review layout's diff
+// lazygit is in front.
+func (s LayoutSpec) stackPanes(b *kdl, depth int) {
 	shell := s.wrap(s.shell())
-	lg, ok := s.lazygit()
-	switch {
-	case !ok && shellMain:
-		b.pane(depth, `name="shell" expanded=true focus=true`, shell)
-	case !ok:
-		b.pane(depth, `name="shell" expanded=true`, shell)
-	case shellMain:
-		b.pane(depth, `name="shell" expanded=true focus=true`, shell)
-		b.pane(depth, `name="lazygit"`, lg)
-	default:
+	lg, hasLazygit := s.lazygit()
+	switch s.Layout {
+	case LayoutReview:
+		if !hasLazygit {
+			b.pane(depth, `name="shell" expanded=true`, shell)
+			return
+		}
 		b.pane(depth, `name="lazygit" expanded=true`, lg)
 		b.pane(depth, `name="shell"`, shell)
+	case LayoutAgent:
+		b.pane(depth, `name="shell"`, shell)
+		if hasLazygit {
+			b.pane(depth, `name="lazygit"`, lg)
+		}
+		b.pane(depth, `expanded=true focus=true`, s.wrap(s.primary()))
+	default:
+		b.pane(depth, `name="shell" expanded=true focus=true`, shell)
+		if hasLazygit {
+			b.pane(depth, `name="lazygit"`, lg)
+		}
 	}
 }
 
@@ -283,7 +293,7 @@ func (s LayoutSpec) lazygit() (command, bool) {
 // from the user's.
 const AgentRunEnv = "ADE_AGENT_RUN"
 
-// primary is the large left pane of the agent and review layouts.
+// primary is the agent layout's omp pane and the review layout's diff.
 func (s LayoutSpec) primary() command {
 	switch s.Layout {
 	case LayoutAgent:

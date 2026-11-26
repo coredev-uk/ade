@@ -97,16 +97,41 @@ func (h *wsHarness) lastToast() events.Event {
 	return h.m.nc.toasts[len(h.m.nc.toasts)-1].ev
 }
 
-func TestWOpensTheRepoBaselineWhenTheItemHasNoWorktree(t *testing.T) {
+// started gives the item g/tracker#3 its worktree in api, as start work makes it.
+func (h *wsHarness) started() string {
+	h.t.Helper()
+	tree := filepath.Join(h.root, "demo", "api", "3-limit")
+	stubItemWorktrees(h.t, []workspace.ItemWorktree{{Repo: "api", Path: tree, Branch: "3-limit", Primary: true}})
+	return tree
+}
+
+func TestWOpensTheItemsWorktree(t *testing.T) {
 	h := newWsHarness(t)
 	h.res = workspace.OpenResult{Created: true}
+	tree := h.started()
 	h.selectRef("g/tracker#3")
 	h.press()
-	want := wsCall{"demo", "api", filepath.Join(h.root, "demo", "api", "main")}
+	want := wsCall{"demo", "api", tree}
 	if len(h.calls) != 1 || h.calls[0] != want {
 		t.Fatalf("calls = %+v, want %+v", h.calls, want)
 	}
-	if e := h.lastToast(); e.Kind != "workspace.opened" || !strings.Contains(e.Title, "opened workspace api/main") {
+	if e := h.lastToast(); e.Kind != "workspace.opened" || !strings.Contains(e.Title, "opened workspace api/3-limit") {
+		t.Fatalf("pop-up: %+v", e)
+	}
+}
+
+// Before start work there is no worktree: w opens nothing (not the repo's
+// baseline) and says to start work.
+func TestWOnAnItemThatHasNotStartedOpensNothing(t *testing.T) {
+	h := newWsHarness(t)
+	h.selectRef("g/tracker#3")
+	h.press()
+	if len(h.calls) != 0 {
+		t.Fatalf("opened %+v before start work", h.calls)
+	}
+	e := h.lastToast()
+	if e.Kind != "workspace.hint" || e.Severity != events.Warn || !e.Transient ||
+		!strings.Contains(e.Title, "g/tracker#3: work not started") || !strings.Contains(e.Subject, "press s to start work") {
 		t.Fatalf("pop-up: %+v", e)
 	}
 }
@@ -114,6 +139,7 @@ func TestWOpensTheRepoBaselineWhenTheItemHasNoWorktree(t *testing.T) {
 func TestWWithoutASessionIsAHintNotAFailure(t *testing.T) {
 	h := newWsHarness(t)
 	h.ret = workspace.ErrNoSession
+	h.started()
 	h.selectRef("g/tracker#3")
 	h.press()
 	e := h.lastToast()
@@ -128,6 +154,7 @@ func TestWWithoutASessionIsAHintNotAFailure(t *testing.T) {
 func TestWFailureStaysUntilDismissed(t *testing.T) {
 	h := newWsHarness(t)
 	h.ret = context.DeadlineExceeded
+	h.started()
 	h.selectRef("g/tracker#3")
 	h.press()
 	e := h.lastToast()
@@ -142,9 +169,10 @@ func TestWFailureStaysUntilDismissed(t *testing.T) {
 func TestWPlainHostShowsItsHint(t *testing.T) {
 	h := newWsHarness(t)
 	h.res = workspace.OpenResult{Hint: "cd /x && ade ws up --no-zellij"}
+	h.started()
 	h.selectRef("g/tracker#3")
 	h.press()
-	if e := h.lastToast(); !strings.Contains(e.Title, "api/main: no tab on this host") || !strings.Contains(e.Subject, "command copied") {
+	if e := h.lastToast(); !strings.Contains(e.Title, "api/3-limit: no tab on this host") || !strings.Contains(e.Subject, "command copied") {
 		t.Fatalf("%+v", e)
 	}
 }
@@ -443,6 +471,7 @@ func TestWWithAIOffOpensNothingAndSaysSo(t *testing.T) {
 func TestOpenNoticeIsAWarningPopUp(t *testing.T) {
 	h := newWsHarness(t)
 	h.res = workspace.OpenResult{Created: true, Notice: workspace.NoticeNoOmp}
+	h.started()
 	h.selectRef("g/tracker#3")
 	h.press()
 	if e := h.lastToast(); e.Kind != "workspace.hint" || e.Severity != events.Warn || !e.Transient || e.Title != workspace.NoticeNoOmp {

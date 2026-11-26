@@ -35,7 +35,9 @@ type (
 )
 
 // openItemWorkspace opens the item's workspace, or asks which tree when the
-// item has worktrees in several repos.
+// item has worktrees in several repos. An item with no worktree has not been
+// started: `w` opens nothing (a repo's baseline is not the item's workspace)
+// and says to start work with `s`.
 func (m model) openItemWorkspace(proj string, it domain.WorkItem, items []workspace.ItemRef, other bool) tea.Cmd {
 	ctx, a := m.ctx, m.app
 	return func() tea.Msg {
@@ -44,28 +46,32 @@ func (m model) openItemWorkspace(proj string, it domain.WorkItem, items []worksp
 			return wsOpenedMsg{err: err}
 		}
 		wts := wsItemWorktrees(ctx, a.Root, mf, it)
-		if len(wts) > 1 {
-			trees := make(map[string]string, len(wts))
-			for _, w := range wts {
-				trees[w.Repo] = w.Path
-			}
-			choices := make([]wsChoice, 0, len(wts))
-			for _, w := range wts {
-				label := w.Repo + " " + m.g.Sep + " " + w.Branch
-				if mr := mrOnBranch(it, mf.Repos[w.Repo].Path, w.Branch); mr != nil {
-					label += " " + m.g.Sep + " " + fmt.Sprintf("!%d %s", mr.Ref.IID, mrStateWord(mr.State))
-				}
-				choices = append(choices, wsChoice{label: label, target: workspace.Target{
-					Project: proj, Repo: w.Repo, Worktree: w.Path, Title: w.Branch, ItemTrees: trees,
-				}})
-			}
-			return wsPickMsg{choices: choices, other: other}
+		switch {
+		case len(wts) == 0 && len(it.Repos) == 0:
+			return wsOpenedMsg{err: fmt.Errorf("no repo for %s · add an app label so it routes to one", it.Ref)}
+		case len(wts) == 0:
+			return wsOpenedMsg{err: errNotStarted{ref: it.Ref.String()}}
 		}
-		t, err := workspace.TargetForItem(ctx, a.Root, mf, it)
-		if err != nil {
-			return wsOpenedMsg{err: err}
+		trees := make(map[string]string, len(wts))
+		for _, w := range wts {
+			trees[w.Repo] = w.Path
 		}
-		return m.openTarget(t, items, other)
+		if len(wts) == 1 {
+			w := wts[0]
+			t := workspace.Target{Project: proj, Repo: w.Repo, Worktree: w.Path, Title: w.Branch, ItemTrees: trees}
+			return m.openTarget(t, items, other)
+		}
+		choices := make([]wsChoice, 0, len(wts))
+		for _, w := range wts {
+			label := w.Repo + " " + m.g.Sep + " " + w.Branch
+			if mr := mrOnBranch(it, mf.Repos[w.Repo].Path, w.Branch); mr != nil {
+				label += " " + m.g.Sep + " " + fmt.Sprintf("!%d %s", mr.Ref.IID, mrStateWord(mr.State))
+			}
+			choices = append(choices, wsChoice{label: label, target: workspace.Target{
+				Project: proj, Repo: w.Repo, Worktree: w.Path, Title: w.Branch, ItemTrees: trees,
+			}})
+		}
+		return wsPickMsg{choices: choices, other: other}
 	}
 }
 

@@ -427,8 +427,19 @@ func openZellij(ctx context.Context, a *app.App, p *prepared, res *OpenResult) e
 		}
 		before = append(before, services)
 	}
-	created, beforeErrs, err := openTab(ctx, runZellij, session, res.Tab, file, before...)
-	res.Created = created
+	// A tab this worktree already has is focused, also when it was opened
+	// under another name (`ade ws up` names it after the directory, the
+	// dashboard after the branch): the workspace is reopened, not doubled. A
+	// review tab only stands in for a review tab, a dev tab for a dev tab.
+	review := res.Layout == LayoutReview
+	var aliases []string
+	for _, r := range readTabs(a.Paths.CacheDir, p.loc.Tree) {
+		if r.Session == session && r.Review == review {
+			aliases = append(aliases, r.Tab)
+		}
+	}
+	tab, created, beforeErrs, err := openTabAs(ctx, runZellij, session, res.Tab, aliases, file, before...)
+	res.Tab, res.Created = tab, created
 	for _, e := range beforeErrs {
 		res.Warnings = append(res.Warnings, e.Error())
 	}
@@ -437,7 +448,7 @@ func openZellij(ctx context.Context, a *app.App, p *prepared, res *OpenResult) e
 	}
 	// `ade ws close` finds the tab again from the worktree: its name comes from
 	// a branch or a title, not from the path.
-	if rerr := recordTab(a.Paths.CacheDir, p.loc.Tree, session, res.Tab); rerr != nil {
+	if rerr := recordTabOf(a.Paths.CacheDir, p.loc.Tree, tabRecord{Session: session, Tab: res.Tab, Review: review}); rerr != nil {
 		res.Warnings = append(res.Warnings, "record the tab for ade ws close: "+rerr.Error())
 	}
 	return nil
@@ -537,21 +548,31 @@ type tabLayout struct {
 // and ends up focused. A before tab that fails is returned in beforeErrs and
 // does not stop the main tab.
 func openTab(ctx context.Context, run zellijRunner, session, tab, layoutFile string, before ...tabLayout) (created bool, beforeErrs []error, err error) {
+	_, created, beforeErrs, err = openTabAs(ctx, run, session, tab, nil, layoutFile, before...)
+	return created, beforeErrs, err
+}
+
+// openTabAs is openTab for a tab that may also exist under one of aliases: the
+// first of tab and aliases the session has is focused, and focused names it;
+// only when it has none is tab created.
+func openTabAs(ctx context.Context, run zellijRunner, session, tab string, aliases []string, layoutFile string, before ...tabLayout) (focused string, created bool, beforeErrs []error, err error) {
 	listing, _ := run(ctx, "list-sessions", "--no-formatting") // no server yet: no sessions
 	if zellij.SessionState(listing, session) != zellij.Live {
-		return false, nil, fmt.Errorf("%w: %q (start it with `ade`)", ErrNoSession, session)
+		return tab, false, nil, fmt.Errorf("%w: %q (start it with `ade`)", ErrNoSession, session)
 	}
 	names, err := run(ctx, "--session", session, "action", "query-tab-names")
 	if err != nil {
-		return false, nil, err
+		return tab, false, nil, err
 	}
 	have := map[string]bool{}
 	for name := range strings.SplitSeq(names, "\n") {
 		have[name] = true
 	}
-	if have[tab] {
-		_, err := run(ctx, "--session", session, "action", "go-to-tab-name", tab)
-		return false, nil, err
+	for _, name := range append([]string{tab}, aliases...) {
+		if name != "" && have[name] {
+			_, err := run(ctx, "--session", session, "action", "go-to-tab-name", name)
+			return name, false, nil, err
+		}
 	}
 	for _, t := range before {
 		if t.name == "" {
@@ -578,7 +599,7 @@ func openTab(ctx context.Context, run zellijRunner, session, tab, layoutFile str
 		}
 	}
 	_, err = run(ctx, "--session", session, "action", "new-tab", "--layout", layoutFile, "--name", tab)
-	return err == nil, beforeErrs, err
+	return tab, err == nil, beforeErrs, err
 }
 
 // layoutSpec assembles the layout input: tools found on PATH, a pane per

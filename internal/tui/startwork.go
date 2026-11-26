@@ -885,12 +885,17 @@ func (m model) swChooseView(d *startDialog, inner int) []string {
 	l := []string{section("Repos", guide, inner, g)}
 	selected := d.chosen()
 	required := startwork.RequiredRepos(d.res.Manifest, selected)
+	// The name column fits the longest repo name: a name is never cut off.
+	nameW := 9
+	for _, r := range d.repos {
+		nameW = max(nameW, lipgloss.Width(r.name))
+	}
 	for i, r := range d.repos {
 		cur := " "
 		if d.cur == i {
 			cur = g.Selected
 		}
-		name := ink(r.name).Render(pad(m.g, r.name, 9))
+		name := ink(r.name).Render(pad(m.g, r.name, nameW))
 		note := ""
 		switch {
 		case r.tracker:

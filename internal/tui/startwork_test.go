@@ -1089,3 +1089,34 @@ func TestStartDialogHidesTheAgentPaneWhenAIIsOff(t *testing.T) {
 		}
 	}
 }
+
+// A repo name longer than the usual column is shown whole, and the paths
+// after the names still line up.
+func TestStartDialogShowsLongRepoNamesWhole(t *testing.T) {
+	m := model{g: unicodeGlyphs, w: 140, h: 48}
+	d := &startDialog{
+		res: &startwork.Resolved{Manifest: &config.Manifest{}},
+		repos: []swRepo{
+			{name: "api", path: "g/api", on: true},
+			{name: "notification-service", path: "g/notification-service"},
+		},
+	}
+	lines := m.swChooseView(d, 100)
+	var api, long string
+	for _, l := range lines {
+		switch s := ansi.Strip(l); {
+		case strings.Contains(s, "g/api"):
+			api = s
+		case strings.Contains(s, "g/notification-service"):
+			long = s
+		}
+	}
+	if !strings.Contains(long, "notification-service ") {
+		t.Fatalf("repo name cut off: %q", long)
+	}
+	apiBefore, _, _ := strings.Cut(api, "g/api")
+	longBefore, _, _ := strings.Cut(long, "g/notification-service")
+	if ansi.StringWidth(apiBefore) != ansi.StringWidth(longBefore) {
+		t.Fatalf("paths do not line up:\n%s\n%s", api, long)
+	}
+}
