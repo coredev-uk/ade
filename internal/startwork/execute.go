@@ -259,8 +259,6 @@ func (e *Env) run(ctx context.Context, p Plan, m *config.Manifest, rt *runtime, 
 		err = e.moveWorkflow(ctx, p, sr)
 	case StepLink:
 		err = e.link(ctx, p, rt, res)
-	case StepIteration:
-		err = e.copyIteration(ctx, p, rt, sr, res)
 	case StepBranch:
 		err = e.createBranch(ctx, p, m, rt, sr)
 	case StepMR:
@@ -285,14 +283,10 @@ func (e *Env) run(ctx context.Context, p Plan, m *config.Manifest, rt *runtime, 
 
 func (e *Env) createChild(ctx context.Context, p Plan, rt *runtime, sr *StepResult) error {
 	spec := rt.tp.Child
-	d := forge.IssueDraft{
-		Title: spec.Title, Description: spec.Body, Labels: spec.Labels, AssigneeIDs: spec.AssigneeIDs,
-		MilestoneID: spec.MilestoneID, Weight: spec.Weight,
-	}
+	d := forge.IssueDraft{Title: spec.Title, Description: spec.Body, AssigneeIDs: spec.AssigneeIDs}
 	is, err := e.Forge.CreateIssue(ctx, rt.tp.Target.Project, d)
 	e.audit(p, "forge.issue.create", rt.tp.Target.Project, map[string]any{
-		"title": spec.Title, "labels": spec.Labels, "assignees": spec.AssigneeIDs, "milestone": spec.MilestoneID,
-		"parent": p.Item.String(), "iid": is.Ref.IID,
+		"title": spec.Title, "assignees": spec.AssigneeIDs, "parent": p.Item.String(), "iid": is.Ref.IID,
 	}, is.WebURL, err)
 	if err != nil {
 		return err
@@ -381,22 +375,6 @@ func (e *Env) setParent(ctx context.Context, p Plan, child forge.Ref, res *Resul
 	default:
 		res.Notes = append(res.Notes, fmt.Sprintf("%s not placed under %s in the hierarchy: %v (the relates_to link and Parent: line stand)", child, p.Item, err))
 	}
-}
-
-func (e *Env) copyIteration(ctx context.Context, p Plan, rt *runtime, sr *StepResult, res *Result) error {
-	it := rt.tp.Child.Iteration
-	if rt.child.IsZero() || it == nil {
-		return errors.New("no child issue to set the iteration on")
-	}
-	err := e.Forge.SetIteration(ctx, rt.child, it.ID)
-	e.audit(p, "forge.issue.iteration", rt.child.String(), map[string]any{"iteration": it.ID}, "", err)
-	if errors.Is(err, forge.ErrUnavailable) {
-		sr.Outcome = OutcomeSkipped
-		sr.Error = "iterations are not available on this forge"
-		res.Notes = append(res.Notes, "iteration not copied to "+rt.child.String()+": not available on this forge")
-		return nil
-	}
-	return err
 }
 
 func (e *Env) createBranch(ctx context.Context, p Plan, m *config.Manifest, rt *runtime, sr *StepResult) error {

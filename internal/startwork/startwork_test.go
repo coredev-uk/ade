@@ -40,7 +40,8 @@ func TestStartDraftCreatesLinkedChildMRAndWorktree(t *testing.T) {
 				t.Fatalf("target = %+v", api)
 			}
 
-			// The child: copies type label, assignee and milestone, names its parent.
+			// The child names its parent and is assigned; it copies nothing else
+			// (no labels, milestone, weight or iteration), on any tier.
 			child, err := h.forge.Issue(ctx, *api.Child)
 			if err != nil {
 				t.Fatal(err)
@@ -48,21 +49,12 @@ func TestStartDraftCreatesLinkedChildMRAndWorktree(t *testing.T) {
 			if child.Ref.Project != apiProj || !strings.HasPrefix(child.Description, "Parent: "+tracker+"#3") {
 				t.Errorf("child = %+v", child)
 			}
-			if !slices.Equal(child.Labels, []string{"type::story"}) {
-				t.Errorf("child labels = %v, want only the type label", child.Labels)
-			}
 			if len(child.Assignees) != 1 || child.Assignees[0].Username != "sandbox-dev" {
 				t.Errorf("child assignees = %v", child.Assignees)
 			}
-			if child.Milestone == nil || child.Milestone.Title != "Sprint 42" {
-				t.Errorf("child milestone = %+v", child.Milestone)
-			}
-			if tier == fake.Premium {
-				if child.Iteration == nil || child.Weight == nil || *child.Weight != 2 {
-					t.Errorf("premium child iteration/weight = %+v / %v, want copied", child.Iteration, child.Weight)
-				}
-			} else if child.Iteration != nil || child.Weight != nil {
-				t.Errorf("free child has iteration/weight: %+v %v", child.Iteration, child.Weight)
+			if len(child.Labels) != 0 || child.Milestone != nil || child.Weight != nil || child.Iteration != nil {
+				t.Errorf("child copied from the tracker: labels %v, milestone %+v, weight %v, iteration %+v",
+					child.Labels, child.Milestone, child.Weight, child.Iteration)
 			}
 
 			// Link in both directions.
@@ -127,8 +119,8 @@ func TestStartDraftCreatesLinkedChildMRAndWorktree(t *testing.T) {
 					t.Errorf("audit log lacks %s: %v", want, actions)
 				}
 			}
-			if tier == fake.Premium && !slices.Contains(actions, "forge.issue.iteration") {
-				t.Errorf("iteration copy not audited: %v", actions)
+			if slices.Contains(actions, "forge.issue.iteration") {
+				t.Errorf("start work wrote an iteration: %v", actions)
 			}
 			var started bool
 			for _, ev := range h.drain() {

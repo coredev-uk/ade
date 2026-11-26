@@ -245,7 +245,6 @@ const (
 	StepChild     StepKind = "child"
 	StepWorkflow  StepKind = "workflow"
 	StepLink      StepKind = "link"
-	StepIteration StepKind = "iteration"
 	StepBranch    StepKind = "branch"
 	StepMR        StepKind = "mr"
 	StepWorktree  StepKind = "worktree"
@@ -270,16 +269,13 @@ type Step struct {
 	Write bool `json:"write,omitempty"`
 }
 
-// ChildSpec is the child issue Execute creates when none exists.
+// ChildSpec is the child issue Execute creates when none exists: a title, a
+// body naming its parent, and assignees. Labels, milestone, weight and
+// iteration stay on the tracker issue; the child does not copy them.
 type ChildSpec struct {
-	Title       string   `json:"title"`
-	Body        string   `json:"body"`
-	Labels      []string `json:"labels,omitempty"`
-	AssigneeIDs []int64  `json:"assignee_ids,omitempty"`
-	MilestoneID int64    `json:"milestone_id,omitempty"`
-	Weight      *int     `json:"weight,omitempty"`
-	// Iteration is copied with issueSetIteration after the create (Premium).
-	Iteration *forge.Iteration `json:"iteration,omitempty"`
+	Title       string  `json:"title"`
+	Body        string  `json:"body"`
+	AssigneeIDs []int64 `json:"assignee_ids,omitempty"`
 }
 
 // MRSpec describes the MR of one target.
@@ -624,18 +620,12 @@ func childSpec(in PlanInput, t Target) ChildSpec {
 	if title == "" {
 		title = tr.Title
 	}
-	spec := ChildSpec{Title: title, Body: childBody(in.ChildBody, vars), Iteration: tr.Iteration, Weight: tr.Weight}
-	if l := facetLabel(m.Labels.Type.Pattern, item.Type); l != "" {
-		spec.Labels = []string{l}
-	}
+	spec := ChildSpec{Title: title, Body: childBody(in.ChildBody, vars)}
 	for _, a := range tr.Assignees {
 		spec.AssigneeIDs = append(spec.AssigneeIDs, a.ID)
 	}
 	if len(spec.AssigneeIDs) == 0 && in.Me.ID != 0 {
 		spec.AssigneeIDs = []int64{in.Me.ID} // whoever starts the work owns it
-	}
-	if tr.Milestone != nil {
-		spec.MilestoneID = tr.Milestone.ID
 	}
 	return spec
 }
@@ -811,13 +801,6 @@ func childSteps(in PlanInput, tp TargetPlan) []Step {
 			Text: fmt.Sprintf("link %s relates_to the child (and Parent: line)", in.Item.Ref),
 		})
 	}
-	if tp.Child.Iteration != nil {
-		done := f.Child != nil && f.Child.Iteration != nil && f.Child.Iteration.ID == tp.Child.Iteration.ID
-		steps = append(steps, Step{
-			Kind: StepIteration, Repo: repo, Done: done, Write: true,
-			Text: "copy iteration " + iterationName(*tp.Child.Iteration) + " to the child",
-		})
-	}
 	return steps
 }
 
@@ -914,13 +897,6 @@ func installStep(in PlanInput, tp TargetPlan) (Step, bool) {
 		return Step{Kind: StepInstall, Repo: repo, Done: true, Text: "install hooks of " + repo + " up to date"}, true
 	}
 	return Step{Kind: StepInstall, Repo: repo, Text: "run install hooks in " + repo + ": " + strings.Join(cmds, "; ")}, true
-}
-
-func iterationName(it forge.Iteration) string {
-	if it.Title != "" {
-		return it.Title
-	}
-	return it.Start.Format("2 Jan") + "–" + it.Due.Format("2 Jan")
 }
 
 // contains reports whether list has want; an empty list means the default
