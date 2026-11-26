@@ -92,9 +92,10 @@ type IssueWriter interface {
 // MRs take reviewers as users (GitLab). Forges that request a team by name
 // (GitHub) do not implement it.
 type ReviewerGroupReader interface {
-	// ReviewerGroupMembers returns the group's active human members, those
-	// inherited from parent groups included, in a stable order. The group is a
-	// path ("acme/reviewers"). ErrNotFound when it does not exist or is not
+	// ReviewerGroupMembers returns the group's active human members in a
+	// stable order: its direct members and those of groups invited into it,
+	// never members inherited from parent groups. The group is a path
+	// ("acme/reviewers"). ErrNotFound when it does not exist or is not
 	// visible.
 	ReviewerGroupMembers(ctx context.Context, group string) ([]User, error)
 }

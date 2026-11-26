@@ -202,8 +202,10 @@ mr          = { create = "ask", template = "Default", draft = true, closes = "ch
   before anything is sent.
 - `mr.reviewer_group`: the group whose members review the MR, so it does not depend on each repo's template
   carrying `/assign_reviewer @group`. On GitLab it is a group path (`acme/reviewers`, subgroups allowed, no
-  leading `@`); ADE reads the group's active members (inherited ones included; blocked users, pending invitations
-  and bots are left out), drops you, and creates the MR with them as reviewers. GitLab Free keeps one reviewer
+  leading `@`); ADE reads the group's active direct members and the direct members of groups invited into it
+  (members inherited from parent groups are not counted, so `dev/team/approvers` never means everyone in `dev`;
+  an invited group your token cannot see is skipped; blocked users, pending invitations and bots are left out),
+  drops you, and creates the MR with them as reviewers. GitLab Free keeps one reviewer
   per MR, Premium takes several; ADE does not probe the tier, so on Free GitLab decides which one stays. On
   GitHub it is `org/team-slug`, the org must be the repository's owner, and ADE requests the team after the
   pull request is created (ADE does not read team members there, so the confirm screen names the team

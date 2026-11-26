@@ -43,6 +43,17 @@ mutation ReviewerRereview($projectPath: ID!, $iid: String!, $userId: UserID!) {
 - The mutation is a write: it goes out with the write token.
 - ADE tries every re-request even when one fails, so a refusal for one reviewer does not hide the others; with some already landed (new users added, other reviewers asked) it reports a partial result naming both groups.
 
+## Reviewer group members
+
+What `conventions.mr.reviewer_group` resolves to on GitLab. Source: https://docs.gitlab.com/api/group_members/ and https://docs.gitlab.com/api/groups/ (read 2026-11-26).
+
+- `GET /groups/:id/members`: "Lists all direct members of a specified group. Returns only direct members and not inherited members through ancestor groups or members from an invited group." Paginated (`page`, `per_page`). Each entry is a user (`id`, `username`, `name`, `state`, …) with `access_level`.
+- `GET /groups/:id` (with `with_projects=false`): the group, whose `shared_with_groups` array lists the groups invited into it (`group_id`, `group_name`, `group_full_path`, `group_access_level`, `expires_at`). ADE reads `group_full_path` and lists each invited group's direct members with the call above.
+- Not used: `GET /groups/:id/members/all`, "including inherited members, invited users, and permissions through ancestor groups". For a nested group it returns every member of every ancestor, so `dev/team/approvers` would mean everyone in `dev`.
+- Members of an invited group that are inherited from that group's own ancestors are not counted either, although GitLab gives them access ("the group's direct and inherited members get access", https://docs.gitlab.com/user/project/members/sharing_projects_groups/): a reviewer group means the people placed in it.
+- An invited group the token cannot read answers 404; ADE skips it `[INFERENCE: the docs do not say whether shared_with_groups lists a private invited group the requester cannot see]`.
+- Filtered out: users whose `state` is not `active`, `membership_state` other than `active` (an invitation not accepted yet), and `bot` accounts.
+
 ## Sources
 
 https://docs.gitlab.com/api/merge_requests/ · https://docs.gitlab.com/api/users/ · https://docs.gitlab.com/api/graphql/reference/mutations/ · https://docs.gitlab.com/user/project/merge_requests/reviews/ · https://docs.gitlab.com/user/project/quick_actions/ (`/request_review`, alias `/assign_reviewer`: "Assign one or more users as reviewers, or request a new review from existing reviewers.")

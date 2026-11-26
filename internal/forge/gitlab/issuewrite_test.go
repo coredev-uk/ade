@@ -310,6 +310,35 @@ func TestReviewerGroupMembers(t *testing.T) {
 	})
 }
 
+// A nested reviewer group stands for its own members and those of the groups
+// invited into it, never for everyone in the organisation above it.
+func TestReviewerGroupMembersNested(t *testing.T) {
+	forEachTier(t, func(t *testing.T, _ fake.Tier, c *gitlab.Client, srv *fake.Server) {
+		ctx := context.Background()
+		for _, u := range []string{"org-owner", "org-dev", "lead", "approver", "backend-dev", "stranger"} {
+			srv.AddUser(u, u)
+		}
+		srv.AddGroup("dev", fake.GroupMember{Username: "org-owner"}, fake.GroupMember{Username: "org-dev"})
+		srv.AddGroup("dev/nested-org", fake.GroupMember{Username: "lead"})
+		srv.AddGroup("dev/nested-org/approvers", fake.GroupMember{Username: "approver"})
+		srv.AddGroup("dev/backend", fake.GroupMember{Username: "backend-dev"})
+		srv.AddGroup("elsewhere", fake.GroupMember{Username: "stranger"})
+		srv.ShareGroup("dev/nested-org/approvers", "dev/backend")
+
+		got, err := c.ReviewerGroupMembers(ctx, "dev/nested-org/approvers")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var names []string
+		for _, u := range got {
+			names = append(names, u.Username)
+		}
+		if want := []string{"approver", "backend-dev"}; !slices.Equal(names, want) {
+			t.Errorf("members = %v, want the direct and invited members %v (no one inherited from dev or dev/nested-org)", names, want)
+		}
+	})
+}
+
 func TestCreateMRSetsReviewers(t *testing.T) {
 	forEachTier(t, func(t *testing.T, _ fake.Tier, c *gitlab.Client, srv *fake.Server) {
 		ctx := context.Background()
