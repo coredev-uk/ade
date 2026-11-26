@@ -54,7 +54,7 @@ func (m model) mrEntries() []palEntry {
 		any("Agents for this item", "P", "ade agent"),
 		any("Open this MR's workspace", "w", "ade ws up"),
 		any("Push this MR's branch", "p", "ade push"),
-		any("Open this MR's workspace with the other main pane (omp or shell)", "W", "ade ws up --layout agent"),
+		any("Open this MR's workspace with omp (or without, when omp is your default)", "W", "ade ws up --layout agent"),
 		at("Threads: open the thread", "", tabThreads, "enter"),
 		at("Threads: reply", "ade mr reply", tabThreads, "r"),
 		at("Threads: resolve or reopen", "ade mr resolve", tabThreads, "x"),

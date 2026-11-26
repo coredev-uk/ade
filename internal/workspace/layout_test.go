@@ -128,6 +128,32 @@ func TestUserShell(t *testing.T) {
 	}
 }
 
+// host.shell picks the shell: a name is looked up on PATH, a path is kept; one
+// that does not exist falls back to the usual shell and says so.
+func TestShellForHonoursHostShell(t *testing.T) {
+	bin := t.TempDir()
+	zsh := filepath.Join(bin, "zsh")
+	if err := os.WriteFile(zsh, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	t.Setenv("SHELL", "/bin/bash")
+	for _, setting := range []string{"zsh", zsh} {
+		if got, err := ShellFor(setting); err != nil || got != zsh {
+			t.Errorf("ShellFor(%q) = %q, %v; want %q", setting, got, err, zsh)
+		}
+	}
+	if got, err := ShellFor(""); err != nil || got != "/bin/bash" {
+		t.Errorf("unset: %q, %v; want $SHELL", got, err)
+	}
+	if got, err := ShellFor("fish"); err == nil || got != "/bin/bash" || !strings.Contains(err.Error(), `host.shell "fish"`) {
+		t.Errorf("missing: %q, %v; want $SHELL and an error naming host.shell", got, err)
+	}
+	if tools := DetectTools("/ade", "zsh"); tools.Shell != zsh {
+		t.Errorf("DetectTools shell = %q, want %q", tools.Shell, zsh)
+	}
+}
+
 func TestBuildLayoutAgentPaneStartsOmpWithTheSkillOverlay(t *testing.T) {
 	s := baseSpec(LayoutAgent)
 	s.Agent = []string{"--config", "/cache/ws/agent/x/omp.yml", `Read skill://ade-implement and implement "it"`}

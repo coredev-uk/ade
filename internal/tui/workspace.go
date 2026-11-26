@@ -225,6 +225,13 @@ func (m *model) onWsOpened(msg wsOpenedMsg) tea.Cmd {
 		n.Transient = true
 		m.nc.push(n)
 	}
+	// What did not stop the tab opening (host.shell not found, the services
+	// tab failing) still needs saying.
+	for _, w := range msg.res.Warnings {
+		n := events.New("workspace.hint", events.Warn, w)
+		n.Transient = true
+		m.nc.push(n)
+	}
 	return cmd
 }
 

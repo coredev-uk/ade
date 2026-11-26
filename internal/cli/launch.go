@@ -111,9 +111,31 @@ func launch(cmd *cobra.Command, dry bool) error {
 	if err := a.Audit.Append(audit.Entry{Action: "cli.launch", Target: strings.Join(argv, " "), Outcome: "ok"}); err != nil {
 		fmt.Fprintln(os.Stderr, "ade: audit:", err)
 	}
+	// A new session's panes (the ones you open yourself, Alt+n) start $SHELL
+	// unless zellij's own default_shell says otherwise: hand it the shell the
+	// workspace panes run (host.shell, else $SHELL unless it is a Nix dev
+	// shell's bash, else the login shell).
+	sh, shErr := workspace.ShellFor(a.Config.Host.Shell)
+	if shErr != nil {
+		fmt.Fprintln(os.Stderr, "ade:", shErr)
+	}
 	// Release the audit DB etc. before exec: deferred cleanup never runs after it.
 	a.Close() //nolint:errcheck
-	return syscall.Exec(bin, argv, os.Environ())
+	return syscall.Exec(bin, argv, withShell(os.Environ(), sh))
+}
+
+// withShell is env with SHELL set to sh; env unchanged when sh is empty.
+func withShell(env []string, sh string) []string {
+	if sh == "" {
+		return env
+	}
+	out := make([]string, 0, len(env)+1)
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, "SHELL=") {
+			out = append(out, kv)
+		}
+	}
+	return append(out, "SHELL="+sh)
 }
 
 // focusHomeBeforeAttach moves the live `ade` session to its home tab: it would

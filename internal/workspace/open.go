@@ -207,6 +207,8 @@ type prepared struct {
 	background, install bool
 	// agentUnset are the write-token variables the agent pane must not inherit.
 	agentUnset []string
+	// shell is host.shell, the shell pane's program when set.
+	shell string
 }
 
 // agentFiles is the skill and overlay the agent layout's omp loads.
@@ -280,6 +282,10 @@ func prepare(ctx context.Context, a *app.App, project, repo, worktree string, op
 		title = filepath.Base(loc.Tree)
 	}
 	p.res = OpenResult{Tab: repo + "/" + title, Layout: layout, Notice: notice}
+	p.shell = a.Config.Host.Shell
+	if _, err := ShellFor(p.shell); err != nil {
+		p.res.Warnings = append(p.res.Warnings, err.Error())
+	}
 	if p.ade, err = os.Executable(); err != nil {
 		return nil, fmt.Errorf("locate ade executable: %w", err)
 	}
@@ -605,7 +611,7 @@ func openTabAs(ctx context.Context, run zellijRunner, session, tab string, alias
 // layoutSpec assembles the layout input: tools found on PATH, a pane per
 // run-graph node.
 func layoutSpec(ctx context.Context, p *prepared) LayoutSpec {
-	spec := LayoutSpec{Layout: p.res.Layout, Tab: p.res.Tab, Dir: p.loc.Tree, Tools: DetectTools(p.ade), BaseRef: p.cfg.baseRef}
+	spec := LayoutSpec{Layout: p.res.Layout, Tab: p.res.Tab, Dir: p.loc.Tree, Tools: DetectTools(p.ade, p.shell), BaseRef: p.cfg.baseRef}
 	spec.Devshell = p.cfg.devshell.WithProject(
 		p.cfg.devshell.Detect(p.loc.Tree, p.loc.Manifest.Repos[p.loc.Repo].Devshell), p.loc.ProjectDir, p.loc.Manifest.Project)
 	// Every agent pane drops the write token, with or without a work item.
@@ -655,15 +661,32 @@ func layoutSpec(ctx context.Context, p *prepared) LayoutSpec {
 	return spec
 }
 
-// DetectTools looks up the programs the layouts use on PATH; the shell is UserShell.
-func DetectTools(ade string) Tools {
+// DetectTools looks up the programs the layouts use on PATH; the shell is
+// ShellFor's answer for shell (host.shell).
+func DetectTools(ade, shell string) Tools {
 	find := func(name string) string {
 		if p, err := exec.LookPath(name); err == nil {
 			return p
 		}
 		return ""
 	}
-	return Tools{Ade: ade, Lazygit: find("lazygit"), Delta: find("delta"), Omp: find("omp"), Shell: UserShell()}
+	sh, _ := ShellFor(shell)
+	return Tools{Ade: ade, Lazygit: find("lazygit"), Delta: find("delta"), Omp: find("omp"), Shell: sh}
+}
+
+// ShellFor is the shell panes run for the host.shell setting: the program it
+// names (a path, or a name looked up on PATH), else UserShell. A setting that
+// names no executable falls back to UserShell and the error says so.
+func ShellFor(setting string) (string, error) {
+	if setting == "" {
+		return UserShell(), nil
+	}
+	p, err := exec.LookPath(setting)
+	if err != nil {
+		sh := UserShell()
+		return sh, fmt.Errorf("host.shell %q is not an executable on PATH: using %q", setting, sh)
+	}
+	return p, nil
 }
 
 // UserShell is the shell the user works in: $SHELL, unless it is unset or the

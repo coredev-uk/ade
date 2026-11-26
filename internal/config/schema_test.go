@@ -127,7 +127,7 @@ func TestSchemaReflectsTheStructs(t *testing.T) {
 		keys = append(keys, k)
 	}
 	slices.Sort(keys)
-	if !slices.Equal(keys, []string{"editor", "glyphs", "layout", "mode"}) {
+	if !slices.Equal(keys, []string{"editor", "glyphs", "layout", "mode", "shell"}) {
 		t.Errorf("host keys = %v", keys)
 	}
 	raw, _ := Schema(SchemaConfig)

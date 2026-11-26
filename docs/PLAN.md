@@ -145,6 +145,7 @@ agent_run_usd    = 1.50    # passed as --max-cost to omp runs
 mode   = "auto"            # auto | zellij | vscode | plain
 editor = "auto"            # auto: `code` inside a VS Code terminal, else $VISUAL/$EDITOR, else nvim/vim/vi/nano; or ade-nvim | nvim | code | $EDITOR
 glyphs = "unicode"         # unicode | nerd | ascii
+shell  = ""                # workspace shell pane and new session panes: a path or a name on PATH (zsh); empty: $SHELL, or the login shell when $SHELL is a Nix dev shell's bash
 
 [records]
 dir               = "~/.local/share/ade"   # default: $XDG_DATA_HOME/ade
@@ -756,7 +757,7 @@ One confirm screen shows every write before it happens. It is idempotent: re‑r
     - `agent`: the `code` stack with a third pane after lazygit, `agent`, running omp (expanded, focused): shell, lazygit and omp, full width. It was omp 60% beside a 40% stack of lazygit and a shell; the agent workspace now matches the normal one with omp added.
     - `review`: the diff through delta 60% | a stack of lazygit (expanded) and a shell, 40%.
     - The strip of task panes (30%, waiting for Enter) and the `<tab> · services` tab are unchanged.
-    - The shell pane runs the user's own shell explicitly (`$SHELL`, unless it is unset or is the Nix-store bash that `nix develop` exports, then the login shell from `/etc/passwd`), inside the worktree's dev shell (direnv, `nix develop`, project shell) when there is one.
+    - The shell pane runs the user's own shell explicitly (`host.shell` when set, else `$SHELL`, unless it is unset or is the Nix-store bash that `nix develop` exports, then the login shell from `/etc/passwd`), inside the worktree's dev shell (direnv, `nix develop`, project shell) when there is one.
     - The item's live overview (`ade item <ref> --watch`, described above) is no longer in any tab; the command still exists and works standalone, for instance in a pane you open.
     - Opening a new workspace tab first creates the dashboard's `home` tab (running `ade dash`) in that session when it is missing or its dashboard has exited (the dead tab closes after the new one opens, as the launcher does), so the dashboard is always one tab away. Creation order: home (if missing or exited), services tab (if any and missing), workspace tab (ends focused).
     - `ade ws edit [worktree] [--editor code|nvim|ade-nvim|'$EDITOR'|auto]` replaces the editor pane: it opens the worktree in the editor `host.editor` resolves to, or the one `--editor` names. `code` opens a VS Code window (code-server's when VS Code runs there) and returns; a terminal editor runs in the current terminal until quit. Run from the tab's shell it inherits the dev shell, so LSPs come from the repo. An explicit `--editor` whose program is missing is an error (for `code`, the "code not found" hint). The worktree defaults to the current directory.
