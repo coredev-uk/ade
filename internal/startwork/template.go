@@ -192,19 +192,6 @@ func expand(tmpl string, vars map[string]string) string {
 
 var placeholderRe = regexp.MustCompile(`\{[a-z_]+\}`)
 
-// facetLabel renders a facet value as its label ("story" → "type::story").
-func facetLabel(pattern, value string) string {
-	if value == "" {
-		return ""
-	}
-	for _, ph := range []string{"{value}", "{n}"} {
-		if before, after, ok := strings.Cut(pattern, ph); ok {
-			return before + value + after
-		}
-	}
-	return ""
-}
-
 // refIn writes an issue reference the way GitLab resolves it from project:
 // short inside the project, full outside.
 func refIn(project string, ref forge.Ref) string {
