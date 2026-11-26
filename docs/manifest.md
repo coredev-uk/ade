@@ -172,7 +172,7 @@ child_title = "{parent_title}"
 child_body  = "templates/child.md"       # relative to the manifest
 link        = ["relates_to", "description"]
 child_issue = "auto"                      # auto | always | never
-mr          = { create = "ask", template = "Default", draft = true, closes = "child", mention = "parent", reviewer_group = "acme/reviewers", squash = true, remove_source_branch = true }
+mr          = { create = "ask", template = "Default", template_project = "acme/templates", draft = true, closes = "child", mention = "parent", reviewer_group = "acme/reviewers", squash = true, remove_source_branch = true }
 ```
 
 - `child_issue`: `auto` creates a child issue in the code repo when the tracker is a different project, and none
@@ -200,6 +200,13 @@ mr          = { create = "ask", template = "Default", draft = true, closes = "ch
   `.gitlab/merge_request_templates/<name>.md`, GitHub `.github/pull_request_template.md`). ADE shows the
   rendered body, and lists any quick actions in it (`/assign`, `/label`, ...) so they can be kept or stripped
   before anything is sent.
+- `mr.template_project`: a project that holds the team's MR templates, so each repo does not need its own copy
+  (`acme/templates`, the full path with its group). ADE reads its MR template directory (as above:
+  `.gitlab/merge_request_templates/*.md` on GitLab) from its default branch and offers those templates to every
+  repo, alongside the repo's own. A repo's own template of the same name wins. `mr.template` and `--template`
+  pick from both. A template project that cannot be read (missing, not visible to your token) is a warning and
+  only the repo's own templates are offered. This works on every tier; ADE does not read GitLab's group-level
+  "Templates" setting (Premium), so name the same project here.
 - `mr.reviewer_group`: the group whose members review the MR, so it does not depend on each repo's template
   carrying `/assign_reviewer @group`. On GitLab it is a group path (`acme/reviewers`, subgroups allowed, no
   leading `@`); ADE reads the group's active members (inherited ones included; blocked users, pending invitations

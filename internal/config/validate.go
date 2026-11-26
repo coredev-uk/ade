@@ -647,8 +647,15 @@ func (v *manifestValidator) checkConventions() {
 		v.errorf("conventions.mr.create", "unknown value %q: want ask, always or never", s)
 	}
 	if g := m.Conventions.MR.ReviewerGroup; g != "" {
-		if err := checkReviewerGroup(g); err != nil {
+		if err := checkForgePath(g, "acme/reviewers"); err != nil {
 			v.errorf("conventions.mr.reviewer_group", "%v", err)
+		}
+	}
+	if p := m.Conventions.MR.TemplateProject; p != "" {
+		if err := checkForgePath(p, "acme/templates"); err != nil {
+			v.errorf("conventions.mr.template_project", "%v", err)
+		} else if !strings.Contains(p, "/") {
+			v.errorf("conventions.mr.template_project", "%q must be a project path with its group, like \"acme/templates\"", p)
 		}
 	}
 	if s := m.Tracker.Iterations.Source; !oneOf(s, "", "auto", "gitlab-iterations", "milestones", "labels", "github-project", "cadence") {
@@ -685,17 +692,18 @@ func (v *manifestValidator) checkDotfiles() {
 	}
 }
 
-// checkReviewerGroup rejects values that cannot be a group path: whitespace, a
-// leading "@" (the manifest names the group, not a mention), and empty path
-// segments from a leading, trailing or doubled "/".
-func checkReviewerGroup(g string) error {
+// checkForgePath rejects values that cannot be a group or project path:
+// whitespace, a leading "@" (the manifest names the group, not a mention),
+// and empty path segments from a leading, trailing or doubled "/". example is
+// a valid value for the message.
+func checkForgePath(g, example string) error {
 	switch {
 	case strings.ContainsFunc(g, unicode.IsSpace):
 		return fmt.Errorf("%q must not contain whitespace", g)
 	case strings.HasPrefix(g, "@"):
-		return fmt.Errorf("%q: write the group path without the leading @ (e.g. \"acme/reviewers\")", g)
+		return fmt.Errorf("%q: write the path without the leading @ (e.g. %q)", g, example)
 	case slices.Contains(strings.Split(g, "/"), ""):
-		return fmt.Errorf("%q must be a group path like \"acme/reviewers\", without a leading, trailing or doubled /", g)
+		return fmt.Errorf("%q must be a path like %q, without a leading, trailing or doubled /", g, example)
 	}
 	return nil
 }

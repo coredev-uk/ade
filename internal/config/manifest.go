@@ -245,9 +245,13 @@ type Conventions struct {
 type MRConv struct {
 	Create   string `toml:"create"`   // ask | always | never
 	Template string `toml:"template"` // template name in the repo's MR template dir
-	Draft    *bool  `toml:"draft"`    // unset: true. A pointer tells "false" from "not said".
-	Closes   string `toml:"closes"`
-	Mention  string `toml:"mention"`
+	// TemplateProject is a project ("acme/templates") whose MR template
+	// directory is offered to every repo, read from its default branch. A
+	// repo's own template of the same name wins.
+	TemplateProject string `toml:"template_project"`
+	Draft           *bool  `toml:"draft"` // unset: true. A pointer tells "false" from "not said".
+	Closes          string `toml:"closes"`
+	Mention         string `toml:"mention"`
 	// ReviewerGroup is the group or team whose members start work asks to
 	// review the MR: a GitLab group path (subgroups allowed) or, on GitHub,
 	// "org/team-slug". Empty requests nobody.

@@ -525,6 +525,75 @@ func (e *Env) findTemplate(ctx context.Context, m *config.Manifest, ch Choices, 
 	return nil
 }
 
+// TemplateSet is the MR templates a repo can use: its own, then those of the
+// manifest's template project (conventions.mr.template_project) that the repo
+// lacks. A repo's own template wins over a template project's of that name.
+type TemplateSet struct {
+	Names    []string // sorted
+	Warnings []string
+	from     map[string]templateFile
+}
+
+type templateFile struct{ project, ref, path string }
+
+// Source names the project a template is read from.
+func (s TemplateSet) Source(name string) string { return s.from[name].project }
+
+// HasOwn reports whether project itself offers a template (not only the
+// template project).
+func (s TemplateSet) HasOwn(project string) bool {
+	for _, f := range s.from {
+		if f.project == project {
+			return true
+		}
+	}
+	return false
+}
+
+// Read returns the body of the template name.
+func (s TemplateSet) Read(ctx context.Context, fg Forge, name string) ([]byte, error) {
+	f, ok := s.from[name]
+	if !ok {
+		return nil, fmt.Errorf("MR template %q: %w", name, forge.ErrNotFound)
+	}
+	return fg.ReadFile(ctx, f.project, f.ref, f.path)
+}
+
+// ListTemplates lists the MR templates of project at ref and, when
+// templateProject is set, those of templateProject at its default branch. A
+// template project that cannot be read is a warning: the repo's own
+// templates are still offered.
+func ListTemplates(ctx context.Context, fg Forge, project, ref, templateProject string) (TemplateSet, error) {
+	s := TemplateSet{from: map[string]templateFile{}}
+	add := func(proj, ref string) error {
+		names, pathOf, err := TemplateNames(ctx, fg, proj, ref)
+		if err != nil {
+			return err
+		}
+		for _, n := range names {
+			if _, ok := s.from[n]; !ok {
+				s.from[n] = templateFile{project: proj, ref: ref, path: pathOf(n)}
+				s.Names = append(s.Names, n)
+			}
+		}
+		return nil
+	}
+	if err := add(project, ref); err != nil {
+		return s, fmt.Errorf("templates of %s: %w", project, err)
+	}
+	if templateProject != "" && templateProject != project {
+		def, err := fg.DefaultBranch(ctx, templateProject)
+		if err == nil {
+			err = add(templateProject, def)
+		}
+		if err != nil {
+			s.Warnings = append(s.Warnings, fmt.Sprintf("template project %s could not be read (%v): only the templates of %s are offered", templateProject, err, project))
+		}
+	}
+	slices.Sort(s.Names)
+	return s, nil
+}
+
 // Template is the MR template PickTemplate chose; Name and Body are empty when
 // none applies.
 type Template struct {
@@ -534,16 +603,16 @@ type Template struct {
 	Warnings []string
 }
 
-// PickTemplate reads the MR template of project from ref: want (a flag), else
-// conventions.mr.template, else "Default", else the repo's only template.
+// PickTemplate reads the MR template of project from ref (or from the
+// manifest's template project): want (a flag), else conventions.mr.template,
+// else "Default", else the only template.
 func PickTemplate(ctx context.Context, fg Forge, m *config.Manifest, project, ref, want string) (Template, error) {
 	var out Template
-	names, pathOf, err := TemplateNames(ctx, fg, project, ref)
+	set, err := ListTemplates(ctx, fg, project, ref, m.Conventions.MR.TemplateProject)
 	if err != nil {
-		return out, fmt.Errorf("templates of %s: %w", project, err)
+		return out, err
 	}
-	out.Names = append(out.Names, names...)
-	slices.Sort(out.Names)
+	out.Names, out.Warnings = set.Names, set.Warnings
 	name, explicit := want, want != ""
 	if name == "" {
 		name = m.Conventions.MR.Template
@@ -566,12 +635,12 @@ func PickTemplate(ctx context.Context, fg Forge, m *config.Manifest, project, re
 			return out, nil
 		}
 	}
-	body, err := fg.ReadFile(ctx, project, ref, pathOf(name))
+	body, err := set.Read(ctx, fg, name)
 	if errors.Is(err, forge.ErrNotFound) {
 		return out, nil
 	}
 	if err != nil {
-		return out, fmt.Errorf("template %s: %w", name, err)
+		return out, fmt.Errorf("template %s (%s): %w", name, set.Source(name), err)
 	}
 	out.Name, out.Body = name, string(body)
 	return out, nil

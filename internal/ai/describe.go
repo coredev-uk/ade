@@ -147,8 +147,10 @@ func PrepareDescription(draft, current string) string {
 
 // GatherDescribe reads the MR, its diff and commits, the issue it closes and
 // the project's MR template. template names one to use; empty takes the
-// manifest's conventions.mr.template, then "Default", then the only one.
-// An MR template that cannot be read only means the prompt goes without one.
+// manifest's conventions.mr.template, then "Default", then the only one. The
+// manifest's conventions.mr.template_project adds its templates to the
+// project's. An MR template that cannot be read only means the prompt goes
+// without one.
 func GatherDescribe(ctx context.Context, a *app.App, be review.Backend, ref forge.Ref, template string) (DescribeInput, error) {
 	tw, ok := be.(forge.MRTextWriter)
 	if !ok {
@@ -163,13 +165,17 @@ func GatherDescribe(ctx context.Context, a *app.App, be review.Backend, ref forg
 		return DescribeInput{}, fmt.Errorf("read the commits of %s: %w", ref, err)
 	}
 	in := DescribeInput{MR: mr, Diff: diff, Commits: commits, Issue: issue}
-	if template == "" && a != nil {
+	var templateProject string
+	if a != nil {
 		if m, err := project.Serving(ctx, a, project.FetchManifest, ref.Project); err == nil {
-			template = m.Conventions.MR.Template
+			templateProject = m.Conventions.MR.TemplateProject
+			if template == "" {
+				template = m.Conventions.MR.Template
+			}
 		}
 	}
 	if sf, ok := be.(startwork.Forge); ok {
-		in.TemplateName, in.Template, err = loadMRTemplate(ctx, sf, ref.Project, mr.TargetBranch, template)
+		in.TemplateName, in.Template, err = loadMRTemplate(ctx, sf, ref.Project, mr.TargetBranch, templateProject, template)
 		if err != nil {
 			return DescribeInput{}, err
 		}
@@ -178,22 +184,23 @@ func GatherDescribe(ctx context.Context, a *app.App, be review.Backend, ref forg
 }
 
 // loadMRTemplate reads the project's MR template from branch (the MR's target,
-// where the template of the work lives, falling back to the default branch).
-// An explicit want that does not exist is an error naming what exists; with no
-// want, "Default" or the only template is taken and several are left unused.
-func loadMRTemplate(ctx context.Context, f startwork.Forge, proj, branch, want string) (name, body string, err error) {
+// where the template of the work lives, falling back to the default branch),
+// with templateProject's templates added. An explicit want that does not
+// exist is an error naming what exists; with no want, "Default" or the only
+// template is taken and several are left unused.
+func loadMRTemplate(ctx context.Context, f startwork.Forge, proj, branch, templateProject, want string) (name, body string, err error) {
 	ref := branch
-	names, pathOf, lerr := startwork.TemplateNames(ctx, f, proj, ref)
-	if lerr != nil || len(names) == 0 {
+	set, lerr := startwork.ListTemplates(ctx, f, proj, ref, templateProject)
+	if lerr != nil || !set.HasOwn(proj) {
 		if def, derr := f.DefaultBranch(ctx, proj); derr == nil && def != ref {
 			ref = def
-			names, pathOf, lerr = startwork.TemplateNames(ctx, f, proj, ref)
+			set, lerr = startwork.ListTemplates(ctx, f, proj, ref, templateProject)
 		}
 	}
-	if lerr != nil || len(names) == 0 {
+	if lerr != nil || len(set.Names) == 0 {
 		return "", "", nil
 	}
-	slices.Sort(names)
+	names := set.Names
 	switch {
 	case want != "":
 		if !slices.Contains(names, want) {
@@ -207,7 +214,7 @@ func loadMRTemplate(ctx context.Context, f startwork.Forge, proj, branch, want s
 	default:
 		return "", "", nil
 	}
-	raw, err := f.ReadFile(ctx, proj, ref, pathOf(name))
+	raw, err := set.Read(ctx, f, name)
 	if errors.Is(err, forge.ErrNotFound) {
 		return "", "", nil
 	}
