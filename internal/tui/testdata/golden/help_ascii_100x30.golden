@@ -13,7 +13,7 @@
 |  s M       start work; create the MR for started work                                            |
 |  c C       classify: suggest missing type/app labels; the issue's comments                       |
 |  a A       agent runs for the item; all runs                                                     |
-|  w v       open workspace (zellij); VS Code workspace of all repos                               |
+|  w W v     open workspace (zellij); with omp; VS Code workspace of all repos                     |
 |  y o u x   copy link or path; browser; push; clean up merged work                                |
 |  n N = m r edit notes; dated note; weight; label move; restart services                          |
 |  Pages ---------------------------------------------------------------------------------------   |
