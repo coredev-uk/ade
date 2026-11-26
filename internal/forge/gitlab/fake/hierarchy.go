@@ -21,6 +21,21 @@ func WithRefusedParents() Option { return func(o *options) { o.refuseParents = t
 // problem of the request (permission, a locked issue) rather than of the types.
 func WithParentError(msg string) Option { return func(o *options) { o.parentError = msg } }
 
+// WithParentErrorAfterPlacing makes workItemUpdate place the child and still
+// answer msg as its payload error, so a caller has to read the hierarchy back
+// to know what happened.
+func WithParentErrorAfterPlacing(msg string) Option {
+	return func(o *options) { o.parentErrorPlaced = msg }
+}
+
+// RefuseParents switches the refusal of WithRefusedParents on or off for the
+// requests that follow, as for tracker issues of different work item types.
+func (s *Server) RefuseParents(on bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.opts.refuseParents = on
+}
+
 // WithForbiddenParents makes workItemUpdate answer 403, as it does for a token
 // without the write scope, while the work item reads keep working.
 func WithForbiddenParents() Option { return func(o *options) { o.forbidParents = true } }
@@ -138,6 +153,10 @@ func (s *Server) setParentMutation(w http.ResponseWriter, vars map[string]any) {
 	}
 	child.Parent = parent
 	child.Updated = s.st.clock
+	if s.opts.parentErrorPlaced != "" {
+		reply(s.opts.parentErrorPlaced)
+		return
+	}
 	reply()
 }
 
